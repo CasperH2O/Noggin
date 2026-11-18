@@ -1,0 +1,25 @@
+{
+  "name": "@be/noggin",
+  "version": "0.1.0",
+  "description": "Noggin for Jibo.",
+  "license": "MIT",
+  "main": "index.js",
+  "config": {
+    "standalone": true
+  },
+  "jibo": {
+    "main": "index.html",
+    "type": "asset-pack",
+    "launchRule": "launch.rule",
+    "prompt": "Noggin",
+    "display-name": "noggin"
+  },
+  "engines": {
+    "node": ">=6.0"
+  },
+  "dependencies": {},
+  "syncDependencies": [
+    "jibo",
+    "@be/be-framework"
+  ]
+}
