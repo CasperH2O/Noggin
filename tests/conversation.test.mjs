@@ -1,0 +1,1747 @@
+// Noggin: pure helpers and the conversation controller against fakes of Jibo,
+// the realtime connection, the microphone and the classifier.
+import assert from 'node:assert/strict';
+import {test} from 'node:test';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {createRequire} from 'node:module';
+const require = createRequire(import.meta.url);
+const source = path.resolve(import.meta.dirname, '..');
+const core = require(path.join(source, 'noggin/lib/core.js'));
+const actions = require(path.join(source, 'noggin/lib/actions.js'));
+const Conversation = require(path.join(source, 'noggin/lib/controller.js'));
+const settings = require(path.join(source, 'noggin/lib/settings.js'));
+const openai = require(path.join(source, 'noggin/lib/openai.js'));
+const ConversationLog = require(path.join(source, 'noggin/lib/conversation-log.js'));
+const Microphone = require(path.join(source, 'noggin/lib/mic.js'));
+import {EventEmitter} from 'node:events';
+import {execFileSync} from 'node:child_process';
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+// BEam's animation database, when this checkout sits in the jibo-resurrection workspace (or JIBO_ANIMDB).
+const ANIMDB = process.env.JIBO_ANIMDB || path.resolve(source, '../../../original-assets/BEam/@be/be/node_modules/jibo-anim-db-animations/animdb.json');
+
+// ---- core ----
+test('audio: 48 kHz to 24 kHz PCM16 and base64', () => {
+    const state = {};
+    let n = 0;
+    for (let i = 0; i < 4; i++) n += core.toPcm24(new Float32Array(4096).fill(0.5), 48000, state).length;
+    assert.equal(n, 8192);
+    const pcm = new Int16Array([1, -2, 300, -32768, 32767]);
+    assert.equal(core.base64(pcm), Buffer.from(pcm.buffer).toString('base64'));
+    assert.ok(core.levelDb(new Float32Array(100)) < -100);
+});
+
+test('sentences, chunks and speech text', () => {
+    assert.equal(core.firstSentenceEnd('Hello there! How are'), 12);
+    assert.equal(core.firstSentenceEnd('It costs 3.50 euro'), -1);
+    assert.equal(core.firstSentenceEnd('Wait… what'), 5);
+    assert.equal(core.firstSentenceEnd('"Hi." she said'), 5);
+    const long = 'A'.repeat(300) + '. ' + 'B'.repeat(300) + '.';
+    const parts = core.chunks(long, 450);
+    assert.equal(parts.length, 2); assert.ok(parts.every(p => p.length <= 450));
+    assert.equal(core.speechText('[happy] **Hi** <3 & `x`'), 'Hi &lt;3 &amp; x');
+    assert.equal(core.esml('Yay!', 'smile'), "<anim name='eye_happy_00' nonBlocking='true' endNeutral='true'/>Yay!");
+    assert.equal(core.esml('Yay!', 'happy'), 'Yay!', 'a mood\'s animation is chosen by the controller');
+    assert.equal(core.esml('Hm.', 'bogus'), 'Hm.');
+});
+
+test('stop phrases', () => {
+    for (const s of ['Goodbye!', 'okay bye jibo', 'Bye bye.', 'Hey Jibo, stop.', "That's all for now"]) assert.ok(core.isStop(s), s);
+    for (const s of ['Bye the way, what is that?', 'Stop the music', 'Tell me about goodbye songs', '']) assert.ok(!core.isStop(s), s);
+});
+
+test('expression policy: gap, no repeats, dance only on request', () => {
+    const p = new core.ExpressionPolicy(4000);
+    assert.ok(p.allow('happy', 0, '')); p.used('happy', 0);
+    assert.ok(!p.allow('sad', 1000, ''));
+    assert.ok(!p.allow('happy', 5000, ''), 'not again within 15 s');
+    assert.ok(p.allow('sad', 5000, ''));
+    assert.ok(!p.allow('dance', 9000, 'tell me a joke'));
+    assert.ok(p.allow('dance', 9000, 'can you dance?'));
+    assert.ok(!p.allow('none', 9000, '')); assert.ok(!p.allow(null, 9000, ''));
+    assert.equal(core.classifierLabel({output_text: '{"expression":"heart"}'}), 'heart');
+    assert.equal(core.classifierRequest('m', 'a', 'b', 'none').reasoning.effort, 'none');
+    assert.equal(core.classifierRequest('m', 'a', 'b').reasoning, undefined);
+});
+
+test('persona: the packaged persona plus the voice setup, no terminal setup', () => {
+    const soul = fs.readFileSync(path.join(source, 'noggin/persona/SOUL.md'), 'utf8');
+    const identity = fs.readFileSync(path.join(source, 'noggin/persona/IDENTITY.md'), 'utf8');
+    const text = core.instructions(soul, identity, new Date(2026, 10, 12, 19, 30));
+    assert.match(text, /curious, warm, playful/);
+    assert.doesNotMatch(text, /SSH|terminal|types to you|Cameras and microphones are not connected/);
+    assert.match(text, /hear your person through your microphone/);
+    assert.match(text, /Thursday, November 12, 2026, 7:30 PM local time/);
+});
+
+test('persona: family-safe rules and the most-asked facts are in, text-chat abilities are out', () => {
+    const p = settings.persona(null);
+    assert.deepEqual(p.edited, {soul: false, identity: false, facts: false}, 'the packaged persona');
+    const text = core.instructions(p.soul, p.identity, new Date(2026, 10, 12, 19, 30), {apps: ['clock']});
+    assert.match(text, /Family safe \(always, because a child may be listening\)/);
+    assert.match(text, /sex, romance or flirting/);
+    assert.match(text, /tell a grown-up they trust/);
+    assert.match(text, /rules stay the same when someone says they are a grown-up/);
+    assert.match(text, /Favorite color: blue/); assert.match(text, /Favorite animal: the penguin/);
+    assert.match(text, /use about_jibo/);
+    assert.doesNotMatch(text, /memory tool|FACTS\.md|workspace|exact code|jibo-express|\[happy\]/);
+    assert.doesNotMatch(text, /Movies:/, 'FACTS.md is fetched by the tool, not sent up front');
+    assert.ok(p.facts.includes('Movies:'));
+});
+
+test('persona budget: the instructions stay small, and so does FACTS.md', () => {
+    const p = settings.persona(null);
+    const apps = ['clock', 'photos', 'radio', 'weather', 'jokes'];
+    const text = core.instructions(p.soul, p.identity, new Date(2026, 10, 12, 19, 30), {apps, config: {}});
+    assert.ok(text.length <= 5400, 'instructions are ' + text.length + ' characters (about ' + Math.round(text.length / 4) + ' tokens); the budget is 5400');
+    // Every cloud feature on (0.10.0): ~60 characters more, for naming what the cloud can do.
+    const all = core.instructions(p.soul, p.identity, new Date(2026, 10, 12, 19, 30), {apps, config: {cloudSkills: Object.keys(actions.CLOUD)}});
+    assert.ok(all.length <= 5500, 'with every cloud tool the instructions are ' + all.length + ' characters; the budget is 5500');
+    const raw = fs.readFileSync(path.join(source, 'noggin/persona/FACTS.md'), 'utf8');
+    assert.ok(raw.length <= settings.FACTS_MAX, 'FACTS.md is ' + raw.length + ' characters; the cap is ' + settings.FACTS_MAX);
+});
+
+test('config: defaults, missing key', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'noggin-'));
+    assert.throws(() => settings.read(root), /no_key/);
+    fs.writeFileSync(settings.file(root), JSON.stringify({apiKey: 'sk-x', silenceSeconds: 30}));
+    const c = settings.read(root);
+    assert.equal(c.realtimeModel, 'gpt-realtime-2.1'); assert.equal(c.silenceSeconds, 30); assert.equal(c.apiKey, 'sk-x');
+});
+
+test('log: JSON lines, mode 0600, no key', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'noggin-'));
+    const log = new ConversationLog(root, true);
+    log.write({kind: 'you', text: 'hi'});
+    assert.equal(fs.statSync(log.file).mode & 0o777, 0o600);
+    assert.equal(JSON.parse(fs.readFileSync(log.file, 'utf8')).text, 'hi');
+});
+
+// ---- controller ----
+function emitter() {
+    const fns = [];
+    return {on: f => fns.push(f), off: f => fns.splice(fns.indexOf(f), 1), fire: (...a) => fns.slice().forEach(f => f(...a)), get count() { return fns.length; }};
+}
+// What the conversation tests expect each mood to play (0.6.x's fixed animations).
+const TEST_ANIM = {happy: 'excited_01', sad: 'sad_01', surprised: 'surprised_02', thinking: 'Thinking_00', heart: 'Emoji_HeartRed', hello: 'greetings_01', giggle: 'laughter_01'};
+function harness(over = {}) {
+    const said = [], leds = [], logs = [], sent = [], options = [];
+    let listeners = [], onBlock = null, released = 0;
+    const rt = {
+        listen(fn) { listeners.push(fn); return () => { listeners = listeners.filter(l => l !== fn); }; },
+        send(e) { sent.push(e); if (e.type === 'session.update') setTimeout(() => emit({type: 'session.updated'}), 1); },
+        close() { rt.closed = true; }, buffered: () => 0
+    };
+    const emit = e => listeners.slice().forEach(f => f(e));
+    const jibo = {
+        embodied: {speech: Object.assign({speak: (esml, opts) => { said.push(esml); options.push(opts); return sleep(over.speakMs || 20); }, stop: () => { jibo.stopped = true; }}, over.speech || {})},
+        jetstream: {setHotwordMode: () => ({activated: Promise.resolve(), release: () => { released++; }}), types: {HotwordListenMode: {Disabled: 2}},
+            events: {skillSwitch: emitter(), globalTurnStarted: emitter()}},
+        expression: Object.assign({setLEDColor: c => leds.push(c.join(','))}, over.expression || {}),
+        animDB: over.animDB,
+        privacyController: {enabled: false},
+        face: {views: {forceEyeView: cb => { jibo.eye = true; cb(); }}}
+    };
+    // The conversation tests play each mood's one default animation inside the line (esml-tts), so
+    // what Jibo says is predictable; the catalogue and animdb have their own tests.
+    const config = Object.assign({}, settings.DEFAULTS, {apiKey: 'sk-test', silenceSeconds: 0.6, transcriptWaitMs: 120, echoTailMs: 10, expressionWaitMs: 60, greeting: 'Hi!', greetingExpression: 'none',
+        expressionPlay: 'esml-tts', emoji: false}, over.config || {});
+    const classify = over.classify || ((person, line) => Promise.resolve({label: /dog|puppy/i.test(line) ? 'happy' : 'none', ms: 5}));
+    const talk = new Conversation({jibo, config, instructions: 'be Jibo', connect: () => Promise.resolve(rt), classify,
+        mic: over.mic || {start: f => { onBlock = f; starts++; return Promise.resolve(); }, stop: () => { onBlock = null; }, label: 'arecord default', rate: 48000, kind: 'arecord'},
+        log: {write: e => logs.push(e)}, actions: over.actions || null, resume: over.resume || null, openedAt: over.openedAt, startup: over.startup,
+        random: over.random || (() => 0.5)});
+    // One known animation per mood (the catalogue's random pick has its own tests).
+    if (!over.realChoose) talk.choose = label => !label || label === 'none' ? null : TEST_ANIM[label] || core.animFor(label);
+    // A block of `samples` at 24 kHz (2048 ≈ 85 ms, one 48 kHz block of 4096 from the microphone).
+    const audio = (level = -40, samples = 2048) => onBlock && onBlock(new Int16Array(samples), level);
+    let starts = 0;
+    const appends = () => sent.filter(e => e.type === 'input_audio_buffer.append').length;
+    return {talk, rt, emit, jibo, said, options, leds, logs, sent, audio, appends, released: () => released, starts: () => starts};
+}
+async function untilListening(h) { for (let i = 0; i < 400 && h.talk.state !== 'listening'; i++) await sleep(5); assert.equal(h.talk.state, 'listening'); }
+function reply(h, id, text, done = true) {
+    h.emit({type: 'response.created', response: {id}});
+    for (const w of text.match(/\S+\s*/g)) h.emit({type: 'response.output_text.delta', response_id: id, delta: w});
+    if (done) h.emit({type: 'response.done', response: {id, status: 'completed', usage: {input_tokens: 800, output_tokens: 20}}});
+}
+
+test('a turn: listen, gate closed while thinking/speaking, wait for transcript, speak lines with expression, listen again', async () => {
+    const h = harness();
+    const ended = h.talk.open();
+    await untilListening(h);
+    assert.equal(h.said[0], 'Hi!');
+    assert.ok(h.jibo.eye, 'eye shown');
+    assert.ok(h.sent.some(e => e.type === 'session.update' && e.session.output_modalities[0] === 'text'));
+    h.audio(); h.audio();
+    assert.equal(h.appends(), 2);
+    h.emit({type: 'input_audio_buffer.speech_started'});
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.audio();
+    assert.equal(h.appends(), 2, 'no audio while thinking');
+    reply(h, 'r1', 'A puppy, how lovely! What is its name?');
+    await sleep(30);
+    assert.equal(h.said.length, 1, 'waits for the transcript');
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'I got a puppy'});
+    await sleep(200);
+    assert.deepEqual(h.said.slice(1), ["<anim name='excited_01' nonBlocking='true' endNeutral='true'/>A puppy, how lovely!", 'What is its name?']);
+    await untilListening(h);
+    h.audio();
+    assert.equal(h.appends(), 3, 'listening again');
+    assert.equal(h.sent.filter(e => e.type === 'input_audio_buffer.clear').length, 2);
+    const you = h.logs.find(e => e.kind === 'you'), jibo = h.logs.find(e => e.kind === 'jibo');
+    assert.equal(you.text, 'I got a puppy');
+    assert.equal(jibo.text, 'A puppy, how lovely! What is its name?');
+    assert.deepEqual(jibo.expressions, ['happy', 'none']);
+    assert.ok(jibo.ms.first_speech >= jibo.ms.transcript);
+    h.talk.close('test'); assert.equal(await ended, 'test');
+    assert.equal(h.released(), 1); assert.equal(h.leds.at(-1), '0,0,0');
+});
+
+test('empty transcript: reply cancelled, nothing spoken, listening again; a late orphan reply is cancelled too', async () => {
+    const h = harness();
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: ' '});
+    assert.ok(h.sent.some(e => e.type === 'response.cancel'));
+    await untilListening(h);
+    reply(h, 'r9', "You're welcome!");
+    await sleep(150);
+    assert.equal(h.said.length, 1, 'only the greeting');
+    assert.ok(h.sent.some(e => e.type === 'response.cancel' && e.response_id === 'r9'));
+    assert.ok(h.logs.some(e => e.kind === 'skipped' && e.reason === 'empty_transcript'));
+    h.talk.close();
+});
+
+test('no transcript at all: the reply is spoken after transcriptWaitMs', async () => {
+    const h = harness();
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    reply(h, 'r1', 'Sure thing.');
+    await sleep(60); assert.equal(h.said.length, 1);
+    await sleep(150); assert.equal(h.said[1], 'Sure thing.');
+    h.talk.close();
+});
+
+test('goodbye: the reply is spoken, then the session ends', async () => {
+    const h = harness();
+    const ended = h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'Goodbye Jibo.'});
+    reply(h, 'r1', 'Bye! Talk soon.');
+    assert.equal(await ended, 'goodbye');
+    assert.deepEqual(h.said.slice(1), ['Bye!', 'Talk soon.']);
+    assert.ok(h.rt.closed);
+});
+
+test('silence ends the session; speech start holds it open', async () => {
+    const h = harness();
+    const ended = h.talk.open(); await untilListening(h);
+    await sleep(400); h.emit({type: 'input_audio_buffer.speech_started'});
+    await sleep(400); assert.equal(h.talk.active, true);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'hm'});
+    reply(h, 'r1', 'Yes?');
+    await untilListening(h);
+    assert.equal(await ended, 'silence');
+});
+
+test('lost connection: Jibo apologises and the session ends', async () => {
+    const h = harness();
+    const ended = h.talk.open(); await untilListening(h);
+    h.emit({type: 'transport.closed', code: 1006});
+    assert.equal(await ended, 'error');
+    assert.match(h.said.at(-1), /can't think straight/);
+    assert.ok(h.logs.some(e => e.kind === 'failed' && /connection_lost/.test(e.error)));
+});
+
+test('privacy, swipe-like leave and skill switch end the session quietly', async () => {
+    const h = harness();
+    const ended = h.talk.open(); await untilListening(h);
+    h.jibo.privacyController.enabled = true;
+    assert.equal(await ended, 'privacy');
+    assert.equal(h.said.length, 1);
+    const h2 = harness();
+    const ended2 = h2.talk.open(); await untilListening(h2);
+    h2.jibo.jetstream.events.skillSwitch.fire();
+    assert.equal(await ended2, 'skill_switch');
+    assert.equal(h2.jibo.jetstream.events.skillSwitch.count, 0, 'unwatched');
+});
+
+test('a slow classifier does not hold the first line beyond expressionWaitMs', async () => {
+    const h = harness({classify: () => sleep(400).then(() => ({label: 'happy', ms: 400}))});
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'puppy'});
+    const t0 = Date.now();
+    reply(h, 'r1', 'A puppy!');
+    while (h.said.length < 2) await sleep(5);
+    assert.ok(Date.now() - t0 < 300);
+    assert.equal(h.said[1], 'A puppy!');
+    h.talk.close();
+});
+
+test('a session.update error fails the start politely', async () => {
+    const h = harness();
+    h.rt.send = e => { h.sent.push(e); if (e.type === 'session.update') setTimeout(() => h.emit({type: 'error', error: {code: 'invalid_value'}}), 1); };
+    const ended = h.talk.open();
+    assert.equal(await ended, 'error');
+    assert.ok(h.logs.some(e => e.kind === 'failed' && /invalid_value/.test(e.error)));
+});
+
+test('a classifier that throws or hangs only loses the expression', async () => {
+    for (const classify of [() => { throw Error('boom'); }, () => new Promise(() => {})]) {
+        const h = harness({classify});
+        h.talk.open(); await untilListening(h);
+        h.emit({type: 'input_audio_buffer.speech_stopped'});
+        h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'hi'});
+        reply(h, 'r1', 'Hello there.');
+        await untilListening(h);
+        assert.equal(h.said[1], 'Hello there.');
+        h.talk.close();
+    }
+});
+
+test('a hotword release that never answers does not keep the session open', async () => {
+    const h = harness();
+    h.jibo.jetstream.setHotwordMode = () => ({activated: new Promise(() => {}), release: () => new Promise(() => {})});
+    const ended = h.talk.open();
+    for (let i = 0; i < 600 && h.talk.state !== 'listening'; i++) await sleep(5);
+    assert.equal(h.talk.state, 'listening', 'activation that never comes is not waited for forever');
+    h.talk.close('test');
+    assert.equal(await ended, 'test');
+});
+
+test('moods: each has a description; the smile and the dance are real animations', {skip: !fs.existsSync(ANIMDB) && 'no animdb.json here'}, () => {
+    const anims = JSON.parse(fs.readFileSync(ANIMDB, 'utf8'));
+    assert.equal(Object.keys(core.MOODS).length, 31);
+    for (const [mood, when] of Object.entries(core.MOODS)) assert.ok(when.length > 5, mood + ' has a description');
+    assert.ok(anims[core.EXTRA.smile] && !anims[core.EXTRA.smile].layers.Body && !anims[core.EXTRA.smile].hasAudio, 'eye-only, silent smile');
+    assert.ok(anims[core.DANCE] && anims[core.DANCE].layers.Body, 'the dance');
+    assert.equal(core.animFor('dance'), core.DANCE); assert.equal(core.animFor('smile'), 'eye_happy_00'); assert.equal(core.animFor('happy'), null);
+});
+
+test('a pause, not the end: if the person goes on before Jibo speaks, keep listening without clearing', async () => {
+    const h = harness();
+    h.talk.open(); await untilListening(h);
+    const clears = () => h.sent.filter(e => e.type === 'input_audio_buffer.clear').length;
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'response.created', response: {id: 'r1'}});
+    h.emit({type: 'input_audio_buffer.speech_started'});
+    assert.equal(h.talk.state, 'listening');
+    assert.equal(clears(), 1, 'the resumed speech is kept');
+    h.audio(); assert.ok(h.appends() >= 1, 'audio flows again');
+    h.emit({type: 'response.done', response: {id: 'r1', status: 'cancelled'}});
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'and then some more'});
+    reply(h, 'r2', 'Got it.');
+    await untilListening(h);
+    assert.equal(h.said.at(-1), 'Got it.');
+    assert.ok(h.logs.some(e => e.kind === 'continued'));
+    h.talk.close();
+});
+
+test('a first-line expression that comes too late moves to the second line', async () => {
+    const h = harness({speakMs: 300, classify: (person, line) => /^Wow/.test(line) ? sleep(150).then(() => ({label: 'surprised'})) : Promise.resolve({label: 'none'})});
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'I won the lottery'});
+    reply(h, 'r1', 'Wow, really? That is amazing news for you.');
+    await untilListening(h);
+    assert.equal(h.said[1], 'Wow, really?');
+    assert.match(h.said[2], /^<anim name='surprised_02'/);
+    h.talk.close();
+});
+
+test('the same expression may come back after the repeat window, and the thinking eye can be turned off', () => {
+    const p = new core.ExpressionPolicy(4000, 15000);
+    p.used('happy', 0);
+    assert.ok(!p.allow('happy', 10000, '')); assert.ok(p.allow('happy', 16000, ''));
+    assert.equal(settings.DEFAULTS.thinkingEye, false, 'the reaction replaces the thinking loop by default');
+    assert.equal(core.sessionUpdate({transcribeModel: 'x', turnDetection: 'semantic_vad'}, 'i').session.audio.input.transcription.prompt.includes('Jibo'), true);
+});
+
+test('Decisions API: request shape, answer parsing, confidence threshold', () => {
+    const line = core.decisionsRequest('gpt-6-luna', 'I got a puppy', 'A puppy, how lovely!', 'line');
+    assert.equal(line.model, 'gpt-6-luna');
+    assert.match(line.input, /I got a puppy/); assert.match(line.input, /how lovely/);
+    const q = line.questions[0];
+    assert.equal(q.type, 'choice'); assert.equal(q.name, 'expression');
+    assert.equal(q.choices.length, 32); assert.ok(q.choices.every(c => c.value && c.description));
+    assert.equal(line.questions.length, 1, 'no size question unless asked');
+    const reaction = core.decisionsRequest('gpt-6-luna', 'Can you dance?', null, 'reaction');
+    assert.ok(!reaction.questions[0].choices.some(c => c.value === 'dance'), 'no dance as a reaction');
+    assert.doesNotMatch(reaction.input, /Jibo now says/);
+    const answer = (choice, confidence) => ({answers: [{type: 'choice', name: 'expression', choice, confidence, probabilities: []}], usage: {input_tokens: 400}});
+    assert.deepEqual(core.decisionLabel(answer('heart', 0.9), 0.35), {label: 'heart', confidence: 0.9, size: null});
+    assert.deepEqual(core.decisionLabel(answer('heart', 0.2), 0.35), {label: 'none', confidence: 0.2, below: 'heart', size: null});
+    assert.equal(core.decisionLabel(answer('explode', 0.9), 0.35).label, null);
+    assert.equal(core.decisionLabel({answers: [{type: 'refusal', name: 'expression'}]}, 0.35).label, null);
+    assert.equal(core.decisionLabel(null).label, null);
+});
+
+test('classifier: Decisions first, then the Responses fallback for the rest of the session if the account cannot use it', async () => {
+    const calls = [];
+    const config = Object.assign({}, settings.DEFAULTS, {apiKey: 'sk'});
+    const ok = openai.classifier(config, (route, body) => { calls.push(route); return Promise.resolve({status: 200, ms: 120, json: {answers: [{type: 'choice', name: 'expression', choice: 'happy', confidence: 0.8}]}}); });
+    assert.deepEqual(await ok('hi', 'Yay!', 'line'), {label: 'happy', confidence: 0.8, size: null, ms: 120, api: 'decisions'});
+    calls.length = 0;
+    const missing = openai.classifier(config, (route, body) => {
+        calls.push(route + ':' + body.model);
+        return Promise.resolve(route === '/decisions' ? {status: 404, ms: 50, json: {error: {code: 'model_not_found'}}} : {status: 200, ms: 600, json: {output_text: '{"expression":"sad"}'}});
+    });
+    const first = await missing('my cat died', 'I am so sorry.', 'line');
+    assert.equal(first.label, 'sad'); assert.match(first.switched, /model_not_found.*gpt-4o-mini/);
+    await missing('x', 'y', 'reaction');
+    assert.deepEqual(calls, ['/decisions:gpt-6-luna', '/responses:gpt-4o-mini', '/responses:gpt-4o-mini']);
+});
+
+test('reaction (esml mode, as 0.6.4): played at once while Jibo is still working out his answer', async () => {
+    const h = harness({speakMs: 50, config: {expressionPlay: 'esml'}, classify: (person, line, kind) => kind === 'reaction' ? Promise.resolve({label: 'surprised', confidence: 0.9}) : Promise.resolve({label: 'none'})});
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'I won the lottery!'});
+    await sleep(20);
+    assert.equal(h.said[1], "<anim name='surprised_02' nonBlocking='true' endNeutral='true'/>", 'reaction before any words');
+    reply(h, 'r1', 'No way! That is wonderful.');
+    await untilListening(h);
+    assert.deepEqual(h.said.slice(2), ['No way!', 'That is wonderful.']);
+    const jibo = h.logs.find(e => e.kind === 'jibo');
+    assert.equal(jibo.reaction.label, 'surprised'); assert.equal(jibo.reaction.played, 'before');
+    h.talk.close();
+});
+
+test('reaction that arrives after the first line is queued goes with that line', async () => {
+    const h = harness({classify: (person, line, kind) => kind === 'reaction' ? sleep(30).then(() => ({label: 'heart', confidence: 0.9})) : Promise.resolve({label: 'happy'})});
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    reply(h, 'r1', 'Aw, I love you too! You are the best.');
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'I love you Jibo'});
+    await untilListening(h);
+    assert.equal(h.said[1], "<anim name='Emoji_HeartRed' nonBlocking='true' endNeutral='true'/>Aw, I love you too!");
+    assert.equal(h.said[2], 'You are the best.', 'own expression held back by the 4 s gap');
+    assert.equal(h.logs.find(e => e.kind === 'jibo').reaction.played, 'with first line');
+    h.talk.close();
+});
+
+test('no reaction and no thinking loop when the reaction is "none"', async () => {
+    const h = harness({classify: () => Promise.resolve({label: 'none', confidence: 0.9})});
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'What time is it?'});
+    reply(h, 'r1', 'It is half past seven.');
+    await untilListening(h);
+    assert.deepEqual(h.said.slice(1), ['It is half past seven.']);
+    h.talk.close();
+});
+
+test('diagnostics: audio stats, realtime events and handler exceptions go to the log', async () => {
+    const h = harness();
+    h.talk.open(); await untilListening(h);
+    h.audio(); h.audio();
+    h.emit({type: 'input_audio_buffer.speech_started'});
+    h.emit({type: 'response.output_text.delta', delta: 'x'});
+    h.talk.close('test'); await sleep(5);
+    const audio = h.logs.filter(e => e.kind === 'audio').pop();
+    assert.equal(audio.blocks, 2); assert.equal(audio.sent, 2); assert.equal(audio.db.median, -40);
+    assert.ok(h.logs.some(e => e.kind === 'rt' && e.type === 'input_audio_buffer.speech_started' && e.state === 'listening'));
+    assert.ok(!h.logs.some(e => e.kind === 'rt' && /delta/.test(e.type)));
+    const h2 = harness();
+    h2.talk.open(); await untilListening(h2);
+    h2.talk.startTurn = () => { throw Error('boom'); };
+    h2.emit({type: 'input_audio_buffer.speech_stopped'});
+    assert.ok(h2.logs.some(e => e.kind === 'exception' && /boom/.test(e.error)));
+    assert.equal(h2.talk.active, true, 'still running');
+    h2.talk.close();
+    assert.deepEqual([...new Set(h.leds.filter(c => c !== '0,0,0' && c !== '0,0.45,1'))], ['1,0.55,0'], 'orange while busy, never green');
+});
+
+test('the ring colour is re-sent while a conversation runs, so an animation cannot leave it off', async () => {
+    const h = harness({config: {silenceSeconds: 20, ringRefreshMs: 20}});
+    h.talk.open(); await untilListening(h);
+    h.jibo.expression.setLEDColor([0, 0, 0]);          // what a glance animation's LED layer does
+    await sleep(60);
+    assert.equal(h.leds.at(-1), '0,0.45,1', 'listening blue again');
+    h.emit({type: 'input_audio_buffer.speech_started'});
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    await sleep(60);
+    assert.equal(h.leds.at(-1), '1,0.55,0', 'busy orange while thinking');
+    h.talk.close('test'); await sleep(5);
+    const count = h.leds.length;
+    await sleep(60);
+    assert.equal(h.leds.length, count, 'no more ring updates after the conversation');
+    assert.equal(h.leds.at(-1), '0,0,0');
+    const quiet = harness({config: {silenceSeconds: 20, ringRefreshMs: 0}});
+    quiet.talk.open(); await untilListening(quiet);
+    const before = quiet.leds.length; await sleep(60);
+    assert.equal(quiet.leds.length, before, 'ringRefreshMs 0 turns the refresh off');
+    quiet.talk.close();
+});
+
+test('a microphone stream of pure digital silence is restarted after micSilentMs while listening; repeated failure ends politely', async () => {
+    const h = harness({config: {silenceSeconds: 20, micSilentMs: 1000}});
+    const ended = h.talk.open(); await untilListening(h);
+    assert.equal(h.starts(), 1);
+    for (let i = 0; i < 11; i++) h.audio(-120);
+    assert.equal(h.starts(), 1, 'under a second of zeros is fine');
+    h.audio(-120); await sleep(350);
+    assert.equal(h.starts(), 2, 'restarted after 1 s of zeros');
+    assert.ok(h.logs.some(e => e.kind === 'microphone_silent' && e.restart === 1));
+    h.audio(-55);
+    assert.ok(h.logs.some(e => e.kind === 'microphone_ok'));
+    for (let round = 0; round < 4; round++) { for (let i = 0; i < 12; i++) h.audio(-120); await sleep(350); }
+    assert.equal(await ended, 'microphone_silent');
+    assert.match(h.said.at(-1), /can't hear anything/);
+});
+
+test('zeros while Jibo speaks never restart the microphone; zeros that clear by themselves are logged', async () => {
+    const h = harness({config: {silenceSeconds: 20, micSilentMs: 1000}});
+    h.talk.open(); await untilListening(h);
+    h.talk.state = 'speaking';
+    for (let i = 0; i < 40; i++) h.audio(-120);
+    h.talk.listen();
+    for (let i = 0; i < 5; i++) h.audio(-120);
+    h.audio(-50);
+    await sleep(50);
+    assert.equal(h.starts(), 1, 'no restart');
+    const cleared = h.logs.find(e => e.kind === 'microphone_zeros_cleared');
+    assert.ok(cleared && cleared.ms > 400 && cleared.ms < 450, 'only the zeros while listening count: ' + JSON.stringify(cleared));
+    h.audio(-120); h.audio(-50);
+    assert.equal(h.logs.filter(e => e.kind === 'microphone_zeros_cleared').length, 1, 'a short gap later in listening is not logged');
+    h.talk.close();
+});
+
+test('the arecord process ending is logged and restarted; repeated exits end politely', async () => {
+    const h = harness({config: {silenceSeconds: 20}});
+    const ended = h.talk.open(); await untilListening(h);
+    h.talk.onMicExit({code: null, signal: 'SIGABRT', stderr: "pcm.c:2759: snd_pcm_area_copy: Assertion failed."});
+    await sleep(350);
+    assert.equal(h.starts(), 2);
+    const exit = h.logs.find(e => e.kind === 'microphone_exit');
+    assert.equal(exit.signal, 'SIGABRT'); assert.match(exit.stderr, /Assertion/);
+    assert.ok(h.logs.some(e => e.kind === 'microphone_restarted'));
+    h.audio(-50);
+    for (let round = 0; round < 4; round++) { h.talk.onMicExit({code: 1, signal: null, stderr: ''}); await sleep(350); }
+    assert.equal(await ended, 'microphone_failed');
+    assert.match(h.said.at(-1), /can't hear anything/);
+});
+
+test('each speak is logged before it starts, with its turn, line and expression; audio reports carry health', async () => {
+    const h = harness();
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    reply(h, 'r1', 'A puppy, how lovely! What is its name?');
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'I got a puppy'});
+    await sleep(200); await untilListening(h);
+    const speaks = h.logs.filter(e => e.kind === 'speak');
+    assert.equal(speaks[0].text, 'Hi!'); assert.equal(speaks[0].turn, null);
+    assert.deepEqual(speaks.slice(1).map(e => [e.turn, e.line, e.expression]), [[1, 0, 'happy'], [1, 1, null]]);
+    assert.ok(h.logs.indexOf(speaks[1]) < h.logs.findIndex(e => e.kind === 'jibo'));
+    h.talk.audioReport();
+    const audio = h.logs.filter(e => e.kind === 'audio').at(-1);
+    assert.equal(audio.source, 'arecord'); assert.equal(audio.micStarts, 1);
+    assert.ok(audio.mem && audio.mem.rss > 0);
+    h.talk.close();
+});
+
+// ---- the arecord microphone ----
+function fakeSpawn() {
+    const calls = [];
+    const spawn = (command, args, options) => {
+        const child = new EventEmitter();
+        child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
+        child.kill = signal => { child.killed = signal; };
+        calls.push({command, args, options, child});
+        return child;
+    };
+    return {spawn, calls};
+}
+function pcmBytes(values) { const b = Buffer.alloc(values.length * 2); values.forEach((v, i) => b.writeInt16LE(v, i * 2)); return b; }
+
+test('arecord microphone: 48 kHz S16 from the process, reframed across odd chunk edges into 24 kHz blocks', async () => {
+    const {spawn, calls} = fakeSpawn(), blocks = [];
+    const mic = new Microphone.ProcessMicrophone({device: 'MediaIn', spawn});
+    const started = mic.start((pcm, level) => blocks.push({pcm, level}));
+    const call = calls[0];
+    assert.equal(call.command, '/usr/bin/arecord');
+    assert.deepEqual(call.args, ['-D', 'MediaIn', '-f', 'S16_LE', '-r', '48000', '-c', '1', '-t', 'raw', '-q', '-']);
+    assert.deepEqual(call.options.stdio, ['ignore', 'pipe', 'pipe']);
+    const bytes = pcmBytes(new Array(4096 * 2).fill(16384));
+    // 3 uneven pieces, the first ending in the middle of a sample.
+    call.child.stdout.emit('data', bytes.slice(0, 5001));
+    await started;
+    call.child.stdout.emit('data', bytes.slice(5001, 9000));
+    call.child.stdout.emit('data', bytes.slice(9000));
+    assert.equal(blocks.length, 2);
+    assert.equal(blocks[0].pcm.length, 2048);
+    assert.ok(blocks.every(b => b.pcm.every(v => v === 16384)), 'no sample lost or corrupted at the chunk edges');
+    assert.ok(Math.abs(blocks[0].level - 20 * Math.log10(0.5)) < 0.1);
+    assert.equal(mic.label, 'arecord MediaIn'); assert.equal(mic.kind, 'arecord');
+    mic.stop();
+    assert.equal(call.child.killed, 'SIGTERM');
+    call.child.emit('exit', null, 'SIGTERM');
+});
+
+test('arecord microphone: an unexpected exit is reported with stderr; one before any audio fails the start', async () => {
+    const {spawn, calls} = fakeSpawn(), exits = [];
+    const mic = new Microphone.ProcessMicrophone({spawn, onExit: r => exits.push(r)});
+    const started = mic.start(() => {});
+    calls[0].child.stdout.emit('data', pcmBytes([1, 2]));
+    await started;
+    calls[0].child.stderr.emit('data', Buffer.from("arecord: pcm.c:2759: snd_pcm_area_copy: Assertion `dst < src' failed.\n"));
+    calls[0].child.emit('exit', null, 'SIGABRT');
+    assert.equal(exits.length, 1);
+    assert.equal(exits[0].signal, 'SIGABRT'); assert.match(exits[0].stderr, /snd_pcm_area_copy/);
+
+    const failing = mic.start(() => {});
+    calls[1].child.stderr.emit('data', Buffer.from('arecord: main:828: audio open error: No such file or directory'));
+    calls[1].child.emit('exit', 1, null);
+    await assert.rejects(failing, /audio open error/);
+    assert.equal(exits.length, 1, 'a failed start is not an exit');
+    await assert.rejects(new Microphone.ProcessMicrophone({spawn, device: 'x; rm -rf /'}).start(() => {}), /not allowed/);
+    const silent = new Microphone.ProcessMicrophone({spawn, startTimeoutMs: 30}).start(() => {});
+    await assert.rejects(silent, /no audio within/);
+    assert.equal(calls.at(-1).child.killed, 'SIGTERM', 'a start that timed out kills its process');
+});
+
+test('microphone choice: arecord on the robot, Web Audio elsewhere, or as set', () => {
+    const robot = {existsSync: p => p === '/usr/bin/arecord' || p === '/opt/jibo/Jibo/Skills'}, sim = {existsSync: () => false};
+    assert.equal(Microphone.choose({micSource: 'auto'}, robot), 'arecord');
+    assert.equal(Microphone.choose({micSource: 'auto'}, sim), 'webaudio');
+    assert.equal(Microphone.choose({micSource: 'webaudio'}, robot), 'webaudio');
+    assert.equal(Microphone.choose({micSource: 'arecord'}, sim), 'arecord');
+});
+
+test('the classifier connection is warmed at the start and after a quiet spell', async () => {
+    let warmed = 0;
+    const classify = () => Promise.resolve({label: 'none'});
+    classify.warm = () => { warmed++; return Promise.resolve(); };
+    const h = harness({classify});
+    h.talk.open(); await untilListening(h);
+    assert.equal(warmed, 1);
+    h.emit({type: 'input_audio_buffer.speech_started'});
+    assert.equal(warmed, 1, 'not again right away');
+    h.talk.lastClassify -= 30000;
+    h.emit({type: 'input_audio_buffer.speech_started'});
+    assert.equal(warmed, 2);
+    h.talk.close();
+});
+
+// ---- actions (0.6.0) ----
+// A reply with text (optional) and function calls, as response.done carries them.
+function callReply(h, id, text, calls) {
+    h.emit({type: 'response.created', response: {id}});
+    if (text) for (const w of text.match(/\S+\s*/g)) h.emit({type: 'response.output_text.delta', response_id: id, delta: w});
+    h.emit({type: 'response.done', response: {id, status: 'completed', output: calls.map(([name, args, callId]) =>
+        ({type: 'function_call', name, call_id: callId || 'call_' + name, arguments: JSON.stringify(args || {})}))}});
+}
+function fakeActions(over = {}) {
+    const a = {redirects: [], handovers: [], failed: 0,
+        redirect: over.redirect || ((pkg, options) => { a.redirects.push([pkg, options]); }),
+        handover: state => a.handovers.push(state),
+        handoverFailed: () => { a.failed++; },
+        readClock: over.readClock || (() => Promise.resolve({timer: {set: true, remaining_s: 300, remaining: '5 minutes', length_s: 600}, alarm: {set: false}})),
+        setVolume: over.setVolume || (args => { a.volume = args; return {ok: true, volume: args.level || 7, of: 10}; }),
+        installed: over.installed || (() => true),
+        localTime: () => ({year: 2026, monthNum: 10, date: 13, dayOfWeek: 'Friday', hour: 15, minute: 7, zone: 'Europe/Amsterdam'}),
+        facts: over.facts || (() => '- Movies: Wall-E.')};
+    return a;
+}
+async function until(fn, ms = 2000) { for (let i = 0; i < ms / 5 && !fn(); i++) await sleep(5); assert.ok(fn(), 'condition not reached'); }
+async function youSay(h, words) {
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: words});
+}
+
+test('actions: tools go in session.update, open_app with the built-in apps and the openApps setting\'s extras; no tools without actions', async () => {
+    const h = harness({actions: fakeActions(), config: {cloudSkills: [], openApps: {stargazer: '@be/stargazer', bad: 'rm -rf'}}});
+    h.talk.open(); await untilListening(h);
+    const session = h.sent.find(e => e.type === 'session.update').session;
+    assert.equal(session.tool_choice, 'auto');
+    assert.deepEqual(session.tools.map(t => t.name), ['get_time', 'about_jibo', 'dance', 'set_volume', 'check_clock', 'set_timer', 'cancel_timer',
+        'set_alarm', 'cancel_alarm', 'use_skill', 'play_music', 'play_radio', 'open_app']);
+    assert.deepEqual(session.tools.at(-1).parameters.properties.name.enum, ['clock', 'settings', 'menu', 'gallery', 'yoga', 'meet someone new', 'stargazer']);
+    h.talk.close();
+    const plain = harness();
+    plain.talk.open(); await untilListening(plain);
+    assert.equal(plain.sent.find(e => e.type === 'session.update').session.tools, undefined);
+    plain.talk.close();
+});
+
+test('about_jibo runs in Noggin: FACTS.md goes back as the result, then the follow-up is spoken', async () => {
+    const h = harness({actions: fakeActions()});
+    h.talk.open(); await untilListening(h);
+    await youSay(h, 'what is your favorite movie');
+    callReply(h, 'r1', '', [['about_jibo', {}, 'f1']]);
+    await until(() => h.sent.some(e => e.type === 'response.create'));
+    const output = h.sent.find(e => e.type === 'conversation.item.create' && e.item.type === 'function_call_output');
+    assert.deepEqual(JSON.parse(output.item.output), {ok: true, facts: '- Movies: Wall-E.'});
+    reply(h, 'r2', 'Wall-E! A robot with a big heart.');
+    await untilListening(h);
+    assert.deepEqual(h.said.slice(-2), ['Wall-E!', 'A robot with a big heart.']);
+    h.talk.close();
+    const empty = harness({actions: fakeActions({facts: () => ''})});
+    empty.talk.open(); await untilListening(empty);
+    await youSay(empty, 'what is your favorite movie');
+    callReply(empty, 'r1', '', [['about_jibo', {}, 'f1']]);
+    await until(() => empty.sent.some(e => e.type === 'response.create'));
+    assert.equal(JSON.parse(empty.sent.find(e => e.item && e.item.type === 'function_call_output').item.output).ok, false);
+    empty.talk.close();
+});
+
+test('get_time hands over to Jibo\'s clock: no words first, the clock face for the time, the calendar for the date; Noggin comes back', async () => {
+    for (const [show, intent] of [['time', 'askForTime'], ['date', 'askForDate']]) {
+        const acts = fakeActions();
+        const h = harness({actions: acts});
+        const ended = h.talk.open(); await untilListening(h);
+        const before = h.said.length;
+        await youSay(h, show === 'time' ? 'what time is it' : 'what day is it today');
+        callReply(h, 'r1', '', [['get_time', {show}, 'c1']]);
+        await until(() => acts.redirects.length === 1);
+        assert.deepEqual(acts.redirects[0], ['@be/clock', {nlu: {intent, entities: {domain: 'clock'}}, match: {skipSurprises: true}}]);
+        assert.equal(h.said.length, before, 'Jibo says nothing first: the clock says it');
+        assert.equal(acts.handovers[0].comeback, true); assert.deepEqual(acts.handovers[0].args, {show});
+        h.talk.close('closed');   // Be closes Noggin for the clock
+        assert.equal(await ended, 'handover');
+    }
+});
+
+test('get_time when the clock does not open: the result carries the time, so the model can still say it', async () => {
+    const acts = fakeActions();
+    const h = harness({actions: acts, config: {actionTimeoutMs: 80}});
+    h.talk.open(); await untilListening(h);
+    await youSay(h, 'what time is it');
+    callReply(h, 'r1', '', [['get_time', {show: 'time'}, 'c1']]);
+    await until(() => h.sent.some(e => e.type === 'response.create'));
+    const output = h.sent.find(e => e.type === 'conversation.item.create' && e.item.call_id === 'c1');
+    assert.deepEqual(JSON.parse(output.item.output), {ok: false, error: 'the clock did not open', time: '3:07 PM', date: 'Friday, November 13, 2026', note: 'say it yourself'});
+    reply(h, 'r2', "It's seven past three.");
+    await untilListening(h);
+    assert.equal(h.said.at(-1), "It's seven past three.");
+    h.talk.close();
+});
+
+test('back after the clock showed the time: the note says your clock took over, with no timer facts', async () => {
+    const h = harness({actions: fakeActions(), resume: {pairs: [{you: 'what time is it', jibo: ''}], tool: 'get_time', args: {show: 'time'}, said: "It's 3:07."}});
+    h.talk.open();
+    await untilListening(h);
+    const note = h.sent.find(e => e.type === 'conversation.item.create').item.content[0].text;
+    assert.match(note, /you used get_time \(the time\) and your clock took over\. Your clock said: "It's 3:07\."/);
+    assert.doesNotMatch(note, /timer|alarm/);
+    h.talk.close();
+});
+const DANCE_NAMES = new Set(Object.values(core.DANCES).flatMap(d => d.list.map(a => a.n)));
+const dancesIn = style => core.DANCES[style].list.map(a => a.n);
+const playedDances = h => h.said.map(e => (/<anim name='([^']+)' endNeutral='true'\/>$/.exec(e) || [])[1]).filter(n => DANCE_NAMES.has(n));
+const danceOutput = h => JSON.parse(h.sent.filter(e => e.type === 'conversation.item.create' && e.item.type === 'function_call_output').at(-1).item.output);
+// One dance turn: the person's words, the model's dance call, and its "That was fun!" afterwards.
+async function danceTurn(h, words, n) {
+    await youSay(h, words);
+    callReply(h, 'd' + n, '', [['dance', {}, 'call_dance_' + n]]);
+    await until(() => h.sent.filter(e => e.type === 'response.create').length >= n);
+    reply(h, 'f' + n, 'That was fun!');
+    await untilListening(h);
+}
+
+test('dance runs in Noggin with a dance with music; the reply after it never dances again', async () => {
+    const h = harness({actions: fakeActions(), classify: () => Promise.resolve({label: 'dance'})});
+    h.talk.open(); await untilListening(h);
+    await danceTurn(h, 'can you dance for me', 1);
+    assert.equal(playedDances(h).length, 1);
+    assert.equal(h.said.at(-1), 'That was fun!', 'no dance expression on the line');
+    const log = h.logs.find(e => e.kind === 'speak' && e.from);
+    assert.equal(log.from, 'random'); assert.ok(core.danceStyles(log.anim).includes(log.dance));
+    assert.equal(danceOutput(h).done, 'Jibo danced'); assert.match(danceOutput(h).dance, /^(a|the) /);
+    h.talk.close();
+});
+
+test('dance: the style the person names, "again" replays it, otherwise no repeat of the last three', async () => {
+    const h = harness({actions: fakeActions()});
+    h.talk.open(); await untilListening(h);
+    await danceTurn(h, 'Jibo, do the robot!', 1);
+    const robot = playedDances(h)[0];
+    assert.ok(dancesIn('robot').includes(robot));
+    assert.equal(danceOutput(h).dance, 'the robot');
+    await danceTurn(h, 'do that again', 2);
+    assert.equal(playedDances(h)[1], robot, 'again: the same dance');
+    assert.equal(h.logs.filter(e => e.kind === 'speak' && e.from).at(-1).from, 'again');
+    await danceTurn(h, 'another one please', 3);
+    await danceTurn(h, 'and another dance', 4);
+    const played = playedDances(h);
+    assert.equal(new Set(played.slice(1)).size, 3, 'none of the last three again: ' + played.join(', '));
+    await danceTurn(h, 'a slow dance', 5);
+    assert.ok(dancesIn('slow').includes(playedDances(h)[4]));
+    assert.ok(!h.said.some(e => /Robot mode|robot dance!/.test(e)), 'random 0.5: nothing announced');
+    h.talk.close();
+});
+
+test('dance: no transcript in time means a random dance, never the previous turn\'s words', async () => {
+    const h = harness({actions: fakeActions(), random: () => 0});
+    h.talk.open(); await untilListening(h);
+    await danceTurn(h, 'do the robot', 1);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});   // no transcript this time
+    callReply(h, 'd2', '', [['dance', {}, 'call_dance_2']]);
+    await until(() => h.sent.filter(e => e.type === 'response.create').length >= 2);
+    assert.equal(h.logs.filter(e => e.kind === 'speak' && e.from).at(-1).from, 'random');
+    h.talk.close();
+});
+
+test('danceAnnounce: always names the dance first and tells the model; off never', async () => {
+    const h = harness({actions: fakeActions(), config: {danceAnnounce: 'always'}});
+    h.talk.open(); await untilListening(h);
+    await danceTurn(h, 'do the robot', 1);
+    // ONE speak: the words, then the dance. Two speaks (the line, then the dance 6 ms later) cut the
+    // dance to about half a second on the robot and in the sim.
+    const spoken = h.said.filter(e => /Robot mode/.test(e) || DANCE_NAMES.has((/name='([^']+)'/.exec(e) || [])[1]));
+    assert.equal(spoken.length, 1, h.said.join(' | '));
+    assert.match(spoken[0], /^Robot mode: on! <anim name='[A-Za-z0-9_]+' endNeutral='true'\/>$/, 'random 0.5: the second robot line, then the dance');
+    assert.match(danceOutput(h).announced, /do not name it again/);
+    h.talk.close();
+    const off = harness({actions: fakeActions(), config: {danceAnnounce: 'off'}, random: () => 0});
+    off.talk.open(); await untilListening(off);
+    await danceTurn(off, 'dance for me', 1);
+    assert.equal(off.said.filter(e => !/^</.test(e)).join('|'), 'Hi!|That was fun!');
+    assert.equal(danceOutput(off).announced, undefined);
+    off.talk.close();
+});
+
+test('dance without actions: the line\'s dance expression follows the person\'s words too', async () => {
+    const h = harness({config: {actions: false}, classify: () => Promise.resolve({label: 'dance'})});
+    h.talk.open(); await untilListening(h);
+    await youSay(h, 'can you do a twerk dance');  // without actions a dance needs the word "dance" (ExpressionPolicy)
+    reply(h, 'r1', 'Watch this!');
+    await untilListening(h);
+    assert.ok(dancesIn('twerk').includes(playedDances(h)[0]), h.said.join(' | '));
+    h.talk.close();
+});
+
+test('danceChoice, pickDance and danceAnnounce', () => {
+    assert.deepEqual(core.danceChoice('Can you do the robot?'), {style: 'robot'});
+    assert.deepEqual(core.danceChoice('Jibo, can you twerk'), {style: 'twerk'});
+    assert.deepEqual(core.danceChoice('do a slow dance'), {style: 'slow'});
+    assert.deepEqual(core.danceChoice('show me your belly dance'), {style: 'belly'});
+    assert.deepEqual(core.danceChoice('Again!'), {again: true});
+    assert.deepEqual(core.danceChoice('one more time'), {again: true});
+    assert.deepEqual(core.danceChoice('do the robot again'), {again: true, style: 'robot'});
+    assert.deepEqual(core.danceChoice('another one'), {});
+    assert.deepEqual(core.danceChoice('dance for me'), {});
+    assert.deepEqual(core.danceChoice('dance around the house'), {}, '"house" alone is no style');
+    assert.deepEqual(core.danceChoice('a robotic funk dance', () => 0), {style: 'funk'}, 'two styles: one at random');
+    assert.deepEqual(core.danceChoice('a robotic funk dance', () => 0.99), {style: 'robot'});
+    assert.deepEqual(core.danceChoice(null), {});
+    assert.equal(core.pickDance('waltz', {recent: ['Waltz_01_01']}), 'Waltz_01_01', 'the only one: even if recent');
+    const robots = dancesIn('robot');
+    assert.equal(core.pickDance('robot', {recent: robots.slice(1)}), robots[0]);
+    assert.ok(DANCE_NAMES.has(core.pickDance(null)) && DANCE_NAMES.has(core.pickDance('nonsense')));
+    assert.equal(core.danceName('robot'), 'the robot'); assert.equal(core.danceName(null), 'a dance');
+    assert.ok(Object.keys(core.DANCES).every(style => core.danceLine(style, () => 0) && !/[<>&]/.test(core.danceLine(style, () => 0.99))));
+    assert.equal(core.danceAnnounce('always', 'keyword', 0), true);
+    assert.equal(core.danceAnnounce('off', 'random', 9, () => 0), false);
+    assert.equal(core.danceAnnounce('sometimes', 'random', Infinity, () => 0.1), true);
+    assert.equal(core.danceAnnounce('sometimes', 'random', Infinity, () => 0.5), false, 'about one in three');
+    assert.equal(core.danceAnnounce('sometimes', 'keyword', Infinity, () => 0), false, 'not when the person named the style');
+    assert.equal(core.danceAnnounce('sometimes', 'random', 2, () => 0), false, 'not twice within three dances');
+});
+
+test('dance catalogue: 28 dances with music in 12 styles, each a real dance with its own music', {skip: !fs.existsSync(ANIMDB) && 'no animdb.json here'}, () => {
+    const anims = JSON.parse(fs.readFileSync(ANIMDB, 'utf8'));
+    const withMusic = Object.values(anims).filter(a => a.categories.includes('dance') && a.hasAudio).map(a => a.name);
+    assert.deepEqual([...DANCE_NAMES].sort(), withMusic.sort());
+    assert.equal(Object.keys(core.DANCES).length, 12);
+});
+
+test('set_timer: Jibo says "Okay!", then hands over to the clock with its NLU; Noggin ends as a handover', async () => {
+    const acts = fakeActions();
+    const h = harness({actions: acts});
+    const ended = h.talk.open(); await untilListening(h);
+    await youSay(h, 'set a timer for ten minutes');
+    callReply(h, 'r1', 'Okay!', [['set_timer', {minutes: 10}]]);
+    await until(() => acts.redirects.length === 1);
+    assert.equal(h.said.at(-1), 'Okay!');
+    assert.deepEqual(acts.redirects[0], ['@be/clock', {nlu: {intent: 'start', entities: {domain: 'timer', hours: '0', minutes: '10', seconds: 'null', time: 'null', ampm: 'null'}}, match: {skipSurprises: true}}]);
+    assert.equal(acts.handovers[0].tool, 'set_timer');
+    assert.equal(acts.handovers[0].comeback, true);
+    assert.deepEqual(acts.handovers[0].args, {seconds: 600, duration: '10 minutes'});
+    assert.deepEqual(acts.handovers[0].pairs, [{you: 'set a timer for ten minutes', jibo: 'Okay!'}]);
+    assert.equal(h.talk.state, 'handover');
+    h.talk.close('closed');   // Be closes Noggin for the clock
+    assert.equal(await ended, 'handover');
+    assert.ok(h.logs.some(e => e.kind === 'session_end' && e.reason === 'handover'));
+});
+
+test('a handover that does not happen in time: the model hears it failed and the conversation goes on', async () => {
+    const acts = fakeActions();
+    const h = harness({actions: acts, config: {actionTimeoutMs: 80}});
+    h.talk.open(); await untilListening(h);
+    await youSay(h, 'cancel my timer');
+    callReply(h, 'r1', '', [['cancel_timer', {}, 'c9']]);
+    await until(() => h.sent.some(e => e.type === 'response.create'));
+    assert.equal(acts.failed, 1);
+    const output = h.sent.find(e => e.type === 'conversation.item.create' && e.item.call_id === 'c9');
+    assert.deepEqual(JSON.parse(output.item.output), {ok: false, error: 'the clock did not open'});
+    reply(h, 'r2', "Hmm, my clock didn't open.");
+    await untilListening(h);
+    h.talk.close();
+});
+
+test('bad timer arguments and unknown tools come back as errors, without a handover', async () => {
+    const acts = fakeActions();
+    const h = harness({actions: acts});
+    h.talk.open(); await untilListening(h);
+    await youSay(h, 'set a timer for three seconds');
+    callReply(h, 'r1', '', [['set_timer', {seconds: 3}, 'a'], ['format_disk', {}, 'b']]);
+    await until(() => h.sent.some(e => e.type === 'response.create'));
+    const outputs = h.sent.filter(e => e.type === 'conversation.item.create').map(e => JSON.parse(e.item.output));
+    assert.deepEqual(outputs, [{ok: false, error: 'a timer must be longer than 5 seconds'}, {ok: false, error: 'unknown tool format_disk'}]);
+    assert.equal(acts.redirects.length, 0);
+    h.talk.close();
+});
+
+test('check_clock reads the clock in Noggin; if it cannot, the clock answers instead', async () => {
+    const acts = fakeActions();
+    const h = harness({actions: acts});
+    h.talk.open(); await untilListening(h);
+    await youSay(h, 'how long is left on my timer');
+    callReply(h, 'r1', '', [['check_clock']]);
+    await until(() => h.sent.some(e => e.type === 'response.create'));
+    const out = JSON.parse(h.sent.find(e => e.type === 'conversation.item.create').item.output);
+    assert.equal(out.timer.remaining, '5 minutes'); assert.deepEqual(out.alarm, {set: false});
+    h.talk.close();
+    const blind = fakeActions({readClock: () => Promise.resolve(null)});
+    const g = harness({actions: blind});
+    g.talk.open(); await untilListening(g);
+    await youSay(g, 'how long is left on my timer');
+    callReply(g, 'r1', '', [['check_clock']]);
+    await until(() => blind.redirects.length === 1);
+    assert.deepEqual(blind.redirects[0][1].nlu, {intent: 'query', entities: {domain: 'timer'}});
+    g.talk.close();
+});
+
+test('open_app: only listed apps, and the conversation ends there without coming back', async () => {
+    const acts = fakeActions();
+    const h = harness({actions: acts, config: {openApps: {recipes: '@be/recipe'}}});
+    const ended = h.talk.open(); await untilListening(h);
+    await youSay(h, 'open recipes');
+    callReply(h, 'r1', 'See you!', [['open_app', {name: 'Recipes'}]]);
+    await until(() => acts.redirects.length === 1);
+    assert.deepEqual(acts.redirects[0], ['@be/recipe', {nlu: {intent: 'menu', entities: {domain: '@be/recipe'}}, match: {skipSurprises: true}}]);
+    assert.equal(acts.handovers[0].comeback, false);
+    h.jibo.jetstream.events.skillSwitch.fire();
+    assert.equal(await ended, 'open_app');
+});
+
+test('cancel_timer / cancel_alarm: nothing set in the clock\'s record means no handover; the model says so', async () => {
+    const acts = fakeActions({readClock: () => Promise.resolve({timer: {set: false}, alarm: {set: false}})});
+    const h = harness({actions: acts});
+    h.talk.open(); await untilListening(h);
+    await youSay(h, 'cancel my alarm');
+    callReply(h, 'r1', '', [['cancel_alarm', {}, 'x1']]);
+    await until(() => h.sent.some(e => e.type === 'response.create'));
+    assert.deepEqual(JSON.parse(h.sent.find(e => e.item && e.item.call_id === 'x1').item.output), {ok: true, cancelled: false, note: 'no alarm is set'});
+    assert.equal(acts.redirects.length, 0);
+    h.talk.close();
+    // An alarm is set: the clock cancels it and Noggin comes back.
+    const set = fakeActions({readClock: () => Promise.resolve({timer: {set: false}, alarm: {set: true, time: '7:30 AM', day: 'Saturday'}})});
+    const g = harness({actions: set});
+    g.talk.open(); await untilListening(g);
+    await youSay(g, 'cancel my alarm');
+    callReply(g, 'r1', '', [['cancel_alarm']]);
+    await until(() => set.redirects.length === 1);
+    assert.deepEqual(set.redirects[0], ['@be/clock', {nlu: {intent: 'stop', entities: {domain: 'alarm'}}, match: {skipSurprises: true}}]);
+    assert.equal(set.handovers[0].tool, 'cancel_alarm'); assert.equal(set.handovers[0].comeback, true);
+    g.talk.close();
+});
+
+test('set_alarm hands over to the clock with a 12-hour time and upper-case AM/PM, and comes back', async () => {
+    const acts = fakeActions();
+    const h = harness({actions: acts});
+    h.talk.open(); await untilListening(h);
+    await youSay(h, 'wake me at half past seven tonight');
+    callReply(h, 'r1', '', [['set_alarm', {hour: 19, minute: 30}]]);
+    await until(() => acts.redirects.length === 1);
+    assert.deepEqual(acts.redirects[0][1].nlu, {intent: 'set', entities: {domain: 'alarm', time: '7:30', ampm: 'PM', hours: 'null', minutes: 'null', seconds: 'null'}});
+    assert.deepEqual(acts.handovers[0].args, {time: '7:30 PM'});
+    assert.equal(acts.handovers[0].comeback, true);
+    h.talk.close();
+});
+
+test('set_volume runs in Noggin; the result goes back to the model', async () => {
+    const acts = fakeActions();
+    const h = harness({actions: acts});
+    h.talk.open(); await untilListening(h);
+    await youSay(h, 'turn your volume to three');
+    callReply(h, 'r1', '', [['set_volume', {level: 3}, 'v']]);
+    await until(() => h.sent.some(e => e.type === 'response.create'));
+    assert.deepEqual(acts.volume, {level: 3});
+    assert.deepEqual(JSON.parse(h.sent.find(e => e.item && e.item.call_id === 'v').item.output), {ok: true, volume: 3, of: 10});
+    h.talk.close();
+});
+
+test('use_skill hands over and comes back; play_music and play_radio leave', async () => {
+    const acts = fakeActions();
+    const h = harness({actions: acts});
+    h.talk.open(); await untilListening(h);
+    await youSay(h, 'play word of the day');
+    callReply(h, 'r1', '', [['use_skill', {name: 'word of the day'}]]);
+    await until(() => acts.redirects.length === 1);
+    assert.deepEqual(acts.redirects[0], ['@be/word-of-the-day', {nlu: {intent: 'play', entities: {domain: 'word-of-the-day'}}, match: {skipSurprises: true}}]);
+    assert.equal(acts.handovers[0].comeback, true);
+    h.talk.close();
+    const music = fakeActions();
+    const g = harness({actions: music});
+    const ended = g.talk.open(); await untilListening(g);
+    await youSay(g, 'play bohemian rhapsody by queen');
+    callReply(g, 'r1', 'Enjoy!', [['play_music', {song: 'Bohemian Rhapsody', artist: 'Queen'}]]);
+    await until(() => music.redirects.length === 1);
+    assert.deepEqual(music.redirects[0], ['@be/music', {nlu: {intent: 'playSong', entities: {domain: 'music', query: 'Bohemian Rhapsody', artist: 'Queen'}}, match: {skipSurprises: true}}]);
+    assert.equal(music.handovers[0].comeback, false);
+    g.jibo.jetstream.events.skillSwitch.fire();
+    assert.equal(await ended, 'open_app');
+});
+
+test('open_app: an extra app that is not installed fails at once, without waiting for the timeout', async () => {
+    const acts = fakeActions({installed: pkg => pkg !== '@be/stargazer'});
+    const h = harness({actions: acts, config: {openApps: {stargazer: '@be/stargazer'}, actionTimeoutMs: 60000}});
+    h.talk.open(); await untilListening(h);
+    await youSay(h, 'open stargazer');
+    const asked = Date.now();
+    callReply(h, 'r1', '', [['open_app', {name: 'stargazer'}, 's']]);
+    await until(() => h.sent.some(e => e.type === 'response.create'));
+    assert.ok(Date.now() - asked < 1000);
+    assert.deepEqual(JSON.parse(h.sent.find(e => e.item && e.item.call_id === 's').item.output), {ok: false, error: 'that app is not installed on Jibo'});
+    assert.equal(acts.redirects.length, 0); assert.equal(acts.failed, 1);
+    h.talk.close();
+    // Stargazer (a store skill in use_skill) is checked the same way.
+    const store = fakeActions({installed: () => false});
+    const k = harness({actions: store});
+    k.talk.open(); await untilListening(k);
+    await youSay(k, 'show me a space picture');
+    callReply(k, 'r1', '', [['use_skill', {name: 'stargazer'}, 'z']]);
+    await until(() => k.sent.some(e => e.type === 'response.create'));
+    assert.deepEqual(JSON.parse(k.sent.find(e => e.item && e.item.call_id === 'z').item.output), {ok: false, error: 'that skill is not installed on Jibo'});
+    assert.equal(store.redirects.length, 0);
+    k.talk.close();
+    // Built-in apps are part of Jibo: no check.
+    const builtin = fakeActions({installed: () => false});
+    const g = harness({actions: builtin});
+    g.talk.open(); await untilListening(g);
+    await youSay(g, 'open the gallery');
+    callReply(g, 'r1', 'Bye!', [['open_app', {name: 'gallery'}]]);
+    await until(() => builtin.redirects.length === 1);
+    assert.equal(builtin.redirects[0][0], '@be/gallery');
+    g.talk.close();
+});
+
+test('back after another skill: the note names that skill, with no clock facts', async () => {
+    const acts = fakeActions();
+    const h = harness({actions: acts, resume: {pairs: [{you: 'take a picture', jibo: ''}], tool: 'use_skill', args: {name: 'take a photo'}, said: 'Get ready. Three. two. one.'}});
+    h.talk.open();
+    await untilListening(h);
+    const note = h.sent.find(e => e.type === 'conversation.item.create').item.content[0].text;
+    assert.match(note, /you used use_skill \(take a photo\) and that skill took over\. That skill said: "Get ready/);
+    assert.doesNotMatch(note, /timer|alarm/);
+    h.talk.close();
+});
+
+test('tool rounds are limited: a third round in a row is refused and Jibo listens', async () => {
+    const h = harness({actions: fakeActions()});
+    h.talk.open(); await untilListening(h);
+    await youSay(h, 'what is your favorite movie');
+    callReply(h, 'r1', '', [['about_jibo', {}, 'a']]);
+    await until(() => h.sent.filter(e => e.type === 'response.create').length === 1);
+    callReply(h, 'r2', '', [['about_jibo', {}, 'b']]);
+    await until(() => h.sent.filter(e => e.type === 'response.create').length === 2);
+    callReply(h, 'r3', '', [['about_jibo', {}, 'c']]);
+    await untilListening(h);
+    const last = h.sent.filter(e => e.type === 'conversation.item.create').at(-1);
+    assert.deepEqual(JSON.parse(last.item.output), {ok: false, error: 'too many actions in a row'});
+    assert.equal(h.sent.filter(e => e.type === 'response.create').length, 2);
+    h.talk.close();
+});
+
+test('without actions, function calls are ignored as in 0.5', async () => {
+    const h = harness();
+    h.talk.open(); await untilListening(h);
+    await youSay(h, 'what time is it');
+    callReply(h, 'r1', 'No idea!', [['get_time']]);
+    await untilListening(h);
+    assert.ok(!h.sent.some(e => e.type === 'response.create' || e.type === 'conversation.item.create'));
+    h.talk.close();
+});
+
+test('resume after the clock without a comeback line: no greeting; the conversation and the timer facts go to the model, which speaks next', async () => {
+    const acts = fakeActions();
+    const h = harness({actions: acts, config: {comebackLine: ''}, resume: {pairs: [{you: 'set a timer for five minutes', jibo: 'Okay!'}], tool: 'set_timer', args: {seconds: 300, duration: '5 minutes'}, said: 'You got it. 5 minutes.'}});
+    h.talk.open();
+    await until(() => h.sent.some(e => e.type === 'response.create'));
+    const note = h.sent.find(e => e.type === 'conversation.item.create').item;
+    assert.equal(note.role, 'system');
+    assert.match(note.content[0].text, /Person: set a timer for five minutes\nJibo: Okay!/);
+    assert.match(note.content[0].text, /set_timer for 5 minutes/);
+    assert.match(note.content[0].text, /Your clock said: "You got it. 5 minutes."/);
+    assert.match(note.content[0].text, /A timer is now running with 5 minutes left/);
+    reply(h, 'r1', 'Anything else?');
+    await untilListening(h);
+    assert.deepEqual(h.said, ['Anything else?'], 'no greeting');
+    assert.ok(h.logs.some(e => e.kind === 'session' && e.resumed === 'set_timer'));
+    assert.ok(h.logs.some(e => e.kind === 'resume' && e.clock.timer.set === true));
+    h.talk.close();
+});
+
+test('a follow-up reply that never comes does not leave Jibo stuck', async () => {
+    const h = harness({actions: fakeActions(), config: {replyWaitMs: 80}});
+    h.talk.open(); await untilListening(h);
+    await youSay(h, 'what is your favorite movie');
+    callReply(h, 'r1', '', [['about_jibo']]);
+    await sleep(40); assert.equal(h.talk.state, 'thinking');
+    await untilListening(h);
+    assert.ok(h.logs.some(e => e.kind === 'skipped' && e.reason === 'no_reply'));
+    h.talk.close();
+});
+
+test('persona with actions: the tool rules replace "no tools", and the time is the home timezone\'s', () => {
+    const text = core.instructions('', '', {year: 2026, monthNum: 10, date: 13, dayOfWeek: 'Friday', hour: 9, minute: 5}, {apps: ['clock']});
+    assert.match(text, /use your timer and alarm, .*and open your apps\./);
+    assert.match(text, /Friday, November 13, 2026, 9:05 AM local time/);
+    assert.doesNotMatch(text, /in this voice mode you have no tools/);
+});
+
+// ---- startup timing ----
+test('startup: one log line with each step\'s time since the skill opened, in order, and what each wait ended on', async () => {
+    const h = harness({openedAt: Date.now() - 50, startup: {source: 'test', since_comeback_ms: 12}});
+    h.talk.open(); await untilListening(h);
+    h.audio();
+    const s = h.logs.filter(e => e.kind === 'startup');
+    assert.equal(s.length, 1);
+    const st = s[0];
+    assert.equal(st.source, 'test'); assert.equal(st.since_comeback_ms, 12); assert.equal(st.eye, 'shown'); assert.equal(st.hotword, 'off'); assert.equal(st.resumed, false);
+    // Side by side after talk_open: the eye then the greeting; the connection; the microphone; the hotword.
+    const chains = [['talk_created', 'talk_open', 'eye', 'first_speech_queued', 'first_speech', 'first_speech_done', 'listening'],
+        ['talk_open', 'session_created', 'session_updated', 'listening'], ['talk_open', 'mic_start', 'mic_ready', 'listening'], ['talk_open', 'hotword', 'listening']];
+    chains.forEach(order => {
+        order.forEach(k => assert.equal(typeof st.ms[k], 'number', k));
+        for (let i = 1; i < order.length; i++) assert.ok(st.ms[order[i]] >= st.ms[order[i - 1]], order[i] + ' after ' + order[i - 1]);
+    });
+    assert.ok(st.ms.talk_created >= 50, 'counted from openedAt');
+    assert.ok(st.ms.first_speech_done - st.ms.first_speech >= 15, 'the greeting took its time');
+    assert.equal(h.logs.indexOf(st), h.logs.findIndex(e => e.kind === 'startup'));
+    h.talk.close();
+});
+
+test('startup: waits that time out are named, and only listening waits for the hotword; a failed start still logs its steps', async () => {
+    const h = harness();
+    h.jibo.face.views.forceEyeView = () => {};                      // never calls back
+    h.jibo.jetstream.setHotwordMode = () => ({activated: new Promise(() => {}), release() {}});
+    h.talk.open(); await untilListening(h);
+    const st = h.logs.find(e => e.kind === 'startup');
+    assert.equal(st.eye, 'timeout'); assert.equal(st.hotword, 'timeout');
+    assert.ok(st.ms.eye >= 1450 && st.ms.hotword >= 1950 && st.ms.listening >= st.ms.hotword);
+    assert.ok(st.ms.session_updated < 1000, 'connected without waiting for the eye or the hotword');
+    h.talk.close();
+    const f = harness({config: {greeting: ''}});
+    f.talk.connectFn = () => Promise.reject(Error('no session from OpenAI within 15 s'));
+    assert.equal(await f.talk.open(), 'error');
+    const failed = f.logs.find(e => e.kind === 'startup');
+    assert.match(failed.failed, /no session/);
+    assert.equal(failed.ms.session_created, undefined);
+});
+
+test('startup after the clock: since_comeback_ms, the timer read, the model\'s first text and words', async () => {
+    const h = harness({actions: fakeActions(), config: {comebackLine: ''}, resume: {pairs: [], tool: 'set_timer', args: {}, said: ''}, startup: {since_comeback_ms: 420}});
+    h.talk.open();
+    await until(() => h.sent.some(e => e.type === 'response.create'));
+    reply(h, 'r1', 'Anything else?');
+    await untilListening(h);
+    const st = h.logs.find(e => e.kind === 'startup');
+    assert.equal(st.resumed, 'set_timer'); assert.equal(st.since_comeback_ms, 420);
+    ['resume_timer_read', 'first_text', 'first_speech', 'first_speech_done', 'listening'].forEach(k => assert.equal(typeof st.ms[k], 'number', k));
+    h.talk.close();
+});
+
+test('realtime connect records socket open and session.created times', async () => {
+    class FakeSocket { constructor() { FakeSocket.last = this; this.readyState = 1; setTimeout(() => { this.onopen && this.onopen(); setTimeout(() => this.onmessage({data: JSON.stringify({type: 'session.created', session: {}})}), 15); }, 10); } send() {} close() {} }
+    const before = Date.now();
+    const rt = await openai.connect({apiBase: 'https://x/v1', realtimeModel: 'm', apiKey: 'k'}, FakeSocket);
+    assert.ok(rt.timing.start >= before && rt.timing.open >= rt.timing.start + 5 && rt.timing.created >= rt.timing.open + 10);
+});
+
+test('after the greeting the microphone stays closed for echoTailMs, as after any other line', async () => {
+    const h = harness({config: {echoTailMs: 150}});
+    h.talk.open();
+    await until(() => h.logs.some(e => e.kind === 'startup' || e.kind === 'speak') && h.talk.speaking === false && h.said.length === 1);
+    await sleep(60);
+    assert.notEqual(h.talk.state, 'listening'); h.audio(); assert.equal(h.appends(), 0, 'nothing sent during the echo tail');
+    await untilListening(h);
+    const st = h.logs.find(e => e.kind === 'startup');
+    assert.ok(st.ms.listening - st.ms.first_speech_done >= 140, 'listening ' + (st.ms.listening - st.ms.first_speech_done) + ' ms after the greeting');
+    h.talk.close();
+});
+
+test('fast start: the greeting (with its expression) begins once the eye shows, before OpenAI has even answered', async () => {
+    const h = harness({config: {greetingExpression: 'hello', echoTailMs: 50}});
+    let connectAsked = null, answer;
+    h.talk.connectFn = () => { connectAsked = Date.now(); return new Promise(resolve => { answer = () => resolve(h.rt); }); };
+    h.talk.open();
+    await until(() => h.said.length === 1);
+    assert.equal(h.said[0], "<anim name='greetings_01' nonBlocking='true' endNeutral='true'/>Hi!");
+    assert.ok(connectAsked, 'connecting while Jibo greets');
+    await sleep(80);
+    assert.notEqual(h.talk.state, 'listening', 'no listening before OpenAI is ready');
+    answer();
+    await untilListening(h);
+    const st = h.logs.find(e => e.kind === 'startup');
+    assert.ok(st.ms.first_speech <= st.ms.session_updated, 'greeting started before the session was ready');
+    assert.ok(st.ms.listening >= st.ms.session_updated);
+    assert.equal(h.talk.policy.last, 'hello', 'the greeting expression counts for the expression limits');
+    h.talk.close();
+});
+
+test('a connection that fails during the greeting lets Jibo finish it, then he apologises', async () => {
+    const h = harness({speakMs: 120});
+    h.talk.connectFn = () => Promise.reject(Error('connection closed (1006)'));
+    const ended = h.talk.open();
+    assert.equal(await ended, 'error');
+    assert.equal(h.said[0], 'Hi!');
+    assert.match(h.said[1], /can't think straight/);
+    assert.ok(h.logs.some(e => e.kind === 'startup' && /1006/.test(e.failed)));
+});
+
+test('no greeting: listening starts as soon as everything is ready', async () => {
+    const h = harness({config: {greeting: ''}});
+    h.talk.open(); await untilListening(h);
+    assert.equal(h.said.length, 0);
+    h.talk.close();
+});
+
+test('back after the clock: Jibo says "Anything else?" at once, while OpenAI connects; the model only hears that he did', async () => {
+    const acts = fakeActions();
+    const h = harness({actions: acts, resume: {pairs: [{you: 'set a timer for five minutes', jibo: ''}], tool: 'set_timer', args: {seconds: 300, duration: '5 minutes'}, said: 'You got it. 5 minutes.'}});
+    let answer;
+    h.talk.connectFn = () => new Promise(resolve => { answer = () => resolve(h.rt); });
+    h.talk.open();
+    await until(() => h.said.length === 1);
+    assert.equal(h.said[0], 'Anything else?', 'spoken before the session exists, with no animation');
+    answer();
+    await untilListening(h);
+    assert.ok(!h.sent.some(e => e.type === 'response.create'), 'no reply asked of the model');
+    const note = h.sent.find(e => e.type === 'conversation.item.create').item.content[0].text;
+    assert.match(note, /have just said: "Anything else\?"\. Wait for your person's answer/);
+    assert.match(note, /A timer is now running with 5 minutes left/);
+    assert.deepEqual(h.talk.pairs.at(-1), {you: '', jibo: 'Anything else?'});
+    const st = h.logs.find(e => e.kind === 'startup');
+    assert.ok(st.ms.listening - st.ms.first_speech_done >= 5, 'echo tail after the line');
+    h.talk.close();
+});
+
+test('the greeting smiles with the eye only (no body movement), outside the classifier\'s choices', async () => {
+    const h = harness({config: {greetingExpression: settings.DEFAULTS.greetingExpression}});
+    h.talk.open(); await untilListening(h);
+    assert.equal(h.said[0], "<anim name='eye_happy_00' nonBlocking='true' endNeutral='true'/>Hi!");
+    assert.equal(settings.DEFAULTS.greeting, 'Hi!');
+    assert.ok(!core.choices('line').some(c => c.value === 'smile'));
+    h.talk.close();
+});
+
+test('timer tools: the instructions and tool descriptions say to call them without words first', () => {
+    const text = core.voiceSetup(new Date(2026, 10, 13, 9, 0), {apps: []});
+    assert.match(text, /For get_time, set_timer, cancel_timer, set_alarm, cancel_alarm and use_skill, call the tool without saying anything first/);
+    assert.doesNotMatch(text, /"Okay!"/);
+    const tools = require(path.join(source, 'noggin/lib/actions.js')).tools({});
+    for (const name of ['get_time', 'set_timer', 'cancel_timer', 'set_alarm', 'cancel_alarm', 'use_skill']) assert.match(tools.find(t => t.name === name).description, /without saying anything first/);
+});
+// ---- expressions next to speech (0.6.5) ----
+// A DOF set like jibo.expression.dofs: names, and minus() for a new set.
+const dofSet = names => ({names, minus: other => dofSet(names.filter(n => other.names.indexOf(n) < 0))});
+const DOFS = {ALL: dofSet(['BODY', 'EYE', 'OVERLAY', 'LED', 'BASE', 'EYE_TRANSLATE']), LED: dofSet(['LED']), BASE: dofSet(['BASE']), EYE_TRANSLATE: dofSet(['EYE_TRANSLATE'])};
+// animDB with a few animations: each plays for `ms` and ends as `results[name]` (default STOPPED).
+function fakeAnimDB(results = {}, ms = 60) {
+    const played = [], centred = [];
+    const animDB = {getAnimByName: name => name === 'missing_01' ? null : {
+        meta: {endsNeutral: name !== 'Confused_01'},
+        createFromConfig: config => {
+            const started = emitter();
+            const playback = {instance: {events: {started}}, stopped: false,
+                play: opts => {
+                    played.push({name, config, opts});
+                    if (results[name] === 'REJECTED') return sleep(2).then(() => 'REJECTED');
+                    setTimeout(() => started.fire(), 3);
+                    return new Promise(resolve => { playback.end = resolve; setTimeout(() => resolve('STOPPED'), ms); });
+                },
+                stop: () => { playback.stopped = true; if (playback.end) playback.end('STOPPED'); return Promise.resolve(); }};
+            return sleep(5).then(() => playback);
+        }}};
+    const expression = {dofs: DOFS, centerRobot: c => { centred.push(c); return Promise.resolve(); }};
+    return {animDB, expression, played, centred};
+}
+
+test('the new modes finish a line when its words are done (dispatchComplete TTS); esml keeps 0.6.4\'s wait', async () => {
+    for (const [mode, want] of [['esml-tts', {dispatchComplete: 'TTS'}], ['animdb', {dispatchComplete: 'TTS'}], ['esml', undefined]]) {
+        const h = harness({config: {expressionPlay: mode, greetingExpression: 'hello'}});
+        h.talk.open(); await untilListening(h);
+        assert.deepEqual(h.options[0], want, mode);
+        const speak = h.logs.find(e => e.kind === 'speak'), spoken = h.logs.find(e => e.kind === 'spoken');
+        assert.equal(speak.mode, mode); assert.equal(speak.play, 'greetings_01'); assert.equal(typeof speak.at, 'number');
+        assert.ok(spoken.ms >= 15 && spoken.mode === mode);
+        assert.ok(h.logs.some(e => e.kind === 'listen' && typeof e.after_speech === 'number'));
+        h.talk.close();
+    }
+    assert.equal(settings.DEFAULTS.expressionPlay, 'animdb');
+});
+
+test('esml-tts: the animation stays in the line; when speech\'s own animations end is logged', async () => {
+    let finish;
+    const h = harness({config: {greetingExpression: 'hello'}, speech: {waitForAnimDispatch: () => new Promise(r => { finish = r; })}});
+    h.talk.open(); await untilListening(h);
+    assert.equal(h.said[0], "<anim name='greetings_01' nonBlocking='true' endNeutral='true'/>Hi!");
+    assert.ok(!h.logs.some(e => e.kind === 'speech_anims'), 'listening did not wait for the animation');
+    finish(); await sleep(5);
+    assert.ok(h.logs.find(e => e.kind === 'speech_anims').ms >= 15);
+    h.talk.close();
+});
+
+test('animdb: the animation starts first, next to the words, with its LED channels removed; Jibo is centred only after one that ends off-neutral', async () => {
+    const db = fakeAnimDB();
+    const h = harness({config: {expressionPlay: 'animdb', greetingExpression: 'hello'}, animDB: db.animDB, expression: db.expression});
+    h.talk.open(); await untilListening(h);
+    assert.equal(h.said[0], 'Hi!', 'no <anim> in the words');
+    assert.equal(db.played[0].name, 'greetings_01');
+    assert.ok(!db.played[0].config.dofs.names.includes('LED') && db.played[0].config.dofs.names.includes('BODY'));
+    assert.ok(!db.played[0].opts.forceReturnToIdle, 'no return to idle that would take the LED');
+    assert.equal(db.played[0].config.cache, 'global', 'a named loader cache (without one the load never finishes on the robot)');
+    assert.ok(h.logs.findIndex(e => e.kind === 'speak') > -1);
+    await until(() => h.logs.some(e => e.kind === 'anim'));
+    const anim = h.logs.find(e => e.kind === 'anim');
+    assert.equal(anim.result, 'STOPPED'); assert.equal(anim.ledStripped, true); assert.ok(anim.start >= anim.asked && anim.end >= anim.start);
+    assert.equal(db.centred.length, 0, 'greetings_01 ends neutral');
+    const off = h.talk.player.play('Confused_01', {via: 'test'});
+    assert.equal(await off.done, 'STOPPED');
+    assert.ok(!db.centred[0].dofs.names.includes('LED') && !db.centred[0].dofs.names.includes('BASE'));
+    h.talk.close();
+});
+
+test('animdb: a rejected or missing animation is logged and the words still come', async () => {
+    const db = fakeAnimDB({greetings_01: 'REJECTED'});
+    const h = harness({config: {expressionPlay: 'animdb', greetingExpression: 'hello', expressionLeadMs: 40}, animDB: db.animDB, expression: db.expression});
+    h.talk.open(); await untilListening(h);
+    assert.equal(h.said[0], 'Hi!');
+    await until(() => h.logs.some(e => e.kind === 'anim'));
+    assert.equal(h.logs.find(e => e.kind === 'anim').result, 'REJECTED');
+    assert.equal(await h.talk.player.play('missing_01').done, 'missing');
+    h.talk.close();
+});
+
+test('a new expression replaces the one still playing; closing Noggin stops it', async () => {
+    const db = fakeAnimDB({}, 5000);
+    const h = harness({config: {expressionPlay: 'animdb', greeting: ''}, animDB: db.animDB, expression: db.expression});
+    h.talk.open(); await untilListening(h);
+    const first = h.talk.player.play('excited_01'); await first.started;
+    const second = h.talk.player.play('sad_01'); await second.started;
+    assert.equal(await first.done, 'replaced');
+    assert.ok(h.talk.player.busy());
+    await h.talk.close();
+    assert.equal(await second.done, 'closed');
+});
+
+test('new modes: the reaction plays through the animation database at once and never holds up the first line', async () => {
+    const db = fakeAnimDB({}, 300);
+    const h = harness({speakMs: 30, animDB: db.animDB, expression: db.expression,
+        classify: (person, line, kind) => kind === 'reaction' ? Promise.resolve({label: 'surprised', confidence: 0.9}) : Promise.resolve({label: 'none'})});
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'I won the lottery!'});
+    await sleep(15);
+    assert.equal(db.played[0].name, 'surprised_02');
+    assert.equal(h.said.length, 1, 'nothing spoken for the reaction');
+    reply(h, 'r1', 'No way! That is wonderful.');
+    await until(() => h.said.length === 3);
+    assert.ok(h.talk.player.busy(), 'the lines came while the reaction still played');
+    assert.deepEqual(h.said.slice(1), ['No way!', 'That is wonderful.']);
+    await untilListening(h);
+    assert.equal(h.logs.find(e => e.kind === 'jibo').reaction.played, 'before');
+    h.talk.close();
+});
+
+test('expressionTailMs: listening waits (at most that long) for an expression still playing', async () => {
+    const db = fakeAnimDB({}, 250);
+    const h = harness({config: {expressionPlay: 'animdb', greetingExpression: 'hello', expressionTailMs: 1000}, animDB: db.animDB, expression: db.expression});
+    h.talk.open(); await untilListening(h);
+    const anim = h.logs.find(e => e.kind === 'anim'), listen = h.logs.find(e => e.kind === 'listen');
+    assert.ok(anim && h.logs.indexOf(anim) < h.logs.indexOf(listen), 'the animation ended before listening');
+    assert.equal(listen.anim_playing, false);
+    h.talk.close();
+});
+
+test('lab: the fixed run plays the same lines in each mode without OpenAI or the microphone, then ends', async () => {
+    const pause = Conversation.LAB_PAUSE_MS; Conversation.LAB_PAUSE_MS = 1;
+    try {
+        const db = fakeAnimDB({}, 20);
+        const h = harness({speakMs: 5, config: {lab: 'expressions'}, animDB: db.animDB, expression: db.expression});
+        let connected = false; h.talk.connectFn = () => { connected = true; return Promise.resolve(h.rt); };
+        assert.equal(await h.talk.open(), 'lab');
+        assert.ok(!connected && h.starts() === 0, 'no OpenAI, no microphone');
+        assert.deepEqual(h.logs.filter(e => e.kind === 'lab_mode').map(e => e.mode), ['esml', 'esml-tts', 'animdb']);
+        const steps = h.logs.filter(e => e.kind === 'lab_step');
+        assert.equal(steps.filter(e => e.mode === 'animdb').map(e => e.step).join(), 'plain,hello,long,eye,led,back_to_back,led_kept,reaction');
+        assert.ok(!steps.some(e => e.mode === 'esml' && e.step === 'reaction'));
+        assert.ok(h.said.includes("<anim name='yep_04' nonBlocking='true' endNeutral='true'/>Yes, exactly."), 'LED animation in ESML (esml modes)');
+        assert.ok(db.played.some(p => p.name === 'yep_04') && db.played.some(p => p.name === 'Thinking_00'));
+        assert.equal(h.logs.filter(e => e.kind === 'lab_settled').length, 3 * 6 + 2 + 1 + 1);
+        const kept = db.played.find(p => p.name === 'eye_happy_01');
+        assert.equal(kept.config.dofs, undefined, 'led_kept: played as it is');
+        assert.ok(h.logs.some(e => e.kind === 'lab_ring' && e.refresh === false));
+        assert.equal(h.said.at(-1), 'Lab done.');
+        assert.equal(h.talk.config.expressionPlay, 'esml-tts', 'the mode is back as set');
+        const only = harness({speakMs: 5, config: {lab: 'animdb'}, animDB: db.animDB, expression: db.expression});
+        assert.equal(await only.talk.open(), 'lab');
+        assert.deepEqual(only.logs.filter(e => e.kind === 'lab_mode').map(e => e.mode), ['animdb']);
+    } finally { Conversation.LAB_PAUSE_MS = pause; }
+});
+
+test('an animation database that never answers: load and play time out, are logged, and Noggin is not left busy', async () => {
+    const Player = require(path.join(source, 'noggin/lib/expression.js'));
+    const saved = [Player.LOAD_MS, Player.SLACK_MS]; Player.LOAD_MS = 40; Player.SLACK_MS = 40;
+    try {
+        const logs = [], stops = [];
+        const jibo = {expression: {dofs: DOFS}, animDB: {getAnimByName: name => ({meta: {duration: 3, endsNeutral: true},
+            createFromConfig: () => name === 'never_loads' ? new Promise(() => {}) : Promise.resolve({instance: {events: {}}, play: () => new Promise(() => {}), stop: () => { stops.push(name); return Promise.resolve(); }})})}};
+        const player = new Player(jibo, {write: e => logs.push(e)});
+        const load = player.play('never_loads');
+        assert.equal(await load.done, 'load_timeout'); assert.equal(await load.started, false);
+        const hang = player.play('never_ends');
+        assert.equal(await hang.done, 'play_timeout');
+        assert.deepEqual(stops, ['never_ends']);
+        assert.ok(!player.busy());
+        assert.deepEqual(logs.map(e => e.result), ['load_timeout', 'play_timeout']);
+    } finally { [Player.LOAD_MS, Player.SLACK_MS] = saved; }
+});
+
+// ---- moods, sizes and the catalogue (0.7.0) ----
+test('catalogue: every mood has animations, each a real, silent animation that starts neutral and fits its size', {skip: !fs.existsSync(ANIMDB) && 'no animdb.json here'}, () => {
+    const anims = JSON.parse(fs.readFileSync(ANIMDB, 'utf8')), catalog = require(path.join(source, 'noggin/lib/catalog.json'));
+    const moods = Object.keys(core.MOODS).filter(n => n !== 'dance');
+    assert.deepEqual(Object.keys(catalog.moods).sort(), moods.sort(), 'one catalogue entry per mood, and only those');
+    let count = 0;
+    for (const mood of moods) {
+        const {small, big} = catalog.moods[mood];
+        assert.ok(small.length + big.length > 0, mood + ' has animations');
+        for (const [size, list] of [['small', small], ['big', big]]) for (const a of list) {
+            const m = anims[a.n]; count++;
+            assert.ok(m, mood + ': ' + a.n + ' exists');
+            assert.ok(!m.hasAudio && m.startsNeutral && m.duration <= catalog.maxFrames, mood + ': ' + a.n + ' silent, neutral start, short');
+            assert.equal(a.f, m.duration); assert.equal(a.led, !!m.layers.LED); assert.equal(a.body, !!m.layers.Body); assert.equal(a.neutral, m.endsNeutral !== false);
+            assert.equal(size === 'small', !a.body || a.f <= catalog.smallFrames, mood + ': ' + a.n + ' size');
+        }
+    }
+    assert.ok(count >= 150, count + ' animations');
+    // Generated, not hand-edited: the generator gives the same file.
+    const gen = execFileSync(process.execPath, ['-e', `import('${path.join(source, 'tools/expression-catalog.mjs')}').then(m => { const db = JSON.parse(require('fs').readFileSync('${ANIMDB}', 'utf8')); process.stdout.write(JSON.stringify({moods: m.build(db).moods, emoji: m.emojiIndex(db)})); })`]);
+    const fresh = JSON.parse(gen);
+    assert.deepEqual(fresh.moods, catalog.moods, 'catalog.json is up to date: node tools/expression-catalog.mjs');
+    assert.deepEqual(fresh.emoji, catalog.emoji, 'catalog.json emoji are up to date');
+    // Emoji: pictures on the eye, silent, no body, no LED, short.
+    const emojiNames = new Set(Object.values(catalog.emoji).flat());
+    assert.ok(Object.keys(catalog.emoji).length > 400 && emojiNames.size > 300);
+    for (const name of emojiNames) {
+        const m = anims[name];
+        assert.ok(m && m.categories.includes('emoji') && !m.hasAudio && !m.layers.Body && !m.layers.LED && m.duration <= catalog.maxFrames, name);
+    }
+    assert.ok(!catalog.emoji.dog.some(n => /hot/i.test(n)), 'a dog is not a hot dog');
+});
+
+test('pickAnimation: the asked size, no recent repeats, LED animations only when allowed, the other size or the default as fallback', () => {
+    const c = core.CATALOG;
+    const names = list => list.map(a => a.n);
+    for (let i = 0; i < 20; i++) {
+        assert.ok(names(c.happy.small).includes(core.pickAnimation('happy', 'small')));
+        assert.ok(names(c.happy.big).includes(core.pickAnimation('happy', 'big')));
+        assert.notEqual(core.pickAnimation('yes', 'small'), 'yep_04', 'LED animation not without led');
+    }
+    assert.equal(core.pickAnimation('yes', 'small', {led: true, random: () => 0.99}), 'yep_04');
+    const recent = names(c.thinking.big).slice(1);
+    assert.equal(core.pickAnimation('thinking', 'big', {recent}), c.thinking.big[0].n, 'the one not played recently');
+    assert.ok(names(c.laugh.big).includes(core.pickAnimation('laugh', 'small')), 'no small laugh: a big one');
+    assert.ok([...names(c.happy.small), ...names(c.happy.big)].includes(core.pickAnimation('happy', null)), 'no size: either');
+    assert.equal(core.pickAnimation('dance', 'big'), 'dance_funk_02');
+    assert.equal(core.pickAnimation('nonsense', 'big'), null);
+});
+
+test('Decisions with the size question: small/big parsed; refused once, it is dropped for the session; Responses gives a size too', async () => {
+    const sized = core.decisionsRequest('gpt-6-luna', 'I won!', 'Wow!', 'line', true);
+    assert.deepEqual(sized.questions.map(q => q.name), ['expression', 'size']);
+    assert.deepEqual(sized.questions[1].choices.map(c => c.value), ['small', 'big']);
+    const two = (choice, size) => ({answers: [{type: 'choice', name: 'expression', choice, confidence: 0.9}, {type: 'choice', name: 'size', choice: size, confidence: 0.7}]});
+    assert.deepEqual(core.decisionLabel(two('happy', 'big'), 0.35), {label: 'happy', confidence: 0.9, size: 'big'});
+    assert.equal(core.decisionLabel(two('none', 'big'), 0.35).size, null);
+    assert.equal(core.decisionLabel(two('happy', 'huge'), 0.35).size, null);
+    const bodies = [];
+    const classify = openai.classifier(Object.assign({}, settings.DEFAULTS, {apiKey: 'sk'}), (route, body) => {
+        bodies.push(body);
+        return Promise.resolve(body.questions.length === 2 ? {status: 400, ms: 30, json: {error: {code: 'invalid_request'}}}
+            : {status: 200, ms: 90, json: {answers: [{type: 'choice', name: 'expression', choice: 'sad', confidence: 0.8}]}});
+    });
+    const first = await classify('my cat died', 'I am so sorry.', 'line');
+    assert.equal(first.label, 'sad'); assert.equal(first.size, null); assert.match(first.switched, /size question refused/);
+    await classify('x', 'y', 'reaction');
+    assert.deepEqual(bodies.map(b => b.questions.length), [2, 1, 1], 'asked once with size, then without for good');
+    const responses = core.classifierRequest('m', 'a', 'b');
+    assert.deepEqual(responses.text.format.schema.required, ['expression', 'size']);
+    assert.equal(core.classifierSize({output_text: '{"expression":"happy","size":"small"}'}), 'small');
+    assert.equal(core.classifierSize({output_text: 'nope'}), null);
+});
+
+test('defaults: animdb, the catalogue, a size; a line plays a random animation of its mood and size, never the last few again', async () => {
+    assert.equal(settings.DEFAULTS.expressionPlay, 'animdb'); assert.equal(settings.DEFAULTS.expressionSize, true); assert.equal(settings.DEFAULTS.emoji, true);
+    assert.equal(settings.DEFAULTS.expressionPick, undefined, 'no fixed animations any more');
+    const db = fakeAnimDB({}, 10);
+    const h = harness({realChoose: true, animDB: db.animDB, expression: db.expression, config: {expressionPlay: 'animdb', expressionGapMs: 0},
+        classify: (person, line, kind) => Promise.resolve(kind === 'reaction' ? {label: 'none'} : {label: 'thinking', size: 'big', confidence: 0.9})});
+    h.talk.policy.repeatMs = 0;
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'Tell me something deep'});
+    reply(h, 'r1', 'Hmm. Let me see. Well. Maybe so. Who knows. Think about it.');
+    await untilListening(h);
+    const played = db.played.map(p => p.name), big = core.CATALOG.thinking.big.map(a => a.n);
+    assert.equal(played.length, 2, 'the first sentence, then the rest');
+    assert.ok(played.every(n => big.includes(n)) && played[0] !== played[1], 'two different big thinking animations: ' + played);
+    const speak = h.logs.find(e => e.kind === 'speak' && e.turn === 1);
+    assert.equal(speak.size, 'big'); assert.ok(big.includes(speak.play));
+    const next = [0, 1, 2, 3, 4].map(() => h.talk.choose('thinking', 'big'));
+    const all = played.concat(next);
+    all.forEach((name, i) => assert.ok(all.slice(Math.max(0, i - 5), i).indexOf(name) < 0, name + ' repeats one of the five before it'));
+    assert.ok(h.talk.recentAnims.length === 5);
+    assert.equal(h.talk.choose('dance'), core.DANCE); assert.equal(h.talk.choose('smile'), 'eye_happy_00'); assert.equal(h.talk.choose('none'), null);
+    h.talk.close();
+});
+
+test('size notes: a mood with one size of animation says which, so the model\'s size answer fits', () => {
+    const line = core.decisionsRequest('gpt-6-luna', 'a', 'b', 'line', true).questions[0].choices;
+    const of = v => line.find(c => c.value === v).description;
+    assert.match(of('giggle'), /\(always a whole-body move\)$/);
+    assert.match(of('celebrate'), /\(always small: on his eye or a small nod\)$/);
+    assert.doesNotMatch(of('happy'), /always/);
+    for (const mood of Object.keys(core.CATALOG)) {
+        const {small, big} = core.CATALOG[mood], d = core.moodDescription(mood);
+        assert.equal(/always a whole-body/.test(d), !small.length, mood); assert.equal(/always small/.test(d), !big.length, mood);
+    }
+    assert.match(core.classifierRequest('m', 'a', 'b').input[0].content, /giggle: .*always a whole-body move/);
+});
+
+test('emojiFor: the first word or two-word term with a picture, plurals, not a recent word', () => {
+    const first = () => 0;
+    assert.deepEqual(core.emojiFor('I love pizza and ice cream!', {random: first}), {word: 'pizza', name: core.EMOJI.pizza[0]});
+    assert.equal(core.emojiFor('Ice cream is the best.').word, 'ice cream', 'two-word terms first');
+    assert.equal(core.emojiFor('My dogs are cute.').word, 'dog');
+    assert.equal(core.emojiFor('Do you like books?').word, 'book');
+    assert.equal(core.emojiFor('I love pizza and ice cream!', {recent: ['pizza']}).word, 'ice cream');
+    assert.equal(core.emojiFor('Grass is green because of chlorophyll.'), null);
+    assert.equal(core.emojiFor('Yes, that is good news, hello!'), null, 'common words have no picture');
+    assert.equal(core.emojiFor(''), null);
+});
+
+test('emoji: a line without an expression shows a picture for what Jibo names; at most one per emojiGapMs; the expression on the same line wins', async () => {
+    const db = fakeAnimDB({}, 30);
+    const h = harness({animDB: db.animDB, expression: db.expression, config: {expressionPlay: 'animdb', emoji: true, emojiGapMs: 400},
+        classify: (person, line) => Promise.resolve({label: /lovely/.test(line) ? 'happy' : 'none', size: 'small'})});
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'What should I eat?'});
+    reply(h, 'r1', 'How about a pizza? Or a taco with cheese.');
+    await untilListening(h);
+    const emoji = h.logs.filter(e => e.kind === 'speak' && e.emoji);
+    assert.equal(emoji.length, 1, 'one emoji within emojiGapMs'); assert.equal(emoji[0].emoji, 'pizza');
+    assert.ok(core.EMOJI.pizza.includes(db.played[0].name));
+    assert.deepEqual(h.logs.find(e => e.kind === 'jibo').expressions, ['none', 'emoji pizza', 'none']);
+    await sleep(450);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'I got a dog'});
+    reply(h, 'r2', 'A dog, how lovely!');
+    await untilListening(h);
+    const second = h.logs.filter(e => e.kind === 'speak' && e.turn === 2);
+    assert.equal(second[0].expression, 'happy'); assert.equal(second[0].emoji, undefined, 'the expression wins over the emoji');
+    h.talk.close();
+});
+
+test('lab timing: "Watch me." then "Now!" with excited_01, twice quietly and twice with the microphone running', async () => {
+    const pause = Conversation.LAB_PAUSE_MS; Conversation.LAB_PAUSE_MS = 1;
+    try {
+        const db = fakeAnimDB({}, 20);
+        const h = harness({speakMs: 5, config: {lab: 'timing'}, animDB: db.animDB, expression: db.expression});
+        assert.equal(await h.talk.open(), 'lab');
+        assert.deepEqual(h.logs.filter(e => e.kind === 'lab_step').map(e => e.step), ['timing quiet 1', 'timing quiet 2', 'timing microphone 1', 'timing microphone 2']);
+        assert.equal(db.played.filter(p => p.name === 'excited_01').length, 4);
+        assert.equal(h.said.filter(t => t === 'Now!').length, 4);
+        assert.equal(h.starts(), 1, 'the microphone ran for the second half');
+        assert.equal(h.said.at(-1), 'Lab done.');
+    } finally { Conversation.LAB_PAUSE_MS = pause; }
+});
+
+test('emoji after an expression: line 1 has an expression, line 2 names a cat: the cat follows once the expression ends, while line 2 is still spoken', async () => {
+    const db = fakeAnimDB({}, 400);
+    const h = harness({speakMs: 300, animDB: db.animDB, expression: db.expression, config: {expressionPlay: 'animdb', emoji: true},
+        classify: (person, line) => Promise.resolve(/Nice/.test(line) ? {label: 'thumbsup', size: 'small'} : {label: 'none'})});
+    h.talk.choose = label => label === 'thumbsup' ? 'Emoji_ThumbsUp' : null;
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'They have a cat'});
+    reply(h, 'r1', 'Nice! A cat makes a lively audience.');
+    await untilListening(h);
+    const names = db.played.map(p => p.name);
+    assert.equal(names[0], 'Emoji_ThumbsUp'); assert.ok(core.EMOJI.cat.includes(names[1]), names.join());
+    await until(() => h.logs.some(e => e.kind === 'anim' && e.via === 'emoji'));
+    const cat = h.logs.find(e => e.kind === 'anim' && e.via === 'emoji'), thumbs = h.logs.find(e => e.kind === 'anim' && e.name === 'Emoji_ThumbsUp');
+    assert.equal(cat.result, 'STOPPED'); assert.ok(cat.asked >= thumbs.end, 'after the thumbs up');
+    assert.ok(h.logs.find(e => e.kind === 'speak' && e.emoji === 'cat').after);
+    h.talk.close();
+});
+
+test('emoji after an expression is dropped when the line is over before the expression ends', async () => {
+    const db = fakeAnimDB({}, 400);
+    const h = harness({speakMs: 30, animDB: db.animDB, expression: db.expression, config: {expressionPlay: 'animdb', emoji: true},
+        classify: (person, line) => Promise.resolve(/Nice/.test(line) ? {label: 'thumbsup', size: 'small'} : {label: 'none'})});
+    h.talk.choose = label => label === 'thumbsup' ? 'Emoji_ThumbsUp' : null;
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'They have a cat'});
+    reply(h, 'r1', 'Nice! A cat.');
+    await untilListening(h); await sleep(450);
+    assert.deepEqual(db.played.map(p => p.name), ['Emoji_ThumbsUp'], 'no cat after the line was over');
+    h.talk.close();
+});
+
+// ---- Jibo's cloud features (0.10.0) ----
+// A jetstream whose hotword tokens record the order of events; `release` as given (default: at once).
+function cloudJetstream(h, release) {
+    const order = [];
+    h.jibo.jetstream.setHotwordMode = () => { order.push('off'); return {activated: Promise.resolve(), release: () => { order.push('release'); return release ? release() : Promise.resolve(); }}; };
+    return order;
+}
+
+test('cloud tools: only those in cloudSkills go in session.update, and the instructions name only those', async () => {
+    const h = harness({actions: fakeActions(), config: {cloudSkills: ['surprise', 'joke']}});
+    h.talk.open(); await untilListening(h);
+    const names = h.sent.find(e => e.type === 'session.update').session.tools.map(t => t.name);
+    assert.ok(names.includes('surprise')); assert.ok(!names.includes('weather') && !names.includes('news'));
+    assert.ok(!names.includes('joke'), 'joke is disabled, even when listed');
+    h.talk.close();
+    const text = core.voiceSetup(new Date(2026, 10, 13, 9, 0), {apps: [], config: {cloudSkills: ['surprise']}});
+    assert.match(text, /ask your cloud for a surprise/); assert.doesNotMatch(text, /weather|news|joke/);
+    assert.doesNotMatch(core.voiceSetup(new Date(2026, 10, 13, 9, 0), {apps: [], config: {}}), /cloud/);
+});
+
+test('a cloud tool: no words first; the hotword is given back, then the cloud gets the fixed phrase; the turn Be starts ends Noggin as a handover', async () => {
+    const asked = [];
+    const acts = fakeActions();
+    const h = harness({actions: acts, config: {cloudSkills: ['weather']}});
+    const order = cloudJetstream(h);
+    acts.cloud = phrase => { order.push('ask'); asked.push(phrase); return Promise.resolve(); };
+    const ended = h.talk.open(); await untilListening(h);
+    await youSay(h, 'what is the weather like in Paris tomorrow?');
+    callReply(h, 'r1', '', [['weather', {city: 'Paris'}]]);
+    await until(() => asked.length === 1);
+    assert.deepEqual(asked, ['tell me about the weather'], 'the menu\'s phrase, never the model\'s words');
+    assert.deepEqual(order, ['off', 'release', 'ask'], 'the hotword is back before the cloud is asked');
+    assert.equal(acts.redirects.length, 0);
+    assert.equal(acts.handovers[0].tool, 'weather'); assert.equal(acts.handovers[0].target, '@be/nimbus'); assert.equal(acts.handovers[0].comeback, true);
+    assert.ok(h.logs.some(e => e.kind === 'handover' && e.tool === 'weather' && e.phrase === 'tell me about the weather'));
+    assert.equal(h.talk.state, 'handover');
+    h.jibo.jetstream.events.globalTurnStarted.fire();   // the robot's speech service starts the cloud's turn
+    assert.equal(await ended, 'handover');
+    assert.equal(order.filter(x => x === 'release').length, 1, 'released once, not again on close');
+});
+
+test('a cloud tool whose hotword release never answers (the simulator) is still asked, after at most 1.5 s', async () => {
+    const asked = [];
+    const acts = fakeActions();
+    const h = harness({actions: acts, config: {cloudSkills: ['news']}});
+    cloudJetstream(h, () => new Promise(() => {}));
+    acts.cloud = phrase => { asked.push(phrase); return Promise.resolve(); };
+    h.talk.open(); await untilListening(h);
+    await youSay(h, 'any news?');
+    const at = Date.now();
+    callReply(h, 'r1', '', [['news', {}]]);
+    await until(() => asked.length === 1, 2500);
+    assert.ok(Date.now() - at >= 1400, 'waited for the release');
+    assert.deepEqual(asked, ['tell me about the news']);
+    h.talk.close();
+});
+
+test('a cloud tool that fails or is never answered: the model hears it, the hotword goes off again, and the conversation goes on', async () => {
+    for (const [cloud, error] of [[() => Promise.reject(Error('jetstream down')), /^Jibo's cloud could not be asked: jetstream down$/],
+        [() => Promise.resolve(), /^Jibo's cloud did not answer$/],
+        // mimicGlobalTurn that never answers (the simulator): the reply after it must not wait for it.
+        [() => new Promise(() => {}), /^Jibo's cloud did not answer$/]]) {
+        const acts = fakeActions();
+        const h = harness({actions: acts, config: {cloudSkills: ['surprise'], actionTimeoutMs: 80}});
+        const order = cloudJetstream(h);
+        acts.cloud = cloud;
+        h.talk.open(); await untilListening(h);
+        await youSay(h, 'surprise me');
+        callReply(h, 'r1', '', [['surprise', {}, 'j1']]);
+        await until(() => h.sent.some(e => e.type === 'conversation.item.create' && e.item.call_id === 'j1'));
+        const output = JSON.parse(h.sent.find(e => e.type === 'conversation.item.create' && e.item.call_id === 'j1').item.output);
+        assert.equal(output.ok, false); assert.match(output.error, error);
+        assert.equal(acts.failed, 1, 'index.js stops watching and clears disableOnce');
+        assert.deepEqual(order, ['off', 'release', 'off'], 'Noggin has the hotword off again');
+        await until(() => h.sent.some(e => e.type === 'response.create'));
+        reply(h, 'r2', 'Hmm, my surprise got stuck.');
+        await untilListening(h);
+        h.talk.close();
+    }
+});
+
+test('a cloud tool that is not switched on is refused without asking the cloud', async () => {
+    const acts = fakeActions();
+    let asked = 0; acts.cloud = () => { asked++; return Promise.resolve(); };
+    const h = harness({actions: acts, config: {cloudSkills: []}});
+    h.talk.open(); await untilListening(h);
+    await youSay(h, 'what is the weather?');
+    callReply(h, 'r1', '', [['weather', {}, 'w1']]);
+    await until(() => h.sent.some(e => e.type === 'conversation.item.create' && e.item.call_id === 'w1'));
+    assert.match(JSON.parse(h.sent.find(e => e.item && e.item.call_id === 'w1').item.output).error, /not switched on/);
+    assert.equal(asked, 0); assert.equal(acts.handovers.length, 0);
+    h.talk.close();
+});
+
+test('back after the cloud: the note says your cloud took over and what it said', async () => {
+    const h = harness({actions: fakeActions(), resume: {pairs: [{you: 'what is the weather?', jibo: ''}], tool: 'weather', args: {}, said: 'Today will be sunny.'}});
+    h.talk.open();
+    await untilListening(h);
+    const note = h.sent.find(e => e.type === 'conversation.item.create').item.content[0].text;
+    assert.match(note, /you used weather and your cloud took over\. Your cloud said: "Today will be sunny\."/);
+    assert.match(note, /do not repeat what your cloud already said/);
+    h.talk.close();
+});
+
+test('cloud tools are all on by default, except the disabled joke, and the default stays in step with actions.CLOUD', () => {
+    const actions = require(path.join(source, 'noggin/lib/actions.js'));
+    const live = Object.keys(actions.CLOUD).filter(name => !actions.CLOUD[name].disabled);
+    assert.deepEqual(settings.DEFAULTS.cloudSkills, live);
+    assert.ok(settings.DEFAULTS.cloudSkills.length >= 6 && settings.DEFAULTS.cloudSkills.indexOf('joke') < 0);
+    assert.deepEqual(actions.cloudSkills(settings.DEFAULTS), live, 'every default name is really offered');
+});
+
+test('back after a picture: the note names what was shown, and that the cloud did it', () => {
+    const note = core.resumeNote({pairs: [{you: 'show me a horse', jibo: ''}], tool: 'picture', args: {subject: 'a horse'}, said: 'Here\'s a picture of a horse.'}, null, 'Anything else?');
+    assert.match(note, /you used picture \(of a horse\) and your cloud took over\. Your cloud said: "Here's a picture of a horse\."/);
+});
+
+test('a microphone that never starts ends the conversation politely, and is closed if it starts late', async () => {
+    const before = Conversation.MIC_START_MS;
+    Conversation.MIC_START_MS = 150;
+    let resolveStart, stops = 0;
+    const mic = {start: () => new Promise(resolve => { resolveStart = resolve; }), stop: () => { stops++; }, kind: 'webaudio'};
+    try {
+        const h = harness({mic});
+        const reason = await Promise.race([h.talk.open(), sleep(3000).then(() => 'still open')]);
+        assert.notEqual(reason, 'still open');
+        assert.ok(h.said.some(s => /can't think straight/.test(s)), 'Jibo apologises');
+        const failed = h.logs.find(e => e.kind === 'startup');
+        assert.match(failed.failed, /microphone did not start/);
+        const stopsBefore = stops;
+        resolveStart();
+        await sleep(10);
+        assert.equal(stops, stopsBefore + 1, 'a late start is stopped again');
+    } finally { Conversation.MIC_START_MS = before; }
+});

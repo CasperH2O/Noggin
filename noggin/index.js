@@ -1,6 +1,130 @@
+// SPDX-License-Identifier: MIT
+// Noggin: opening the skill starts a voice conversation with Jibo (lib/controller.js). Swipe
+// down, say goodbye or stay quiet to end. When the conversation hands an action to another
+// skill (a timer on @be/clock, or Jibo's cloud through @be/nimbus), Noggin watches for that
+// skill to finish and opens again with the conversation so far (lib/comeback.js).
+// The settings page runs separately, in background.js.
 'use strict';
-// Noggin, a BE/5x1 custom skill for Jibo.
-var jibo = require('jibo'), BeSkill = require('@be/be-framework').BeSkill;
-var createScreen = require('./lib/screen');
+const BeSkill = require('@be/be-framework').BeSkill;
+const jibo = require('jibo');
+const settings = require('./lib/settings'), Conversation = require('./lib/controller'), Microphone = require('./lib/mic');
+const openai = require('./lib/openai'), core = require('./lib/core'), ConversationLog = require('./lib/conversation-log');
+const actions = require('./lib/actions'), comeback = require('./lib/comeback'), createLog = require('./lib/log');
+const OWN = require('./package.json').name;
+const RESUME_MS = 15000;
+// After a cloud request, @be/nimbus should take over within seconds; if no skill has by then,
+// the comeback gives up (the conversation ended when the cloud's turn started).
+const CLOUD_LEAVE_MS = 30000;
+// Survives the skill's close (a skill switch closes a skill, it does not destroy it).
+let resume = null, watcher = null, listenHeld = false;
+function stopWatching() { if (watcher) { const w = watcher; watcher = null; w.cancel(); } }
+// Ask Jibo's cloud a fixed phrase (actions.CLOUD) as if the person had said it after "Hey
+// Jibo", the way BEam's main menu opens the weather or a joke: disableOnce() keeps the
+// listening look away for that pretend "Hey Jibo".
+function askCloud(phrase) {
+    const js = jibo.jetstream, listen = jibo.embodied && jibo.embodied.listen;
+    if (!js || typeof js.mimicGlobalTurn !== 'function') return Promise.reject(Error('no mimicGlobalTurn'));
+    try { if (listen && typeof listen.disableOnce === 'function') { listen.disableOnce(); listenHeld = true; } } catch (_) {}
+    return Promise.resolve(js.mimicGlobalTurn({clientASR: phrase}));
+}
+// The pretend "Hey Jibo" never came (the cloud was not asked): clear disableOnce, or it would
+// swallow the listening look of the next real "Hey Jibo" (as the main menu does).
+function releaseListen() {
+    if (!listenHeld) return;
+    listenHeld = false;
+    try {
+        const dialog = require('jibo-embodied-dialog');
+        if (dialog._embodied && dialog._embodied.listen) dialog._embodied.listen._disableOnce = false;
+    } catch (_) {}
+}
 
-module.exports = createScreen(jibo, BeSkill);
+class Noggin extends BeSkill {
+    open() {
+        const generation = this.generation = (this.generation || 0) + 1;
+        const current = () => generation === this.generation;
+        const log = this.tagged = this.tagged || createLog(this.log);
+        // Startup timing starts here (lib/controller.js logs it as `startup`).
+        const openedAt = Date.now();
+        // Coming back from another skill: carry on with that conversation.
+        const back = resume && openedAt - resume.at < RESUME_MS ? resume : null;
+        resume = null; stopWatching();
+        const startup = {};
+        if (back) startup.since_comeback_ms = openedAt - back.at;
+        Promise.resolve().then(() => this.talk(settings.dataDir(), back, openedAt, startup)).then(reason => {
+            if (current()) log.info('conversation ended: ' + reason);
+        }, error => {
+            if (current()) log.error('conversation failed: ' + (error && error.stack || error));
+        }).then(() => { if (current()) this.exit({noElementsOfSurprise: true}); });
+    }
+    say(text) {
+        const speech = jibo.embodied && jibo.embodied.speech;
+        return speech && speech.speak ? Promise.resolve(speech.speak(core.speechText(text))).catch(() => {}) : Promise.resolve();
+    }
+    talk(dataDir, back, openedAt, startup) {
+        let config;
+        try { config = settings.read(dataDir); }
+        catch (error) {
+            this.tagged.error(error.message);
+            return this.say(error.message === 'no_key'
+                ? 'I need an OpenAI key before we can talk. Please add one on my settings page.'
+                : 'My settings look broken. Please check them on my settings page.').then(() => error.message);
+        }
+        const persona = settings.persona(dataDir), log = new ConversationLog(dataDir, config.log !== false);
+        // On the robot the microphone runs as a separate arecord process: an ALSA failure
+        // inside BE's own process would take Jibo's face and body down with it.
+        let session = null;
+        const mic = Microphone.choose(config) === 'arecord'
+            ? new Microphone.ProcessMicrophone({device: config.micDevice, onExit: report => session && session.onMicExit(report)})
+            : new Microphone(jibo, {onTrack: name => log.write({kind: 'microphone_track', event: name})});
+        const abilities = config.actions ? {apps: Object.keys(actions.apps(config)), config: config} : null;
+        const instructions = core.instructions(persona.soul, persona.identity, actions.localTime(jibo), abilities);
+        session = this.session = new Conversation({
+            jibo: jibo, config: config, log: log,
+            instructions: instructions,
+            persona: {edited: Object.keys(persona.edited).filter(name => persona.edited[name]), chars: instructions.length, facts: persona.facts.length},
+            connect: () => openai.connect(config),
+            mic: mic,
+            classify: config.expressions ? openai.classifier(config) : null,
+            actions: config.actions ? {
+                redirect: (pkg, options) => this.redirect(pkg, options),
+                cloud: askCloud,
+                handover: state => this.watchHandover(state, config, log),
+                handoverFailed: () => { stopWatching(); releaseListen(); },
+                readClock: () => actions.readClock(jibo),
+                setVolume: args => actions.setVolume(jibo, args),
+                installed: pkg => actions.installed(name => require.resolve(name), pkg),
+                localTime: () => actions.localTime(jibo),
+                facts: () => persona.facts
+            } : null,
+            resume: back,
+            openedAt: openedAt,
+            startup: startup
+        });
+        return session.open().then(reason => { if (this.session === session) this.session = null; return reason; });
+    }
+    // The conversation handed an action to another skill: when it is done and Jibo is idle and
+    // quiet, open Noggin again (open() above picks up `resume`). open_app does not come back.
+    watchHandover(state, config, log) {
+        stopWatching();
+        if (!state.comeback) return;
+        const started = Date.now();
+        const w = watcher = comeback.watch(jibo, global.be, said => {
+            if (watcher === w) watcher = null;
+            listenHeld = false;   // the cloud's turn used it up
+            log.write({kind: 'comeback', ok: true, said: said.slice(0, 300), ms: Date.now() - started});
+            resume = {at: Date.now(), pairs: state.pairs, tool: state.tool, args: state.args, said: said};
+            if (!comeback.relaunch(jibo, OWN)) { resume = null; log.write({kind: 'comeback', ok: false, reason: 'no_relaunch'}); }
+        }, {own: OWN, timeoutMs: config.comebackMs, leaveMs: state.target === actions.NIMBUS ? CLOUD_LEAVE_MS : 0, onGiveUp: (reason, ms) => {
+            if (watcher === w) watcher = null;
+            listenHeld = false;
+            log.write({kind: 'comeback', ok: false, reason: reason, ms: ms});
+        }});
+    }
+    close(done) {
+        this.generation = (this.generation || 0) + 1;
+        const session = this.session; this.session = null;
+        Promise.resolve(session && session.close('closed')).then(() => done && done(), () => done && done());
+    }
+    destroy(done) { this.close(done); }
+}
+module.exports = Noggin;

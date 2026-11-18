@@ -1,7 +1,9 @@
 # Noggin
 
 Noggin is a custom skill for Jibo running the BE ecosystem (BEam with the BEacon menu and the
-5x1 Store). It shows a screen in Jibo's classic look; tap the button and Jibo looks up.
+5x1 Store): Jibo's AI brain. Open it and talk with Jibo in his own voice; he answers with
+OpenAI's realtime model, moves with what he says, and uses his own skills (timers, the clock,
+music, dances, Jibo's cloud) along the way.
 
 ## Install
 
@@ -28,11 +30,13 @@ The tests and tools run on a current Node.
 | `manifest.json`, `icon.png`, `banner.png` | the store entry (icon 330x300, banner 1600x900, optional) |
 | `store/README.md` | the store text, shipped as the ZIP's README.md |
 | `noggin/` | the `@be/noggin` package that runs on the robot |
-| `noggin/lib/screen.js` | the face UI and the skill's open and close |
-| `noggin/lib/motion.js` | body movement that always ends centred |
-| `noggin/lib/layout.js` | colours, fonts and positions |
+| `noggin/index.js` | the skill: opening it starts a conversation; coming back after another skill |
+| `noggin/lib/controller.js` | one conversation: microphone, realtime model, speech, expressions, tools |
+| `noggin/lib/settings.js` | every setting (schema, defaults, checks) and the persona overrides |
+| `noggin/lib/actions.js` | the tools the model may call and how each one runs |
+| `noggin/persona/` | the default persona: SOUL, IDENTITY and FACTS |
 | `tests/` | unit tests (Node's test runner) |
-| `tools/` | packaging and icon tools (not shipped) |
+| `tools/` | packaging and the expression catalogue builder (not shipped) |
 
 ## Licence
 

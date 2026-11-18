@@ -1,0 +1,3272 @@
+{
+ "animdb": "19.0.2",
+ "maxFrames": 120,
+ "smallFrames": 40,
+ "moods": {
+  "happy": {
+   "small": [
+    {
+     "n": "eye_happy_00",
+     "f": 27,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "eye_happy_01",
+     "f": 32,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "eye_happy_02",
+     "f": 45,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "happy_01",
+     "f": 32,
+     "body": true,
+     "neutral": true,
+     "led": false
+    }
+   ],
+   "big": [
+    {
+     "n": "excited_00",
+     "f": 82,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "excited_01",
+     "f": 50,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "excited_03",
+     "f": 89,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "excited_04",
+     "f": 89,
+     "body": true,
+     "neutral": false,
+     "led": false
+    },
+    {
+     "n": "excited_05",
+     "f": 105,
+     "body": true,
+     "neutral": false,
+     "led": false
+    },
+    {
+     "n": "happy_02",
+     "f": 86,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "happy_03",
+     "f": 94,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "happy_04",
+     "f": 120,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "happy_05",
+     "f": 82,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "happy_06",
+     "f": 89,
+     "body": true,
+     "neutral": false,
+     "led": false
+    },
+    {
+     "n": "happy_07",
+     "f": 105,
+     "body": true,
+     "neutral": false,
+     "led": false
+    }
+   ]
+  },
+  "content": {
+   "small": [
+    {
+     "n": "eye_happy_00",
+     "f": 27,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "eye_happy_01",
+     "f": 32,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "eye_happy_02",
+     "f": 45,
+     "body": false,
+     "neutral": true,
+     "led": false
+    }
+   ],
+   "big": [
+    {
+     "n": "content_01",
+     "f": 61,
+     "body": true,
+     "neutral": true,
+     "led": false
+    }
+   ]
+  },
+  "proud": {
+   "small": [
+    {
+     "n": "confident_01",
+     "f": 40,
+     "body": true,
+     "neutral": false,
+     "led": false
+    },
+    {
+     "n": "confident_04",
+     "f": 36,
+     "body": true,
+     "neutral": true,
+     "led": false
+    }
+   ],
+   "big": [
+    {
+     "n": "confident_02",
+     "f": 71,
+     "body": true,
+     "neutral": false,
+     "led": false
+    },
+    {
+     "n": "confident_03",
+     "f": 58,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "confident_05",
+     "f": 75,
+     "body": true,
+     "neutral": true,
+     "led": false
+    }
+   ]
+  },
+  "laugh": {
+   "small": [],
+   "big": [
+    {
+     "n": "laughter_03",
+     "f": 91,
+     "body": true,
+     "neutral": false,
+     "led": false
+    },
+    {
+     "n": "Laughter_04",
+     "f": 90,
+     "body": true,
+     "neutral": true,
+     "led": false
+    }
+   ]
+  },
+  "giggle": {
+   "small": [],
+   "big": [
+    {
+     "n": "laughter_01",
+     "f": 49,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "laughter_02",
+     "f": 49,
+     "body": true,
+     "neutral": true,
+     "led": false
+    }
+   ]
+  },
+  "surprised": {
+   "small": [
+    {
+     "n": "Emoji_ExclamationBlue",
+     "f": 53,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Emoji_ExclamationYellow",
+     "f": 53,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "surprised_00",
+     "f": 26,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "surprised_07",
+     "f": 31,
+     "body": true,
+     "neutral": false,
+     "led": false
+    }
+   ],
+   "big": [
+    {
+     "n": "surprised_01",
+     "f": 41,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "surprised_02",
+     "f": 61,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "surprised_03",
+     "f": 51,
+     "body": true,
+     "neutral": false,
+     "led": false
+    },
+    {
+     "n": "surprised_04",
+     "f": 66,
+     "body": true,
+     "neutral": false,
+     "led": false
+    },
+    {
+     "n": "surprised_05",
+     "f": 60,
+     "body": true,
+     "neutral": false,
+     "led": false
+    },
+    {
+     "n": "surprised_06",
+     "f": 51,
+     "body": true,
+     "neutral": false,
+     "led": false
+    }
+   ]
+  },
+  "scared": {
+   "small": [
+    {
+     "n": "Emoji_ExclamationRed",
+     "f": 53,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "eye_scared_00",
+     "f": 40,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "eye_scared_01",
+     "f": 71,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "eye_scared_02",
+     "f": 84,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "scared_00",
+     "f": 39,
+     "body": true,
+     "neutral": true,
+     "led": false
+    }
+   ],
+   "big": [
+    {
+     "n": "scared_01",
+     "f": 100,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "scared_02",
+     "f": 50,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "scared_03",
+     "f": 61,
+     "body": true,
+     "neutral": true,
+     "led": false
+    }
+   ]
+  },
+  "sad": {
+   "small": [
+    {
+     "n": "eye_sad_01",
+     "f": 45,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "eye_sad_02",
+     "f": 55,
+     "body": false,
+     "neutral": true,
+     "led": false
+    }
+   ],
+   "big": [
+    {
+     "n": "sad_01",
+     "f": 49,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "sad_02",
+     "f": 81,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Sad_03",
+     "f": 96,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Sad_04",
+     "f": 91,
+     "body": true,
+     "neutral": false,
+     "led": false
+    },
+    {
+     "n": "Sad_05",
+     "f": 53,
+     "body": true,
+     "neutral": false,
+     "led": false
+    },
+    {
+     "n": "Sad_06",
+     "f": 45,
+     "body": true,
+     "neutral": false,
+     "led": false
+    }
+   ]
+  },
+  "sorry": {
+   "small": [
+    {
+     "n": "Sorry_00",
+     "f": 30,
+     "body": true,
+     "neutral": false,
+     "led": false
+    },
+    {
+     "n": "Sorry_04",
+     "f": 26,
+     "body": true,
+     "neutral": false,
+     "led": false
+    }
+   ],
+   "big": [
+    {
+     "n": "sorry_01",
+     "f": 66,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "sorry_02",
+     "f": 50,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "sorry_03",
+     "f": 91,
+     "body": true,
+     "neutral": true,
+     "led": false
+    }
+   ]
+  },
+  "worried": {
+   "small": [
+    {
+     "n": "worried_01",
+     "f": 48,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "worried_03",
+     "f": 54,
+     "body": false,
+     "neutral": true,
+     "led": false
+    }
+   ],
+   "big": [
+    {
+     "n": "worried_02",
+     "f": 63,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "worried_04",
+     "f": 54,
+     "body": true,
+     "neutral": true,
+     "led": false
+    }
+   ]
+  },
+  "embarrassed": {
+   "small": [
+    {
+     "n": "Embarassed_02",
+     "f": 32,
+     "body": true,
+     "neutral": true,
+     "led": true
+    }
+   ],
+   "big": [
+    {
+     "n": "Embarassed_01",
+     "f": 84,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Shy_01",
+     "f": 91,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Shy_02",
+     "f": 75,
+     "body": true,
+     "neutral": true,
+     "led": false
+    }
+   ]
+  },
+  "blush": {
+   "small": [],
+   "big": [
+    {
+     "n": "blush_01",
+     "f": 61,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "blush_02",
+     "f": 47,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "blush_03",
+     "f": 67,
+     "body": true,
+     "neutral": false,
+     "led": false
+    },
+    {
+     "n": "blush_04",
+     "f": 98,
+     "body": true,
+     "neutral": true,
+     "led": false
+    }
+   ]
+  },
+  "frustrated": {
+   "small": [],
+   "big": [
+    {
+     "n": "frustrated_00",
+     "f": 53,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "frustrated_01",
+     "f": 53,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "frustrated_02",
+     "f": 71,
+     "body": true,
+     "neutral": true,
+     "led": false
+    }
+   ]
+  },
+  "relieved": {
+   "small": [],
+   "big": [
+    {
+     "n": "relieved_01",
+     "f": 45,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "relieved_02",
+     "f": 111,
+     "body": true,
+     "neutral": true,
+     "led": false
+    }
+   ]
+  },
+  "thinking": {
+   "small": [
+    {
+     "n": "Eye_Thinking_01",
+     "f": 36,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "eye_thinking_02",
+     "f": 36,
+     "body": true,
+     "neutral": true,
+     "led": false
+    }
+   ],
+   "big": [
+    {
+     "n": "Thinking_00",
+     "f": 41,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Thinking_01",
+     "f": 43,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Thinking_02",
+     "f": 42,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Thinking_03",
+     "f": 70,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Thinking_04",
+     "f": 68,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Thinking_05",
+     "f": 63,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Thinking_06",
+     "f": 83,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Thinking_08",
+     "f": 74,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Thinking_09",
+     "f": 47,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Thinking_10",
+     "f": 98,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Thinking_11",
+     "f": 82,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Thinking_12",
+     "f": 55,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Thinking_13",
+     "f": 51,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Thinking_14",
+     "f": 51,
+     "body": true,
+     "neutral": true,
+     "led": false
+    }
+   ]
+  },
+  "confused": {
+   "small": [
+    {
+     "n": "Confused_00",
+     "f": 41,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Confused_05",
+     "f": 32,
+     "body": true,
+     "neutral": false,
+     "led": false
+    },
+    {
+     "n": "Puzzled_01",
+     "f": 21,
+     "body": true,
+     "neutral": false,
+     "led": false
+    },
+    {
+     "n": "Puzzled_02",
+     "f": 27,
+     "body": true,
+     "neutral": false,
+     "led": false
+    }
+   ],
+   "big": [
+    {
+     "n": "Confused_01",
+     "f": 55,
+     "body": true,
+     "neutral": false,
+     "led": false
+    },
+    {
+     "n": "Confused_02",
+     "f": 55,
+     "body": true,
+     "neutral": false,
+     "led": false
+    },
+    {
+     "n": "Confused_03",
+     "f": 46,
+     "body": true,
+     "neutral": false,
+     "led": false
+    },
+    {
+     "n": "Puzzled_03",
+     "f": 51,
+     "body": true,
+     "neutral": false,
+     "led": false
+    }
+   ]
+  },
+  "dontknow": {
+   "small": [
+    {
+     "n": "Dont_Know_01",
+     "f": 38,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Dont_Know_04",
+     "f": 36,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Dont_Know_05",
+     "f": 36,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "dont_understand_01",
+     "f": 36,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Emoji_Question",
+     "f": 55,
+     "body": false,
+     "neutral": true,
+     "led": false
+    }
+   ],
+   "big": [
+    {
+     "n": "Dont_Know_02",
+     "f": 41,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Dont_Know_03",
+     "f": 42,
+     "body": true,
+     "neutral": true,
+     "led": false
+    }
+   ]
+  },
+  "curious": {
+   "small": [
+    {
+     "n": "Curious_01",
+     "f": 31,
+     "body": true,
+     "neutral": false,
+     "led": false
+    },
+    {
+     "n": "Curious_02",
+     "f": 31,
+     "body": true,
+     "neutral": false,
+     "led": false
+    },
+    {
+     "n": "Emoji_Question",
+     "f": 55,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Eye_Curious_01",
+     "f": 63,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Question_00",
+     "f": 16,
+     "body": true,
+     "neutral": false,
+     "led": false
+    },
+    {
+     "n": "Question_01",
+     "f": 20,
+     "body": true,
+     "neutral": false,
+     "led": false
+    },
+    {
+     "n": "Question_02",
+     "f": 30,
+     "body": true,
+     "neutral": false,
+     "led": false
+    },
+    {
+     "n": "Question_03",
+     "f": 31,
+     "body": true,
+     "neutral": false,
+     "led": false
+    }
+   ],
+   "big": [
+    {
+     "n": "Question_04",
+     "f": 58,
+     "body": true,
+     "neutral": true,
+     "led": false
+    }
+   ]
+  },
+  "idea": {
+   "small": [
+    {
+     "n": "Emoji_Lightbulb",
+     "f": 64,
+     "body": false,
+     "neutral": true,
+     "led": false
+    }
+   ],
+   "big": []
+  },
+  "yes": {
+   "small": [
+    {
+     "n": "yep_01",
+     "f": 25,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "yep_02",
+     "f": 33,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "yep_03",
+     "f": 32,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "yep_04",
+     "f": 40,
+     "body": true,
+     "neutral": true,
+     "led": true
+    }
+   ],
+   "big": []
+  },
+  "no": {
+   "small": [
+    {
+     "n": "Nope_00",
+     "f": 31,
+     "body": true,
+     "neutral": true,
+     "led": false
+    }
+   ],
+   "big": [
+    {
+     "n": "Nope_01",
+     "f": 41,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Nope_02",
+     "f": 51,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Nope_03",
+     "f": 43,
+     "body": true,
+     "neutral": true,
+     "led": true
+    }
+   ]
+  },
+  "gotit": {
+   "small": [
+    {
+     "n": "Emoji_Checkmark",
+     "f": 42,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "emoji-checkmark-hf-01",
+     "f": 51,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "GotIt_02",
+     "f": 32,
+     "body": true,
+     "neutral": true,
+     "led": false
+    }
+   ],
+   "big": [
+    {
+     "n": "GotIt_01",
+     "f": 42,
+     "body": true,
+     "neutral": true,
+     "led": false
+    }
+   ]
+  },
+  "welcome": {
+   "small": [
+    {
+     "n": "Youre_Welcome_02",
+     "f": 33,
+     "body": true,
+     "neutral": true,
+     "led": false
+    }
+   ],
+   "big": [
+    {
+     "n": "Youre_Welcome_01",
+     "f": 43,
+     "body": true,
+     "neutral": true,
+     "led": false
+    }
+   ]
+  },
+  "hello": {
+   "small": [
+    {
+     "n": "Emoji_Waving",
+     "f": 102,
+     "body": false,
+     "neutral": true,
+     "led": false
+    }
+   ],
+   "big": [
+    {
+     "n": "greetings_01",
+     "f": 51,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "greetings_02",
+     "f": 45,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "greetings_03",
+     "f": 52,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "greetings_04",
+     "f": 51,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "greetings_05",
+     "f": 51,
+     "body": true,
+     "neutral": false,
+     "led": false
+    },
+    {
+     "n": "greetings_06",
+     "f": 85,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "greetings_07",
+     "f": 52,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "greetings_08",
+     "f": 51,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "greetings_09",
+     "f": 87,
+     "body": true,
+     "neutral": false,
+     "led": false
+    }
+   ]
+  },
+  "goodbye": {
+   "small": [
+    {
+     "n": "goodbye_01",
+     "f": 36,
+     "body": true,
+     "neutral": true,
+     "led": false
+    }
+   ],
+   "big": [
+    {
+     "n": "goodbye_02",
+     "f": 41,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "goodbye_03",
+     "f": 45,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "goodbye_04",
+     "f": 45,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "goodbye_05",
+     "f": 55,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "goodbye_06",
+     "f": 45,
+     "body": true,
+     "neutral": true,
+     "led": false
+    }
+   ]
+  },
+  "heart": {
+   "small": [
+    {
+     "n": "Emoji_HeartBlue",
+     "f": 85,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Emoji_HeartRed",
+     "f": 85,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Emoji_HeartRed2",
+     "f": 51,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "emoji-heart-hf-01",
+     "f": 51,
+     "body": false,
+     "neutral": true,
+     "led": false
+    }
+   ],
+   "big": []
+  },
+  "love": {
+   "small": [
+    {
+     "n": "Emoji_HeartArrow",
+     "f": 65,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "emoji-arrow-heart-hf-01",
+     "f": 51,
+     "body": false,
+     "neutral": true,
+     "led": false
+    }
+   ],
+   "big": [
+    {
+     "n": "affection_01",
+     "f": 61,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "affection_02",
+     "f": 47,
+     "body": true,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "affection_03",
+     "f": 111,
+     "body": true,
+     "neutral": false,
+     "led": false
+    },
+    {
+     "n": "affection_04",
+     "f": 98,
+     "body": true,
+     "neutral": true,
+     "led": false
+    }
+   ]
+  },
+  "thumbsup": {
+   "small": [
+    {
+     "n": "Emoji_ThumbsUp",
+     "f": 53,
+     "body": false,
+     "neutral": true,
+     "led": false
+    }
+   ],
+   "big": []
+  },
+  "celebrate": {
+   "small": [
+    {
+     "n": "Emoji_Fireworks",
+     "f": 67,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Emoji_PartyPink",
+     "f": 73,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Emoji_Star",
+     "f": 59,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "Emoji_Trophy",
+     "f": 53,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "emoji-balloons-hf-01",
+     "f": 51,
+     "body": false,
+     "neutral": true,
+     "led": false
+    },
+    {
+     "n": "emoji-party-hf-01",
+     "f": 51,
+     "body": false,
+     "neutral": true,
+     "led": false
+    }
+   ],
+   "big": []
+  },
+  "clap": {
+   "small": [
+    {
+     "n": "Emoji_Clap",
+     "f": 83,
+     "body": false,
+     "neutral": true,
+     "led": false
+    }
+   ],
+   "big": []
+  }
+ },
+ "emoji": {
+  "airplane": [
+   "Emoji_Airplane",
+   "emoji-airplane-hf-01"
+  ],
+  "airport": [
+   "Emoji_Airplane"
+  ],
+  "alcohol": [
+   "Emoji_Beer",
+   "Emoji_Wine"
+  ],
+  "alien": [
+   "Emoji_Planet"
+  ],
+  "alligator": [
+   "emoji-alligator-hf-01"
+  ],
+  "america": [
+   "emoji-america-hf-01"
+  ],
+  "american flag": [
+   "emoji-america-hf-01"
+  ],
+  "angel": [
+   "Emoji_Halo"
+  ],
+  "ant": [
+   "Emoji_Ant",
+   "emoji-ant-hf-01"
+  ],
+  "applause": [
+   "Emoji_Clap"
+  ],
+  "apple": [
+   "Emoji_Apple",
+   "Emoji_AppleRed",
+   "emoji-apple-green-hf-01",
+   "emoji-apple-red-hf-01"
+  ],
+  "apple green": [
+   "emoji-apple-green-hf-01"
+  ],
+  "apple red": [
+   "Emoji_AppleRed",
+   "emoji-apple-red-hf-01"
+  ],
+  "appliance": [
+   "Emoji_Toaster"
+  ],
+  "arrow": [
+   "Emoji_HeartArrow",
+   "emoji-arrow-heart-hf-01"
+  ],
+  "arrow heart": [
+   "emoji-arrow-heart-hf-01"
+  ],
+  "astronaut": [
+   "Emoji_Rocket"
+  ],
+  "baby": [
+   "Emoji_Baby",
+   "Emoji_Stork",
+   "emoji-baby-hf-01"
+  ],
+  "bacon": [
+   "Emoji_Pig"
+  ],
+  "ball": [
+   "emoji-disco-ball-hf-01",
+   "emoji-nye-ball-down-hf-01",
+   "emoji-nye-ball-up-hf-01"
+  ],
+  "balloons": [
+   "emoji-balloons-hf-01"
+  ],
+  "bandaid": [
+   "emoji-bandaid-hf-01"
+  ],
+  "bandaids": [
+   "emoji-bandaids-hf-01"
+  ],
+  "bank": [
+   "Emoji_Money",
+   "emoji-piggy-bank-hf-01"
+  ],
+  "barbell": [
+   "Emoji_Barbell",
+   "emoji-barbell-hf-01"
+  ],
+  "baseball": [
+   "Emoji_Baseball",
+   "emoji-baseball-hf-01"
+  ],
+  "basketball": [
+   "Emoji_Basketball",
+   "emoji-basketball-hf-01"
+  ],
+  "bath": [
+   "emoji-bath-hf-01"
+  ],
+  "bathroom": [
+   "Emoji_Bathtub",
+   "Emoji_ToiletPaper"
+  ],
+  "bathtub": [
+   "Emoji_Bathtub"
+  ],
+  "battery": [
+   "Emoji_Battery",
+   "emoji-battery-hf-01"
+  ],
+  "beach": [
+   "Emoji_Beach",
+   "emoji-beach-hf-01"
+  ],
+  "bed": [
+   "Emoji_Pillow"
+  ],
+  "bedtime": [
+   "Emoji_Moon",
+   "Emoji_Pillow"
+  ],
+  "beer": [
+   "Emoji_Beer",
+   "emoji-beer-hf-01"
+  ],
+  "bicycle": [
+   "Emoji_Bicycle"
+  ],
+  "bike": [
+   "Emoji_Bicycle",
+   "emoji-bike-hf-01"
+  ],
+  "biking": [
+   "Emoji_Bicycle"
+  ],
+  "bird": [
+   "emoji-bird-blue-hf-01",
+   "emoji-bird-red-hf-01",
+   "emoji-bird-robin-hf-01"
+  ],
+  "bird blue": [
+   "emoji-bird-blue-hf-01"
+  ],
+  "bird red": [
+   "emoji-bird-red-hf-01"
+  ],
+  "bird robin": [
+   "emoji-bird-robin-hf-01"
+  ],
+  "birthday": [
+   "Emoji_Cake",
+   "Emoji_Fireworks",
+   "Emoji_PartyPink"
+  ],
+  "blast off": [
+   "Emoji_Rocket"
+  ],
+  "blue flower": [
+   "Emoji_FlowerBlue"
+  ],
+  "blue glasses": [
+   "emoji-blue-glasses-hf-01"
+  ],
+  "blue heart": [
+   "Emoji_HeartBlue"
+  ],
+  "boat": [
+   "emoji-boat-hf-01",
+   "emoji-gravy-boat-hf-01"
+  ],
+  "boiling": [
+   "Emoji_ThermometerHot"
+  ],
+  "bolt": [
+   "Emoji_LightningBolt"
+  ],
+  "boo": [
+   "Emoji_ThumbsDown"
+  ],
+  "book": [
+   "Emoji_Book",
+   "emoji-book-hf-01"
+  ],
+  "bottle": [
+   "Emoji_Baby"
+  ],
+  "bowling": [
+   "Emoji_Bowling",
+   "emoji-bowling-hf-01"
+  ],
+  "box": [
+   "emoji-chocolate-heart-box-hf-01",
+   "emoji-chocolate-heart-box-open-hf-01"
+  ],
+  "boxing": [
+   "Emoji_Boxing",
+   "emoji-boxing-hf-01"
+  ],
+  "brain": [
+   "Emoji_Brain"
+  ],
+  "breakfast": [
+   "Emoji_Toaster",
+   "emoji-breakfast-hf-01"
+  ],
+  "broken heart": [
+   "emoji-broken-heart-hf-01"
+  ],
+  "buffalo": [
+   "Emoji_BuffaloChickenFood"
+  ],
+  "buffalo chicken food": [
+   "Emoji_BuffaloChickenFood"
+  ],
+  "buffalo wing": [
+   "Emoji_BuffaloChickenFood"
+  ],
+  "bug": [
+   "Emoji_Ant"
+  ],
+  "bulb": [
+   "Emoji_Lightbulb",
+   "emoji-light-bulb-hf-01"
+  ],
+  "bunny": [
+   "Emoji_Rabbit",
+   "emoji-bunny-hf-01"
+  ],
+  "burger": [
+   "Emoji_Burger",
+   "emoji-burger-hf-01"
+  ],
+  "bus": [
+   "emoji-school-bus-hf-01"
+  ],
+  "cab": [
+   "Emoji_Taxi"
+  ],
+  "cafe": [
+   "Emoji_Coffee"
+  ],
+  "cake": [
+   "Emoji_Cake",
+   "emoji-cake-hf-01"
+  ],
+  "calculator": [
+   "emoji-calculator-hf-01"
+  ],
+  "camera": [
+   "Emoji_Camera",
+   "emoji-camera-hf-01"
+  ],
+  "campfire": [
+   "Emoji_Fire"
+  ],
+  "canada": [
+   "emoji-canada-hf-01"
+  ],
+  "canadian flag": [
+   "emoji-canada-hf-01"
+  ],
+  "candy": [
+   "Emoji_Valentines",
+   "emoji-candy-cane-hf-01"
+  ],
+  "candy cane": [
+   "emoji-candy-cane-hf-01"
+  ],
+  "cane": [
+   "emoji-candy-cane-hf-01"
+  ],
+  "canvas": [
+   "Emoji_Canvas"
+  ],
+  "car": [
+   "Emoji_Car",
+   "Emoji_Taxi",
+   "emoji-car-hf-01"
+  ],
+  "carrot": [
+   "Emoji_Carrot",
+   "emoji-carrot-hf-01"
+  ],
+  "cash": [
+   "Emoji_Money"
+  ],
+  "cat": [
+   "Emoji_Cat",
+   "emoji-cat-hf-01"
+  ],
+  "cattle": [
+   "Emoji_Cow"
+  ],
+  "cell phone": [
+   "Emoji_CellPhone"
+  ],
+  "chalkboard": [
+   "Emoji_Chalkboard",
+   "emoji-chalkboard-hf-01"
+  ],
+  "cheers": [
+   "Emoji_Beer",
+   "Emoji_Wine"
+  ],
+  "cheese": [
+   "Emoji_Cheese",
+   "emoji-cheese-hf-01"
+  ],
+  "cheeseburger": [
+   "Emoji_Burger"
+  ],
+  "chick": [
+   "Emoji_EasterEgg"
+  ],
+  "chicken": [
+   "Emoji_BuffaloChickenFood",
+   "Emoji_ChickenFood",
+   "emoji-chicken-hf-01"
+  ],
+  "chicken food": [
+   "Emoji_ChickenFood"
+  ],
+  "chicken wing": [
+   "Emoji_BuffaloChickenFood"
+  ],
+  "chilly": [
+   "Emoji_Ice"
+  ],
+  "chip": [
+   "emoji-computer-chip-hf-01"
+  ],
+  "chocolate": [
+   "Emoji_Valentines",
+   "emoji-chocolate-heart-box-hf-01",
+   "emoji-chocolate-heart-box-open-hf-01"
+  ],
+  "chocolate heart box": [
+   "emoji-chocolate-heart-box-hf-01"
+  ],
+  "chocolate heart box open": [
+   "emoji-chocolate-heart-box-open-hf-01"
+  ],
+  "chores": [
+   "Emoji_Laundry"
+  ],
+  "christmas": [
+   "Emoji_ChristmasTree",
+   "Emoji_Santa",
+   "emoji-christmas-tree-hf-01"
+  ],
+  "christmas tree": [
+   "Emoji_ChristmasTree",
+   "emoji-christmas-tree-hf-01"
+  ],
+  "circuit": [
+   "Emoji_Microchip"
+  ],
+  "clap": [
+   "Emoji_Clap"
+  ],
+  "clapper": [
+   "emoji-movie-clapper-hf-01"
+  ],
+  "clapping": [
+   "Emoji_Clap"
+  ],
+  "clear night": [
+   "emoji-clear-night-hf-01"
+  ],
+  "clock": [
+   "Emoji_Clock",
+   "emoji-clock-hf-01"
+  ],
+  "clothes": [
+   "Emoji_Dress",
+   "Emoji_Pants"
+  ],
+  "clothing": [
+   "Emoji_Pants"
+  ],
+  "clouds": [
+   "Emoji_Clouds"
+  ],
+  "cloudy": [
+   "Emoji_Clouds",
+   "emoji-cloudy-hf-01"
+  ],
+  "clover": [
+   "Emoji_Clover"
+  ],
+  "coffee": [
+   "Emoji_Coffee"
+  ],
+  "colorful": [
+   "Emoji_Rainbow"
+  ],
+  "colors": [
+   "Emoji_Rainbow"
+  ],
+  "computer": [
+   "Emoji_Computer",
+   "Emoji_Microchip",
+   "emoji-computer-chip-hf-01"
+  ],
+  "computer chip": [
+   "emoji-computer-chip-hf-01"
+  ],
+  "cow": [
+   "Emoji_Cow",
+   "emoji-cow-hf-01"
+  ],
+  "cpu": [
+   "Emoji_Microchip"
+  ],
+  "cream": [
+   "emoji-ice-cream-hf-01"
+  ],
+  "crown": [
+   "emoji-crown-hf-01"
+  ],
+  "cube": [
+   "emoji-ice-cube-hf-01"
+  ],
+  "cupid": [
+   "Emoji_HeartArrow",
+   "Emoji_HeartBlue",
+   "Emoji_HeartRed",
+   "Emoji_HeartRed2"
+  ],
+  "dairy": [
+   "Emoji_Cheese"
+  ],
+  "daisy": [
+   "Emoji_FlowerWhite",
+   "emoji-flower-daisy-hf-01"
+  ],
+  "deal with it": [
+   "Emoji_Sunglasses"
+  ],
+  "desert": [
+   "Emoji_Pyramid"
+  ],
+  "dessert": [
+   "Emoji_Cake",
+   "Emoji_IceCream"
+  ],
+  "diamond": [
+   "emoji-diamond-hf-01"
+  ],
+  "dinner": [
+   "Emoji_Dinner",
+   "Emoji_Meal",
+   "emoji-dinner-hf-01",
+   "emoji-turkey-dinner-hf-01"
+  ],
+  "disco": [
+   "emoji-disco-ball-hf-01"
+  ],
+  "disco ball": [
+   "emoji-disco-ball-hf-01"
+  ],
+  "disco spin": [
+   "Emoji_Disco_Spin_01"
+  ],
+  "discoball spin": [
+   "Emoji_Disco_Spin_01"
+  ],
+  "diving": [
+   "Emoji_Snorkel"
+  ],
+  "dog": [
+   "Emoji_Dog",
+   "Emoji_FrenchBulldog",
+   "emoji-dog-french-hf-01",
+   "emoji-dog-hf-01"
+  ],
+  "dog french": [
+   "emoji-dog-french-hf-01"
+  ],
+  "dollar": [
+   "Emoji_Money"
+  ],
+  "donkey": [
+   "emoji-donkey-hf-01"
+  ],
+  "doodle": [
+   "Emoji_Canvas"
+  ],
+  "drawing": [
+   "Emoji_Canvas"
+  ],
+  "dreidel": [
+   "emoji-dreidel-01-hf-01",
+   "emoji-dreidel-02-hf-01",
+   "emoji-dreidel-03-hf-01",
+   "emoji-dreidel-04-hf-01"
+  ],
+  "dress": [
+   "Emoji_Dress",
+   "emoji-dress-hf-01"
+  ],
+  "dress up": [
+   "Emoji_Dress"
+  ],
+  "drumstick": [
+   "Emoji_ChickenFood"
+  ],
+  "earth": [
+   "Emoji_Earth",
+   "emoji-earth-hf-01"
+  ],
+  "easel": [
+   "emoji-easel-hf-01"
+  ],
+  "easter": [
+   "Emoji_EasterEgg",
+   "emoji-easter-egg-hf-01",
+   "emoji-easter-hf-01"
+  ],
+  "easter egg": [
+   "Emoji_EasterEgg",
+   "emoji-easter-egg-hf-01"
+  ],
+  "education": [
+   "Emoji_School"
+  ],
+  "egg": [
+   "emoji-easter-egg-hf-01"
+  ],
+  "egypt": [
+   "Emoji_Pyramid"
+  ],
+  "einstein": [
+   "Emoji_Chalkboard"
+  ],
+  "electric": [
+   "Emoji_LightningBolt",
+   "Emoji_Outlet"
+  ],
+  "electrical socket": [
+   "Emoji_Outlet"
+  ],
+  "electricity": [
+   "Emoji_LightningBolt",
+   "Emoji_Outlet"
+  ],
+  "elephant": [
+   "emoji-elephant-hf-01"
+  ],
+  "exclamation blue": [
+   "Emoji_ExclamationBlue"
+  ],
+  "exclamation mark red": [
+   "emoji-exclamation-mark-red-hf-01"
+  ],
+  "exclamation mark yellow": [
+   "emoji-exclamation-mark-yellow-hf-01"
+  ],
+  "exclamation red": [
+   "Emoji_ExclamationRed"
+  ],
+  "exclamation yellow": [
+   "Emoji_ExclamationYellow"
+  ],
+  "exercise": [
+   "Emoji_Barbell",
+   "Emoji_Running"
+  ],
+  "farm": [
+   "Emoji_Cow",
+   "Emoji_Pig"
+  ],
+  "fashion": [
+   "Emoji_Dress"
+  ],
+  "fingers crossed": [
+   "Emoji_FingersCrossed"
+  ],
+  "fire": [
+   "Emoji_Fire",
+   "emoji-fire-hf-01"
+  ],
+  "fireworks": [
+   "Emoji_Fireworks"
+  ],
+  "firstaid": [
+   "emoji-firstaid-hf-01"
+  ],
+  "fish": [
+   "Emoji_Fish",
+   "emoji-fish-hf-01"
+  ],
+  "fishing": [
+   "Emoji_Fishing",
+   "emoji-fishing-hf-01"
+  ],
+  "flag pride": [
+   "emoji-flag-pride-hf-01"
+  ],
+  "flame": [
+   "Emoji_Fire"
+  ],
+  "flamingo": [
+   "emoji-flamingo-hf-01"
+  ],
+  "flower": [
+   "Emoji_FlowerBlue",
+   "Emoji_FlowerRed",
+   "Emoji_FlowerWhite",
+   "emoji-flower-blue-hf-01",
+   "emoji-flower-daisy-hf-01",
+   "emoji-flower-pink-hf-01"
+  ],
+  "flower blue": [
+   "Emoji_FlowerBlue",
+   "emoji-flower-blue-hf-01"
+  ],
+  "flower daisy": [
+   "emoji-flower-daisy-hf-01"
+  ],
+  "flower pink": [
+   "emoji-flower-pink-hf-01"
+  ],
+  "flower red": [
+   "Emoji_FlowerRed"
+  ],
+  "flower white": [
+   "Emoji_FlowerWhite"
+  ],
+  "football": [
+   "Emoji_Football",
+   "emoji-football-hf-01"
+  ],
+  "fork": [
+   "Emoji_Meal"
+  ],
+  "four leaf clover": [
+   "Emoji_Clover"
+  ],
+  "fourth of july": [
+   "Emoji_Fireworks"
+  ],
+  "freezing": [
+   "Emoji_ThermometerCold"
+  ],
+  "french": [
+   "emoji-dog-french-hf-01"
+  ],
+  "french bulldog": [
+   "Emoji_FrenchBulldog"
+  ],
+  "frenchie": [
+   "Emoji_FrenchBulldog"
+  ],
+  "frosty": [
+   "Emoji_Snowman"
+  ],
+  "fruit": [
+   "Emoji_Apple",
+   "Emoji_AppleRed",
+   "Emoji_Watermelon"
+  ],
+  "gaming": [
+   "Emoji_VideoGame"
+  ],
+  "garden": [
+   "Emoji_FlowerBlue",
+   "Emoji_FlowerRed",
+   "Emoji_FlowerWhite"
+  ],
+  "gas": [
+   "Emoji_Gas",
+   "emoji-gas-hf-01"
+  ],
+  "gasoline": [
+   "Emoji_Gas"
+  ],
+  "ghost": [
+   "emoji-ghost-hf-01"
+  ],
+  "glasses": [
+   "emoji-blue-glasses-hf-01",
+   "emoji-white-glasses-hf-01"
+  ],
+  "golf": [
+   "Emoji_Golf",
+   "emoji-golf-hf-01"
+  ],
+  "gone fishing": [
+   "Emoji_Fishing"
+  ],
+  "good luck": [
+   "Emoji_Clover"
+  ],
+  "graduation": [
+   "emoji_graduation_01"
+  ],
+  "gravy": [
+   "emoji-gravy-boat-hf-01"
+  ],
+  "gravy boat": [
+   "emoji-gravy-boat-hf-01"
+  ],
+  "green apple": [
+   "Emoji_Apple"
+  ],
+  "groceries": [
+   "Emoji_Groceries"
+  ],
+  "grocery": [
+   "Emoji_Groceries",
+   "emoji-grocery-hf-01"
+  ],
+  "guitar": [
+   "emoji-guitar-hf-01"
+  ],
+  "gym": [
+   "Emoji_Barbell"
+  ],
+  "halloween": [
+   "Emoji_Halloween"
+  ],
+  "halo": [
+   "Emoji_Halo",
+   "emoji-halo-hf-01"
+  ],
+  "ham": [
+   "Emoji_Pig"
+  ],
+  "hamburger": [
+   "Emoji_Burger"
+  ],
+  "hanukkah": [
+   "Emoji_Hanukkah",
+   "emoji-hanukkah-hf-01"
+  ],
+  "hat": [
+   "Emoji_Hat",
+   "emoji-hat-hf-01",
+   "emoji-top-hat-hf-01"
+  ],
+  "heart arrow": [
+   "Emoji_HeartArrow"
+  ],
+  "heart blue": [
+   "Emoji_HeartBlue"
+  ],
+  "heart red": [
+   "Emoji_HeartRed",
+   "Emoji_HeartRed2"
+  ],
+  "hiking": [
+   "Emoji_Mountain"
+  ],
+  "hockey": [
+   "Emoji_Hockey",
+   "emoji-hockey-hf-01"
+  ],
+  "holes": [
+   "Emoji_Cheese"
+  ],
+  "holiday sweater": [
+   "emoji-holiday-sweater-hf-01"
+  ],
+  "homework": [
+   "Emoji_School"
+  ],
+  "hot dog": [
+   "emoji-hot-dog-hf-01"
+  ],
+  "hot drink": [
+   "emoji-hot-drink-hf-01"
+  ],
+  "hotdog": [
+   "Emoji_Hotdog"
+  ],
+  "house": [
+   "Emoji_House",
+   "emoji-house-hf-01"
+  ],
+  "ib idle long time": [
+   "Emoji_EasterEgg",
+   "Emoji_FlowerBlue",
+   "Emoji_FlowerRed",
+   "Emoji_FlowerWhite",
+   "Emoji_Stork",
+   "emoji-america-hf-01",
+   "emoji_medal_01"
+  ],
+  "ib idle short time": [
+   "Emoji_EasterEgg",
+   "Emoji_FlowerBlue",
+   "Emoji_FlowerRed",
+   "Emoji_FlowerWhite",
+   "Emoji_Stork",
+   "emoji-america-hf-01",
+   "emoji_medal_01"
+  ],
+  "ice": [
+   "Emoji_Ice",
+   "emoji-ice-cream-hf-01",
+   "emoji-ice-cube-hf-01"
+  ],
+  "ice cream": [
+   "Emoji_IceCream",
+   "emoji-ice-cream-hf-01"
+  ],
+  "ice cube": [
+   "Emoji_Ice",
+   "emoji-ice-cube-hf-01"
+  ],
+  "icecream": [
+   "Emoji_IceCream"
+  ],
+  "iceskate": [
+   "emoji-iceskate-hf-01"
+  ],
+  "innocent": [
+   "Emoji_Halo"
+  ],
+  "insect": [
+   "Emoji_Ant"
+  ],
+  "jack o lantern": [
+   "Emoji_Halloween",
+   "emoji-jack-o-lantern-hf-01"
+  ],
+  "jaws": [
+   "Emoji_Shark"
+  ],
+  "jeans": [
+   "Emoji_Pants"
+  ],
+  "jigsaw": [
+   "Emoji_Puzzle"
+  ],
+  "jigsaw puzzle": [
+   "Emoji_Puzzle"
+  ],
+  "junk": [
+   "Emoji_Trash"
+  ],
+  "kitchen": [
+   "Emoji_Toaster"
+  ],
+  "kitten": [
+   "Emoji_Cat"
+  ],
+  "knife": [
+   "Emoji_Meal"
+  ],
+  "knowledge": [
+   "Emoji_Brain"
+  ],
+  "kwanzaa": [
+   "emoji-kwanzaa-hf-01"
+  ],
+  "lantern": [
+   "emoji-jack-o-lantern-hf-01"
+  ],
+  "laptop": [
+   "Emoji_Computer",
+   "emoji-laptop-hf-01"
+  ],
+  "laundry": [
+   "Emoji_Laundry"
+  ],
+  "learning": [
+   "Emoji_Chalkboard",
+   "Emoji_School"
+  ],
+  "lgbt flag": [
+   "emoji-flag-pride-hf-01"
+  ],
+  "library": [
+   "Emoji_Book"
+  ],
+  "life saver": [
+   "emoji-life-saver-hf-01"
+  ],
+  "light bulb": [
+   "emoji-light-bulb-hf-01"
+  ],
+  "lightbulb": [
+   "Emoji_Lightbulb"
+  ],
+  "lightning": [
+   "Emoji_LightningBolt",
+   "Emoji_StormCloud",
+   "emoji-lightning-hf-01"
+  ],
+  "lightning bolt": [
+   "Emoji_LightningBolt"
+  ],
+  "literature": [
+   "Emoji_Book"
+  ],
+  "lock": [
+   "Emoji_Lock",
+   "emoji-lock-hf-01"
+  ],
+  "luck": [
+   "emoji-luck-hf-01"
+  ],
+  "lucky": [
+   "Emoji_Clover"
+  ],
+  "lunch": [
+   "Emoji_Burger",
+   "Emoji_Hotdog",
+   "Emoji_Lunch",
+   "Emoji_Meal"
+  ],
+  "mac": [
+   "emoji-old-mac-hf-01"
+  ],
+  "macaroni": [
+   "emoji-macaroni-hf-01"
+  ],
+  "machine": [
+   "Emoji_Robot",
+   "emoji-washing-machine-hf-01"
+  ],
+  "magic": [
+   "emoji-magic-hf-01"
+  ],
+  "magnifying": [
+   "emoji-magnifying-glass-hf-01"
+  ],
+  "magnifying glass": [
+   "Emoji_MagnifyingGlass",
+   "emoji-magnifying-glass-hf-01"
+  ],
+  "mall": [
+   "Emoji_Shopping"
+  ],
+  "maracas": [
+   "emoji-maracas-left-hf-01",
+   "emoji-maracas-right-hf-01"
+  ],
+  "maracas left": [
+   "emoji-maracas-left-hf-01"
+  ],
+  "maracas right": [
+   "emoji-maracas-right-hf-01"
+  ],
+  "market": [
+   "Emoji_Groceries"
+  ],
+  "mars": [
+   "emoji-mars-hf-01"
+  ],
+  "master lock": [
+   "Emoji_Lock"
+  ],
+  "meat": [
+   "Emoji_BuffaloChickenFood",
+   "Emoji_Burger",
+   "Emoji_ChickenFood"
+  ],
+  "microchip": [
+   "Emoji_Microchip"
+  ],
+  "microphone": [
+   "emoji-microphone-hf-01"
+  ],
+  "milk": [
+   "Emoji_Baby",
+   "Emoji_Cow"
+  ],
+  "mini golf": [
+   "Emoji_Golf"
+  ],
+  "mistletoe": [
+   "emoji-mistletoe-hf-01"
+  ],
+  "mittens": [
+   "emoji-mittens-hf-01"
+  ],
+  "money": [
+   "Emoji_Money",
+   "emoji-money-hf-01"
+  ],
+  "monkey": [
+   "emoji-monkey-hf-01"
+  ],
+  "moo": [
+   "Emoji_Cow"
+  ],
+  "moon": [
+   "Emoji_Moon",
+   "emoji-moon-hf-01"
+  ],
+  "mountain": [
+   "Emoji_Mountain"
+  ],
+  "mountains": [
+   "emoji-mountains-hf-01"
+  ],
+  "mouse": [
+   "Emoji_Mouse",
+   "emoji-mouse-hf-01",
+   "emoji-mouse-stand-hf-01"
+  ],
+  "mouse stand": [
+   "emoji-mouse-stand-hf-01"
+  ],
+  "movie": [
+   "emoji-movie-clapper-hf-01"
+  ],
+  "movie clapper": [
+   "emoji-movie-clapper-hf-01"
+  ],
+  "movies": [
+   "Emoji_Popcorn"
+  ],
+  "muscle": [
+   "Emoji_Barbell"
+  ],
+  "music": [
+   "Emoji_Music",
+   "emoji-music-hf-01"
+  ],
+  "music note": [
+   "Emoji_Music"
+  ],
+  "musical": [
+   "Emoji_Music"
+  ],
+  "musician": [
+   "Emoji_Music"
+  ],
+  "mustache": [
+   "emoji-mustache-hf-01"
+  ],
+  "nasa": [
+   "Emoji_Rocket"
+  ],
+  "nba": [
+   "Emoji_Basketball"
+  ],
+  "new years": [
+   "emoji-new-years-hf-01"
+  ],
+  "nye": [
+   "emoji-nye-ball-down-hf-01",
+   "emoji-nye-ball-up-hf-01"
+  ],
+  "nye ball down": [
+   "emoji-nye-ball-down-hf-01"
+  ],
+  "nye ball up": [
+   "emoji-nye-ball-up-hf-01"
+  ],
+  "ocean": [
+   "Emoji_Ocean",
+   "Emoji_Shark",
+   "emoji-ocean-hf-01"
+  ],
+  "old mac": [
+   "emoji-old-mac-hf-01"
+  ],
+  "olympic medal": [
+   "emoji_medal_01"
+  ],
+  "ornament": [
+   "emoji-ornament-hf-01"
+  ],
+  "outer space": [
+   "Emoji_Planet"
+  ],
+  "outlet": [
+   "Emoji_Outlet",
+   "emoji-outlet-hf-01"
+  ],
+  "paint": [
+   "Emoji_Art"
+  ],
+  "palette": [
+   "Emoji_Art",
+   "emoji-palette-hf-01"
+  ],
+  "pants": [
+   "Emoji_Pants",
+   "emoji-pants-hf-01"
+  ],
+  "paper": [
+   "emoji-toilet-paper-hf-01"
+  ],
+  "party": [
+   "Emoji_Cake",
+   "Emoji_Fireworks",
+   "Emoji_PartyPink",
+   "emoji-party-hf-01"
+  ],
+  "party pink": [
+   "Emoji_PartyPink"
+  ],
+  "payment": [
+   "Emoji_Money"
+  ],
+  "penguin": [
+   "Emoji_Penguin",
+   "emoji-penguin-hf-01"
+  ],
+  "pet": [
+   "Emoji_Cat",
+   "Emoji_Dog",
+   "Emoji_FrenchBulldog"
+  ],
+  "phone": [
+   "Emoji_CellPhone",
+   "emoji-phone-hf-01"
+  ],
+  "phone call": [
+   "Emoji_CellPhone"
+  ],
+  "photography": [
+   "Emoji_Camera"
+  ],
+  "picture": [
+   "Emoji_Camera"
+  ],
+  "pie": [
+   "emoji-pie-pumpkin-hf-01"
+  ],
+  "pie pumpkin": [
+   "emoji-pie-pumpkin-hf-01"
+  ],
+  "pig": [
+   "Emoji_Pig",
+   "emoji-pig-hf-01"
+  ],
+  "piggy": [
+   "Emoji_Pig",
+   "emoji-piggy-bank-hf-01"
+  ],
+  "piggy bank": [
+   "emoji-piggy-bank-hf-01"
+  ],
+  "pillow": [
+   "Emoji_Pillow",
+   "emoji-pillow-hf-01"
+  ],
+  "pizza": [
+   "Emoji_Pizza",
+   "emoji-pizza-hf-01"
+  ],
+  "plane": [
+   "Emoji_Airplane"
+  ],
+  "planet": [
+   "Emoji_Earth",
+   "Emoji_Planet"
+  ],
+  "plant": [
+   "Emoji_FlowerBlue",
+   "Emoji_FlowerRed",
+   "Emoji_FlowerWhite"
+  ],
+  "plate": [
+   "emoji-plate-hf-01"
+  ],
+  "plug": [
+   "Emoji_Outlet"
+  ],
+  "popcorn": [
+   "Emoji_Popcorn",
+   "emoji-popcorn-hf-01"
+  ],
+  "power outlet": [
+   "Emoji_Outlet"
+  ],
+  "pretzel": [
+   "Emoji_Pretzel",
+   "emoji-pretzel-hf-01"
+  ],
+  "pride flag": [
+   "emoji-flag-pride-hf-01"
+  ],
+  "puck": [
+   "Emoji_Hockey"
+  ],
+  "pumpkin": [
+   "Emoji_Halloween",
+   "emoji-pie-pumpkin-hf-01",
+   "emoji-pumpkin-hf-01",
+   "emoji_pumpkin_01"
+  ],
+  "punch": [
+   "Emoji_Boxing"
+  ],
+  "puppy": [
+   "Emoji_Dog",
+   "Emoji_FrenchBulldog"
+  ],
+  "purse": [
+   "emoji-purse-hf-01"
+  ],
+  "puzzle": [
+   "Emoji_Puzzle",
+   "emoji-puzzle-piece-hf-01"
+  ],
+  "puzzle piece": [
+   "emoji-puzzle-piece-hf-01"
+  ],
+  "pyramid": [
+   "Emoji_Pyramid",
+   "emoji-pyramid-hf-01"
+  ],
+  "rabbit": [
+   "Emoji_Rabbit"
+  ],
+  "radar": [
+   "emoji-radar-hf-01"
+  ],
+  "rain": [
+   "Emoji_RainCloud",
+   "Emoji_Umbrella",
+   "emoji-rain-hf-01"
+  ],
+  "rain cloud": [
+   "Emoji_RainCloud"
+  ],
+  "rainbow": [
+   "Emoji_Rainbow",
+   "emoji-rainbow-hf-01"
+  ],
+  "ramadan": [
+   "emoji-ramadan-hf-01"
+  ],
+  "rat": [
+   "Emoji_Mouse"
+  ],
+  "reading": [
+   "Emoji_Book"
+  ],
+  "red apple": [
+   "Emoji_AppleRed"
+  ],
+  "red flower": [
+   "Emoji_FlowerRed"
+  ],
+  "red heart": [
+   "Emoji_HeartRed",
+   "Emoji_HeartRed2"
+  ],
+  "repairs": [
+   "Emoji_Tools"
+  ],
+  "reptile": [
+   "Emoji_Turtle"
+  ],
+  "restaurant": [
+   "Emoji_Meal"
+  ],
+  "restroom": [
+   "Emoji_ToiletPaper"
+  ],
+  "robin": [
+   "emoji-bird-robin-hf-01"
+  ],
+  "robot": [
+   "Emoji_Robot",
+   "emoji-robot-hf-01"
+  ],
+  "rocket": [
+   "Emoji_Rocket",
+   "emoji-rocket-hf-01"
+  ],
+  "rocketship": [
+   "Emoji_Rocket"
+  ],
+  "rodent": [
+   "Emoji_Mouse"
+  ],
+  "rubbish": [
+   "Emoji_Trash"
+  ],
+  "sandwich": [
+   "Emoji_Lunch",
+   "emoji-sandwich-hf-01"
+  ],
+  "santa": [
+   "Emoji_Santa",
+   "emoji-santa-hf-01"
+  ],
+  "santa claus": [
+   "Emoji_Santa"
+  ],
+  "saturn": [
+   "Emoji_Planet"
+  ],
+  "school": [
+   "Emoji_Chalkboard",
+   "Emoji_School",
+   "emoji-school-bus-hf-01",
+   "emoji-school-hf-01"
+  ],
+  "school bus": [
+   "emoji-school-bus-hf-01"
+  ],
+  "science": [
+   "Emoji_MagnifyingGlass"
+  ],
+  "scuba": [
+   "Emoji_Snorkel"
+  ],
+  "scuba diving": [
+   "Emoji_Snorkel"
+  ],
+  "sea": [
+   "Emoji_Ocean"
+  ],
+  "seafood": [
+   "Emoji_Fish"
+  ],
+  "shades": [
+   "Emoji_Sunglasses"
+  ],
+  "shark": [
+   "Emoji_Shark"
+  ],
+  "sheep": [
+   "emoji-sheep-hf-01"
+  ],
+  "shop": [
+   "Emoji_Shopping"
+  ],
+  "shopping": [
+   "Emoji_Shopping",
+   "emoji-shopping-hf-01"
+  ],
+  "shore": [
+   "Emoji_Beach"
+  ],
+  "sketch": [
+   "Emoji_Canvas"
+  ],
+  "skis": [
+   "emoji-skis-hf-01"
+  ],
+  "slacks": [
+   "Emoji_Pants"
+  ],
+  "sleep": [
+   "Emoji_Moon",
+   "Emoji_Pillow"
+  ],
+  "snorkel": [
+   "Emoji_Snorkel",
+   "emoji-snorkel-hf-01"
+  ],
+  "snow": [
+   "Emoji_Snowflake",
+   "Emoji_Snowman"
+  ],
+  "snowboard": [
+   "emoji-snowboard-hf-01"
+  ],
+  "snowflake": [
+   "Emoji_Snowflake",
+   "emoji-snowflake-hf-01"
+  ],
+  "snowman": [
+   "Emoji_Snowman"
+  ],
+  "soccer": [
+   "Emoji_Soccer",
+   "emoji-soccer-hf-01"
+  ],
+  "soccerball": [
+   "Emoji_Soccer"
+  ],
+  "socks": [
+   "emoji-socks-hf-01"
+  ],
+  "soup": [
+   "emoji-soup-hf-01"
+  ],
+  "space": [
+   "Emoji_Earth",
+   "Emoji_Planet",
+   "Emoji_Rocket"
+  ],
+  "spinning disco ball": [
+   "Emoji_Disco_Spin_01"
+  ],
+  "spinning discoball": [
+   "Emoji_Disco_Spin_01"
+  ],
+  "stocking": [
+   "emoji-stocking-01-hf-01",
+   "emoji-stocking-02-hf-01"
+  ],
+  "store": [
+   "Emoji_Shopping"
+  ],
+  "stork": [
+   "Emoji_Stork",
+   "emoji-stork-hf-01"
+  ],
+  "storm": [
+   "Emoji_StormCloud"
+  ],
+  "storm cloud": [
+   "Emoji_StormCloud"
+  ],
+  "summer": [
+   "Emoji_Beach",
+   "Emoji_Watermelon"
+  ],
+  "sun": [
+   "Emoji_Sun",
+   "Emoji_Sun2",
+   "emoji-sun-hf-01"
+  ],
+  "sunglasses": [
+   "Emoji_Sunglasses"
+  ],
+  "sunny": [
+   "Emoji_Beach",
+   "Emoji_Sun",
+   "Emoji_Sun2",
+   "Emoji_Sunglasses"
+  ],
+  "sunshine": [
+   "Emoji_Sun",
+   "Emoji_Sun2"
+  ],
+  "supermarket": [
+   "Emoji_Groceries"
+  ],
+  "sushi": [
+   "Emoji_Sushi",
+   "emoji-sushi-hf-01"
+  ],
+  "sweater": [
+   "emoji-holiday-sweater-hf-01"
+  ],
+  "swimming": [
+   "Emoji_Snorkel"
+  ],
+  "swiss cheese": [
+   "Emoji_Cheese"
+  ],
+  "taco": [
+   "Emoji_Taco",
+   "emoji-taco-hf-01"
+  ],
+  "taxi": [
+   "Emoji_Taxi",
+   "emoji-taxi-hf-01"
+  ],
+  "tea": [
+   "Emoji_Coffee"
+  ],
+  "teacher": [
+   "Emoji_School"
+  ],
+  "television": [
+   "Emoji_TV"
+  ],
+  "temperature": [
+   "Emoji_ThermometerCold",
+   "Emoji_ThermometerHot"
+  ],
+  "tennis": [
+   "Emoji_Tennis",
+   "emoji-tennis-hf-01"
+  ],
+  "thermometer": [
+   "Emoji_ThermometerCold",
+   "Emoji_ThermometerHot"
+  ],
+  "thermometer cold": [
+   "Emoji_ThermometerCold"
+  ],
+  "thermometer hot": [
+   "Emoji_ThermometerHot"
+  ],
+  "thumb": [
+   "Emoji_ThumbsUp"
+  ],
+  "thumbs down": [
+   "Emoji_ThumbsDown"
+  ],
+  "thumbs up": [
+   "Emoji_ThumbsUp"
+  ],
+  "thunder": [
+   "emoji-thunder-hf-01"
+  ],
+  "thunderbolt": [
+   "Emoji_LightningBolt"
+  ],
+  "thunderstorm": [
+   "Emoji_StormCloud"
+  ],
+  "tickets": [
+   "emoji-tickets-hf-01"
+  ],
+  "toast": [
+   "Emoji_Toaster"
+  ],
+  "toaster": [
+   "Emoji_Toaster",
+   "emoji-toaster-hf-01"
+  ],
+  "toilet": [
+   "Emoji_ToiletPaper",
+   "emoji-toilet-hf-01",
+   "emoji-toilet-paper-hf-01"
+  ],
+  "toilet paper": [
+   "Emoji_ToiletPaper",
+   "emoji-toilet-paper-hf-01"
+  ],
+  "tools": [
+   "Emoji_Tools",
+   "emoji-tools-hf-01"
+  ],
+  "top hat": [
+   "emoji-top-hat-hf-01"
+  ],
+  "tortoise": [
+   "Emoji_Turtle"
+  ],
+  "trash": [
+   "Emoji_Trash",
+   "emoji-trash-can-hf-01"
+  ],
+  "trash can": [
+   "emoji-trash-can-hf-01"
+  ],
+  "trashcan": [
+   "Emoji_Trash"
+  ],
+  "travel": [
+   "Emoji_Airplane"
+  ],
+  "tree": [
+   "Emoji_Tree",
+   "emoji-christmas-tree-hf-01",
+   "emoji-tree-hf-01"
+  ],
+  "trophy": [
+   "Emoji_Trophy"
+  ],
+  "truck": [
+   "Emoji_Truck",
+   "emoji-truck-hf-01"
+  ],
+  "tulip": [
+   "Emoji_FlowerBlue",
+   "Emoji_FlowerRed"
+  ],
+  "turkey": [
+   "emoji-turkey-animal-hf-01",
+   "emoji-turkey-dinner-hf-01"
+  ],
+  "turkey animal": [
+   "emoji-turkey-animal-hf-01"
+  ],
+  "turkey dinner": [
+   "emoji-turkey-dinner-hf-01"
+  ],
+  "turtle": [
+   "Emoji_Turtle",
+   "emoji-turtle-hf-01"
+  ],
+  "uber": [
+   "Emoji_Taxi"
+  ],
+  "ufo": [
+   "emoji-ufo-hf-01"
+  ],
+  "umbrella": [
+   "Emoji_Umbrella",
+   "emoji-umbrella-hf-01"
+  ],
+  "vacuum": [
+   "emoji-vacuum-hf-01"
+  ],
+  "valentines day": [
+   "Emoji_Valentines"
+  ],
+  "vegetable": [
+   "Emoji_Carrot"
+  ],
+  "vehicle": [
+   "Emoji_Car",
+   "Emoji_Taxi"
+  ],
+  "vermin": [
+   "Emoji_Mouse"
+  ],
+  "video game": [
+   "Emoji_VideoGame"
+  ],
+  "washer": [
+   "Emoji_Laundry"
+  ],
+  "washing": [
+   "emoji-washing-machine-hf-01"
+  ],
+  "washing machine": [
+   "emoji-washing-machine-hf-01"
+  ],
+  "water": [
+   "Emoji_Ocean"
+  ],
+  "watermelon": [
+   "Emoji_Watermelon",
+   "emoji-watermelon-hf-01"
+  ],
+  "waving": [
+   "Emoji_Waving"
+  ],
+  "weightlifting": [
+   "Emoji_Barbell"
+  ],
+  "wet": [
+   "Emoji_RainCloud",
+   "Emoji_Umbrella"
+  ],
+  "whale": [
+   "Emoji_Whale",
+   "emoji-whale-hf-01"
+  ],
+  "white flower": [
+   "Emoji_FlowerWhite"
+  ],
+  "white glasses": [
+   "emoji-white-glasses-hf-01"
+  ],
+  "wine": [
+   "Emoji_Wine",
+   "emoji-wine-hf-01"
+  ],
+  "winter": [
+   "Emoji_Ice",
+   "Emoji_Snowman"
+  ],
+  "xmas": [
+   "Emoji_ChristmasTree",
+   "Emoji_Santa"
+  ]
+ },
+ "dances": {
+  "funk": {
+   "words": [
+    "funk",
+    "funky",
+    "groove",
+    "groovy",
+    "beatbox",
+    "beat box",
+    "reggae",
+    "motown",
+    "disco",
+    "boogie"
+   ],
+   "list": [
+    {
+     "n": "BBox_Music_Dance_01",
+     "f": 181,
+     "led": false
+    },
+    {
+     "n": "dance_funk_00",
+     "f": 356,
+     "led": false
+    },
+    {
+     "n": "dance_funk_01",
+     "f": 420,
+     "led": false
+    },
+    {
+     "n": "dance_funk_02",
+     "f": 175,
+     "led": false
+    }
+   ]
+  },
+  "pop": {
+   "words": [
+    "pop",
+    "pop music",
+    "happy dance",
+    "cheerful"
+   ],
+   "list": [
+    {
+     "n": "dance_pop_00",
+     "f": 356,
+     "led": false
+    },
+    {
+     "n": "dance_funk_02",
+     "f": 175,
+     "led": false
+    },
+    {
+     "n": "dance_techno_02",
+     "f": 151,
+     "led": false
+    }
+   ]
+  },
+  "robot": {
+   "words": [
+    "robot",
+    "robotic",
+    "robot dance",
+    "the robot",
+    "dubstep",
+    "dub step",
+    "video game",
+    "arcade"
+   ],
+   "list": [
+    {
+     "n": "Robotic_music_dance_01",
+     "f": 676,
+     "led": false
+    },
+    {
+     "n": "dance_circuit_saver_00",
+     "f": 182,
+     "led": false
+    },
+    {
+     "n": "dance_funk_03",
+     "f": 387,
+     "led": false
+    }
+   ]
+  },
+  "techno": {
+   "words": [
+    "techno",
+    "electronic",
+    "house music",
+    "edm",
+    "rave",
+    "trance"
+   ],
+   "list": [
+    {
+     "n": "electronic_house_music_dance_01",
+     "f": 571,
+     "led": false
+    },
+    {
+     "n": "electronic_techno_music_dance_01",
+     "f": 676,
+     "led": false
+    },
+    {
+     "n": "dance_techno_00",
+     "f": 246,
+     "led": false
+    },
+    {
+     "n": "dance_techno_01",
+     "f": 344,
+     "led": false
+    },
+    {
+     "n": "dance_techno_02",
+     "f": 151,
+     "led": false
+    }
+   ]
+  },
+  "twerk": {
+   "words": [
+    "twerk",
+    "twerking",
+    "booty"
+   ],
+   "list": [
+    {
+     "n": "dance_twerk_00",
+     "f": 241,
+     "led": false
+    },
+    {
+     "n": "Twerking_music_dance_01",
+     "f": 577,
+     "led": false
+    }
+   ]
+  },
+  "belly": {
+   "words": [
+    "belly",
+    "belly dance",
+    "belly dancing",
+    "middle eastern"
+   ],
+   "list": [
+    {
+     "n": "Belly_Dancing_music_dance_01",
+     "f": 611,
+     "led": false
+    },
+    {
+     "n": "Belly_Dancing_music_dance_02",
+     "f": 611,
+     "led": false
+    },
+    {
+     "n": "Belly_Dancing_music_dance_03",
+     "f": 611,
+     "led": false
+    }
+   ]
+  },
+  "flamenco": {
+   "words": [
+    "flamenco",
+    "spanish",
+    "spain",
+    "salsa"
+   ],
+   "list": [
+    {
+     "n": "Flamenco_music_dance_01",
+     "f": 631,
+     "led": false
+    },
+    {
+     "n": "dance_flamenco_guitar_00",
+     "f": 361,
+     "led": false
+    }
+   ]
+  },
+  "country": {
+   "words": [
+    "country",
+    "cowboy",
+    "rockabilly",
+    "hoedown",
+    "line dance",
+    "line dancing"
+   ],
+   "list": [
+    {
+     "n": "country_music_dance_01",
+     "f": 613,
+     "led": false
+    }
+   ]
+  },
+  "slow": {
+   "words": [
+    "slow",
+    "slowly",
+    "slow dance",
+    "smooth",
+    "jazz",
+    "jazzy",
+    "romantic"
+   ],
+   "list": [
+    {
+     "n": "Groovy_music_dance_01",
+     "f": 658,
+     "led": false
+    },
+    {
+     "n": "dance_smooth_jazz_00",
+     "f": 241,
+     "led": false
+    },
+    {
+     "n": "Smooth_Jazz_music_dance_01",
+     "f": 752,
+     "led": false
+    }
+   ]
+  },
+  "calm": {
+   "words": [
+    "calm",
+    "relaxing",
+    "relaxed",
+    "zen",
+    "peaceful",
+    "meditation",
+    "japanese"
+   ],
+   "list": [
+    {
+     "n": "dance_japanese_water_garden_00",
+     "f": 259,
+     "led": false
+    }
+   ]
+  },
+  "silly": {
+   "words": [
+    "silly",
+    "funny",
+    "goofy",
+    "weird"
+   ],
+   "list": [
+    {
+     "n": "dance_funny_00",
+     "f": 325,
+     "led": false
+    },
+    {
+     "n": "dance_funny_01",
+     "f": 511,
+     "led": false
+    }
+   ]
+  },
+  "waltz": {
+   "words": [
+    "waltz",
+    "ballroom",
+    "classical"
+   ],
+   "list": [
+    {
+     "n": "Waltz_01_01",
+     "f": 256,
+     "led": true
+    }
+   ]
+  }
+ }
+}
