@@ -14,8 +14,17 @@ const RETRIES = 5;
 
 let server = null, retryTimer = null, stopped = false;
 
+// Jibo's own logger reaches /var/log/messages; BEam's api.log only reaches the console.
+function logger(api) {
+    try {
+        const jiboLog = require('jibo').log;
+        if (jiboLog && typeof jiboLog.createChild === 'function') return createLog(jiboLog.createChild('Noggin.Settings'));
+    } catch (_) {}
+    return createLog(api && api.log);
+}
+
 function start(api) {
-    const log = createLog(api && api.log);
+    const log = logger(api);
     stopped = false;
     let http;
     try { http = require('http'); } catch (_) { http = null; }

@@ -31,6 +31,13 @@ const core = require('./core'), actions = require('./actions'), ExpressionPlayer
 // conversation runs, as BEam's Agent Mode does on every frame.
 const LISTENING = [0, 0.45, 1], BUSY = [1, 0.55, 0], OFF = [0, 0, 0];
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+// An emoji stays on the eye about as long as Jibo says its line (about 75 ms per character),
+// never shorter than EMOJI_MIN_MS and never longer than EMOJI_MAX_MS.
+const EMOJI_MIN_MS = 3000, EMOJI_MAX_MS = 4500, EMOJI_MS_PER_CHAR = 75;
+function emojiHoldMs(text) {
+    const spoken = String(text || '').length * EMOJI_MS_PER_CHAR;
+    return Math.min(EMOJI_MAX_MS, Math.max(EMOJI_MIN_MS, spoken));
+}
 const MAX_ROUNDS = 2, REPLY_WAIT_MS = 15000, KEEP_PAIRS = 10;
 // How Noggin plays an expression (config expressionPlay):
 // - 'esml': inside the line's ESML, and each line waits for its animation.
@@ -555,10 +562,11 @@ class Conversation {
             // if Jibo is still saying this line (the words don't wait for it).
             const later = anim && mode === 'animdb' && at && at.emoji && this.player.busy();
             const token = this.lineToken = {};
+            const holdMs = at && at.emoji ? emojiHoldMs(text) : 0;
             if (later) {
-                this.player.idle().then(() => { if (this.active && this.lineToken === token) this.player.play(anim, {via: 'emoji', turn: turn, line: line}); });
+                this.player.idle().then(() => { if (this.active && this.lineToken === token) this.player.play(anim, {via: 'emoji', turn: turn, line: line, holdMs: holdMs}); });
             } else if (anim && mode === 'animdb') {
-                const played = this.player.play(anim, {via: at && at.via || 'line', turn: turn, line: line});
+                const played = this.player.play(anim, {via: at && at.via || 'line', turn: turn, line: line, holdMs: holdMs});
                 lead = Promise.race([played.started, delay(this.config.expressionLeadMs || 0)]);
             } else if (anim) words = core.animEsml(anim) + words;
             return lead.then(() => {

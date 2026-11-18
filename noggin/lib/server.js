@@ -14,7 +14,7 @@ const BODY_MAX = 128 * 1024;
 const REQUEST_TIMEOUT_MS = 15000;
 const MAX_CONNECTIONS = 16;
 // The persona size the page recommends: the instructions sent at every conversation start.
-const BUDGET = 5400;
+const BUDGET = 5600;
 const STATIC = {
     '/': {file: 'index.html', type: 'text/html; charset=utf-8'},
     '/index.html': {file: 'index.html', type: 'text/html; charset=utf-8'},

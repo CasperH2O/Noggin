@@ -20,6 +20,14 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 // (load_timeout / play_timeout in the log) and is stopped if it ever starts
 // (ExpressionPlayer.LOAD_MS, ExpressionPlayer.SLACK_MS).
 
+const FPS = 30;
+// The frames to ask for, or 0 when the animation has no hold frame or is long enough already.
+function holdFrames(meta, holdMs) {
+    if (!meta || !(holdMs > 0) || typeof meta.holdSafeKF !== 'number' || meta.holdSafeKF < 0) return 0;
+    const wanted = Math.round(holdMs / 1000 * FPS);
+    return typeof meta.duration === 'number' && wanted > meta.duration ? wanted : 0;
+}
+
 class ExpressionPlayer {
     // jibo; log {write}; now() in ms; since(t) -> ms since Noggin opened; allowed() -> may play now.
     constructor(jibo, log, now, since, allowed) {
@@ -60,7 +68,11 @@ class ExpressionPlayer {
         try { if (!info.keepLed && dofs && dofs.ALL && dofs.LED && typeof dofs.ALL.minus === 'function') config.dofs = dofs.ALL.minus(dofs.LED); } catch (_) {}
         entry.ledStripped = !!config.dofs;
         entry.endsNeutral = !(asset.meta && asset.meta.endsNeutral === false);
-        const frames = asset.meta && typeof asset.meta.duration === 'number' ? asset.meta.duration : 150;
+        let frames = asset.meta && typeof asset.meta.duration === 'number' ? asset.meta.duration : 150;
+        // info.holdMs: stretch an animation that has a hold frame (an emoji) to this long; AnimDB
+        // holds it there, so the picture stays on the eye instead of the clip running faster.
+        const hold = holdFrames(asset.meta, info.holdMs);
+        if (hold) { config.duration = hold; frames = hold; entry.heldFrames = hold; }
         watchdog = setTimeout(() => { entry.cancel = 'load_timeout'; finish('load_timeout'); }, ExpressionPlayer.LOAD_MS);
         Promise.resolve().then(() => asset.createFromConfig(config)).then(playback => {
             entry.loadedAt = this.now();
@@ -73,7 +85,7 @@ class ExpressionPlayer {
                 entry.cancel = 'play_timeout';
                 Promise.resolve().then(() => playback.stop()).catch(() => {});
                 finish('play_timeout');
-            }, Math.round(frames / 30 * 1000) + ExpressionPlayer.SLACK_MS);
+            }, Math.round(frames / FPS * 1000) + ExpressionPlayer.SLACK_MS);
             // Stopped (or Noggin closed) while it was loading: never play it.
             if (entry.cancel) return finish(entry.cancel);
             const events = playback.instance && playback.instance.events;
@@ -121,7 +133,7 @@ class ExpressionPlayer {
         this.log.write(Object.assign({kind: 'anim', via: info.via || null, turn: info.turn === undefined ? null : info.turn,
             line: info.line === undefined ? null : info.line, name: entry.name, result: result,
             asked: at(entry.asked), loaded: at(entry.loadedAt), start: at(entry.startAt), end: at(this.now()),
-            ledStripped: entry.ledStripped === undefined ? null : entry.ledStripped}, extra || {}));
+            ledStripped: entry.ledStripped === undefined ? null : entry.ledStripped, held: entry.heldFrames || undefined}, extra || {}));
     }
 }
 ExpressionPlayer.LOAD_MS = 3000;

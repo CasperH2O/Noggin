@@ -243,3 +243,21 @@ test('background: without an HTTP server (the simulator) it logs and does nothin
     } finally { http.createServer = original; }
     assert.ok(logs.some(l => /settings page off: no HTTP server/.test(l)));
 });
+
+test('background: logs through Jibo\'s own logger when there is one, so lines reach the robot\'s system log', async () => {
+    const Module = require('module');
+    const lines = [];
+    const fakeJibo = {log: {createChild: name => ({info: m => lines.push(name + ' ' + m), warn: m => lines.push(name + ' ' + m), error: m => lines.push(name + ' ' + m)})}};
+    const original = Module._load;
+    Module._load = function (request) { return request === 'jibo' ? fakeJibo : original.apply(this, arguments); };
+    const http = require('http'), createServer = http.createServer;
+    http.createServer = undefined;   // no port needed: the "off" line is enough
+    try {
+        const background = freshBackground();
+        const consoleLines = [];
+        background.start(fakeApi(consoleLines));
+        background.stop();
+        assert.ok(lines.some(l => /^Noggin\.Settings \[noggin\] settings page off/.test(l)), lines.join('\n'));
+        assert.equal(consoleLines.length, 0);
+    } finally { Module._load = original; http.createServer = createServer; }
+});

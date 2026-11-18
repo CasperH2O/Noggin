@@ -1786,3 +1786,34 @@ test('goodbye waits for the last expression to end (at most FINISH_MS), then end
     assert.equal(h.talk.state, 'closed');
     assert.ok(h.logs.some(e => e.kind === 'session_end' && e.reason === 'goodbye'));
 });
+
+test('an emoji with a hold frame stays on the eye for holdMs; other animations and short holds are left alone', async () => {
+    const Player = require(path.join(source, 'noggin/lib/expression.js'));
+    const configs = {};
+    const metas = {Emoji_Brain: {duration: 57, holdSafeKF: 32, endsNeutral: true}, happy_01: {duration: 40, holdSafeKF: -1, endsNeutral: true}};
+    const jibo = {animDB: {getAnimByName: name => ({meta: metas[name], createFromConfig: config => {
+        configs[name] = config;
+        return Promise.resolve({instance: {events: {}}, play: () => Promise.resolve('STOPPED'), stop: () => Promise.resolve()});
+    }})}};
+    const logs = [];
+    const player = new Player(jibo, {write: e => logs.push(e)});
+    await player.play('Emoji_Brain', {via: 'emoji', holdMs: 3000}).done;
+    assert.equal(configs.Emoji_Brain.duration, 90, '3 s at 30 frames a second');
+    assert.equal(logs.at(-1).held, 90);
+    await player.play('happy_01', {holdMs: 3000}).done;
+    assert.equal(configs.happy_01.duration, undefined, 'no hold frame: played as it is');
+    await player.play('Emoji_Brain', {holdMs: 1000}).done;
+    assert.equal(configs.Emoji_Brain.duration, undefined, 'already longer than asked');
+});
+
+test('an emoji on a line asks for a hold of about the line\'s length, between 3 and 4.5 s', async () => {
+    const anim = fakeAnimDB();
+    anim.animDB.getAnimByName = (base => name => Object.assign(base(name) || {}, {meta: {duration: 57, holdSafeKF: 32, endsNeutral: true}}))(anim.animDB.getAnimByName);
+    const h = harness({config: {expressionPlay: 'animdb'}, animDB: anim.animDB, expression: anim.expression});
+    h.talk.open(); await untilListening(h);
+    await h.talk.speak('Ooo, a brain test.', null, {turn: 1, line: 0, anim: 'Emoji_Brain', emoji: 'brain', via: 'emoji'});
+    await sleep(30);
+    const asked = anim.played.find(p => p.name === 'Emoji_Brain');
+    assert.equal(asked.config.duration, 90, 'a short line: the 3 s minimum');
+    h.talk.close();
+});
