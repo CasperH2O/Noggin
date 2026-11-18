@@ -128,5 +128,4 @@ function choose(config, fs) {
 }
 Microphone.ProcessMicrophone = ProcessMicrophone;
 Microphone.choose = choose;
-Microphone.DEVICE = DEVICE;
 module.exports = Microphone;

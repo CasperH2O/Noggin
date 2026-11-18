@@ -195,6 +195,8 @@ class Conversation {
             this.mark('mic_start');
             return this.startMic();
         }).then(() => {
+            // Closed while the microphone was starting: no report timer for a closed conversation.
+            if (!this.active) return;
             this.mark('mic_ready');
             this.log.write({kind: 'microphone', source: this.mic.kind || null, label: this.mic.label || null, rate: this.mic.rate || null});
             this.audioTimer = setInterval(() => this.audioReport(), 10000);
@@ -250,8 +252,9 @@ class Conversation {
         const mic = this.mic, limit = Conversation.MIC_START_MS;
         let timer = null, late = false;
         const started = Promise.resolve().then(() => mic.start((pcm, level) => this.onAudio(pcm, level)));
-        // Started after giving up: close it again, or the capture would stay open.
-        started.then(() => { if (late) { try { mic.stop(); } catch (_) {} } }, () => {});
+        // Started after giving up or after the conversation closed: close it again, or the
+        // capture would stay open (a pending Web Audio start cannot be stopped earlier).
+        started.then(() => { if (late || !this.active) { try { mic.stop(); } catch (_) {} } }, () => {});
         const timeout = new Promise((resolve, reject) => {
             timer = setTimeout(() => { late = true; reject(Error('microphone did not start within ' + limit / 1000 + ' s')); }, limit);
         });
@@ -336,7 +339,7 @@ class Conversation {
     }
     armSilence() {
         clearTimeout(this.silence);
-        this.silence = setTimeout(() => this.leave('silence'), this.config.silenceSeconds * 1000);
+        this.silence = setTimeout(() => this.finishAndLeave('silence'), this.config.silenceSeconds * 1000);
     }
     onEvent(event) {
         if (!this.active) return;
@@ -400,11 +403,19 @@ class Conversation {
         this.heard = '';   // the dance reads this turn's words, never an earlier turn's
         // If the transcript never comes, speak anyway after a while.
         turn.waitTimer = setTimeout(() => this.pump(), this.config.transcriptWaitMs);
+        this.guardReply(turn);
         this.thinking.start();
+    }
+    // A reply that never comes (a half-open connection, an error instead of a response) must not
+    // leave Jibo thinking with the hotword off: drop the turn and listen again.
+    guardReply(turn) {
+        turn.guard = setTimeout(() => {
+            if (this.active && this.turn === turn && !turn.lines && !turn.done) this.skip(turn, 'no_reply');
+        }, this.config.replyWaitMs || REPLY_WAIT_MS);
     }
     // Nothing understood: drop this turn's reply and listen again.
     skip(turn, reason) {
-        turn.skipped = true; clearTimeout(turn.waitTimer);
+        turn.skipped = true; clearTimeout(turn.waitTimer); clearTimeout(turn.guard);
         if (!turn.done && this.rt) this.rt.send({type: 'response.cancel'});
         this.log.write({kind: 'skipped', turn: turn.n, reason: reason});
         if (this.turn === turn) this.turn = null;
@@ -446,7 +457,7 @@ class Conversation {
         else if (result.error) this.log.write({kind: 'classifier_error', api: result.api || null, status: result.status || null, error: result.error});
     }
     carryOn(turn) {
-        turn.skipped = true; clearTimeout(turn.waitTimer);
+        turn.skipped = true; clearTimeout(turn.waitTimer); clearTimeout(turn.guard);
         if (!turn.done && this.rt) this.rt.send({type: 'response.cancel'});
         this.log.write({kind: 'continued', turn: turn.n});
         if (this.turn === turn) this.turn = null;
@@ -590,7 +601,7 @@ class Conversation {
             usage: turn.usage || null, followUp: turn.followUp || undefined, calls: turn.calls && turn.calls.length ? turn.calls.map(c => c.name) : undefined});
         this.remember(turn);
         if (calls) return this.act(turn, calls);
-        if (turn.goodbye) return this.leave('goodbye');
+        if (turn.goodbye) return this.finishAndLeave('goodbye');
         if (!turn.lines) this.thinking.stop();
         return Promise.all([delay(this.config.echoTailMs), this.settle()]).then(() => { if (this.active && !this.turn) this.listen(); });
     }
@@ -700,8 +711,7 @@ class Conversation {
         const turn = this.turn = {n: previous ? previous.n : ++this.turns, round: round, followUp: true, stoppedAt: now, text: '', sent: 0, lines: 0,
             transcript: previous ? previous.transcript : '', transcriptAt: now, expressions: [], reactionDone: true, goodbye: previous ? previous.goodbye : false};
         this.state = 'thinking'; this.gate = false; this.led(BUSY);
-        // A reply that never comes must not leave Jibo stuck: listen again.
-        turn.guard = setTimeout(() => { if (this.active && this.turn === turn && !turn.lines && !turn.done) this.skip(turn, 'no_reply'); }, this.config.replyWaitMs || REPLY_WAIT_MS);
+        this.guardReply(turn);
         this.rt.send({type: 'response.create'});
     }
     // No "Hey Jibo" while Noggin has the microphone: true if asked for (this.hotword holds the token).
@@ -884,6 +894,13 @@ class Conversation {
         said.then(() => this.leave('error'), () => this.leave('error'));
     }
     leave(reason) { return this.close(reason); }
+    // An ending Jibo chose (goodbye, silence): let the last expression end in its pose first, so
+    // close never cuts a body animation half way. At most FINISH_MS.
+    finishAndLeave(reason) {
+        this.gate = false;
+        const playing = Promise.all([this.player.idle(), this.speechAnims || Promise.resolve()]);
+        return Promise.race([playing.catch(() => {}), delay(Conversation.FINISH_MS)]).then(() => this.leave(reason));
+    }
     // Idempotent; the first reason wins and resolves open().
     close(reason) {
         if (this.closing) return this.closing;
@@ -911,8 +928,7 @@ class Conversation {
         return this.closing;
     }
 }
-Conversation.ThinkingEye = ThinkingEye;
-Conversation.LAB_PAUSE_MS = 1200;
-Conversation.MIC_START_MS = 8000;   // between lab steps, so one step's movement never runs into the next
-Conversation.PLAY_MODES = PLAY_MODES;
+Conversation.LAB_PAUSE_MS = 1200;   // between lab steps, so one step's movement never runs into the next
+Conversation.MIC_START_MS = 8000;   // a microphone that never starts ends the conversation (D16)
+Conversation.FINISH_MS = 2000;      // the longest a goodbye waits for the last expression
 module.exports = Conversation;

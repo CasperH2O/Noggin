@@ -119,7 +119,6 @@ SCHEMA.forEach(field => { if (field.key !== 'apiKey') DEFAULTS[field.key] = fiel
 const FIELDS = SCHEMA.map(field => field.key);
 
 const PERSONA = {soul: {file: 'SOUL.md', max: 8000}, identity: {file: 'IDENTITY.md', max: 8000}, facts: {file: 'FACTS.md', max: 4000}};
-const FACTS_MAX = PERSONA.facts.max;
 
 function options(field) { return typeof field.options === 'function' ? field.options() : field.options; }
 
@@ -328,5 +327,5 @@ function updatePersona(dir, patch, options, packagedDir) {
     return {ok: true, errors: {}};
 }
 
-module.exports = {SCHEMA, DEFAULTS, FIELDS, PERSONA, FACTS_MAX, dataDir, file, read, update, publicView, schemaView, keyHint, check,
+module.exports = {SCHEMA, DEFAULTS, PERSONA, dataDir, file, read, update, publicView, schemaView, check,
     persona, updatePersona, packaged};

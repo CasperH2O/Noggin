@@ -158,4 +158,4 @@ function classifier(config, post) {
     return classify;
 }
 
-module.exports = {realtimeUrl, connect, nodeJson, pageJson, classifier, checkKey};
+module.exports = {connect, classifier, checkKey};

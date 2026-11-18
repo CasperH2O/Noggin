@@ -86,4 +86,4 @@ function relaunch(jibo, skillID) {
     return false;
 }
 
-module.exports = {watch, relaunch, plain, IDLE};
+module.exports = {watch, relaunch, plain};

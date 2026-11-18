@@ -47,6 +47,14 @@ function sameOrigin(req) {
     });
 }
 
+// Jibo is reached by his address, "localhost", a one-word name or a .local name. A public
+// domain name means a web page pointed its own name at Jibo (DNS rebinding): refused.
+function localHost(req) {
+    const name = String(req.headers.host || '').toLowerCase().replace(/:\d+$/, '').replace(/^\[|\]$/g, '');
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(name) || name.indexOf(':') >= 0) return true;
+    return name === 'localhost' || /^[a-z0-9-]+$/.test(name) || /^[a-z0-9.-]+\.local$/.test(name);
+}
+
 // The JSON body, or an error with an HTTP status.
 function readBody(req) {
     return new Promise((resolve, reject) => {
@@ -95,11 +103,23 @@ function create(options) {
     function save(body) {
         const dir = dataDir(), values = body.values || {}, persona = body.persona || {};
         const a = settings.update(dir, values, {dryRun: true}), b = settings.updatePersona(dir, persona, {dryRun: true});
-        if (!a.ok || !b.ok) return {httpStatus: 400, body: {ok: false, errors: {values: a.errors, persona: b.errors}}};
+        const moved = movedWithoutKey(dir, values);
+        if (moved) a.errors.apiBase = moved;
+        if (!a.ok || !b.ok || moved) return {httpStatus: 400, body: {ok: false, errors: {values: a.errors, persona: b.errors}}};
         settings.update(dir, values);
         settings.updatePersona(dir, persona);
         log.info('settings saved: ' + Object.keys(values).concat(Object.keys(persona)).filter(k => k !== 'apiKey').join(', ') + (values.apiKey ? ' (and the key)' : ''));
         return {httpStatus: 200, body: Object.assign({ok: true}, state())};
+    }
+
+    // The saved key goes wherever apiBase points, so a new address needs the key typed again in
+    // the same save; back to OpenAI's own address is always fine.
+    function movedWithoutKey(dir, values) {
+        if (!Object.prototype.hasOwnProperty.call(values, 'apiBase') || values.apiBase === null || values.apiKey) return null;
+        const field = settings.SCHEMA.filter(f => f.key === 'apiBase')[0];
+        const next = settings.check(field, values.apiBase).value;
+        if (!next || next === settings.publicView(dir).values.apiBase || next === field.default) return null;
+        return 'Paste the API key again with a new address, so the key only goes where you chose.';
     }
 
     // POST /api/test-key {key?}: the given key, or the saved one.
@@ -128,6 +148,7 @@ function create(options) {
     function route(req, res) {
         const pathname = String(req.url || '/').split('?')[0];
         const method = req.method;
+        if (!localHost(req)) return json(res, 403, {ok: false, error: 'open this page by Jibo\'s address'});
         if (method === 'GET' && STATIC[pathname]) return serveStatic(res, STATIC[pathname]);
         if (method === 'GET' && pathname === '/api/settings') return json(res, 200, state());
         if (method === 'GET' && pathname === '/api/logs') return json(res, 200, {logs: ConversationLog.list(dataDir()), keep: ConversationLog.KEEP});
@@ -187,4 +208,4 @@ function create(options) {
     return {listen: listen, close: close, handle: handle, state: state, connections: () => sockets.size};
 }
 
-module.exports = {create, sameOrigin, BODY_MAX, BUDGET};
+module.exports = {create, BODY_MAX, BUDGET};

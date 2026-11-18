@@ -99,7 +99,7 @@ test('persona budget: the instructions stay small, and so does FACTS.md', () => 
     const all = core.instructions(p.soul, p.identity, new Date(2026, 10, 12, 19, 30), {apps, config: {cloudSkills: Object.keys(actions.CLOUD)}});
     assert.ok(all.length <= 5500, 'with every cloud tool the instructions are ' + all.length + ' characters; the budget is 5500');
     const raw = fs.readFileSync(path.join(source, 'noggin/persona/FACTS.md'), 'utf8');
-    assert.ok(raw.length <= settings.FACTS_MAX, 'FACTS.md is ' + raw.length + ' characters; the cap is ' + settings.FACTS_MAX);
+    assert.ok(raw.length <= settings.PERSONA.facts.max, 'FACTS.md is ' + raw.length + ' characters; the cap is ' + settings.PERSONA.facts.max);
 });
 
 test('config: defaults, missing key', () => {
@@ -1744,4 +1744,45 @@ test('a microphone that never starts ends the conversation politely, and is clos
         await sleep(10);
         assert.equal(stops, stopsBefore + 1, 'a late start is stopped again');
     } finally { Conversation.MIC_START_MS = before; }
+});
+
+test('a reply that never comes: the turn is dropped after replyWaitMs and Jibo listens again', async () => {
+    const h = harness({config: {replyWaitMs: 150}});
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'are you there?'});
+    assert.equal(h.talk.state, 'thinking');
+    await sleep(250);
+    assert.equal(h.talk.state, 'listening');
+    assert.ok(h.logs.some(e => e.kind === 'skipped' && e.reason === 'no_reply'));
+    assert.equal(h.said.length, 1, 'only the greeting');
+    h.talk.close();
+});
+
+test('a microphone still starting when the conversation closes is stopped once it starts', async () => {
+    let resolveStart, stops = 0;
+    const mic = {start: () => new Promise(resolve => { resolveStart = resolve; }), stop: () => { stops++; }, kind: 'webaudio'};
+    const h = harness({mic});
+    h.talk.open();
+    await sleep(20);
+    await h.talk.close('swipe');
+    const before = stops;
+    resolveStart();
+    await sleep(10);
+    assert.equal(stops, before + 1, 'stopped again once the late start completed');
+    assert.equal(h.talk.audioTimer, undefined, 'no report timer for a closed conversation');
+});
+
+test('goodbye waits for the last expression to end (at most FINISH_MS), then ends', async () => {
+    const h = harness();
+    h.talk.open(); await untilListening(h);
+    let finish;
+    h.talk.player.idle = () => new Promise(resolve => { finish = resolve; });
+    h.talk.finishAndLeave('goodbye');
+    await sleep(30);
+    assert.notEqual(h.talk.state, 'closed', 'still finishing the expression');
+    finish();
+    await sleep(20);
+    assert.equal(h.talk.state, 'closed');
+    assert.ok(h.logs.some(e => e.kind === 'session_end' && e.reason === 'goodbye'));
 });

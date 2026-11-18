@@ -115,7 +115,7 @@ test('persona: packaged by default; an edit overrides it; null or the packaged t
     assert.equal(settings.persona(dir).edited.soul, false, 'the packaged text again is no edit');
     settings.updatePersona(dir, {identity: 'x'}); settings.updatePersona(dir, {identity: null});
     assert.equal(settings.persona(dir).edited.identity, false);
-    const big = settings.updatePersona(dir, {facts: 'x'.repeat(settings.FACTS_MAX + 1), soul: 'ok'});
+    const big = settings.updatePersona(dir, {facts: 'x'.repeat(settings.PERSONA.facts.max + 1), soul: 'ok'});
     assert.equal(big.ok, false); assert.ok(big.errors.facts);
     assert.equal(settings.persona(dir).edited.soul, false, 'all or nothing');
     assert.equal(settings.updatePersona(dir, {mood: 'x'}).ok, false);
@@ -137,4 +137,23 @@ test('conversation logs: named per conversation, newest first, only log names ca
     const lines = ConversationLog.read(dir, list[0].name).trim().split('\n').map(l => JSON.parse(l));
     assert.equal(lines.at(-1).kind, 'log_full'); assert.equal(lines.length, 2);
     assert.equal(new ConversationLog(dir, false).file, null, 'logging off writes nothing');
+});
+
+test('conversation logs: multi-byte text counts in bytes, and the oldest go when count or total size is reached', () => {
+    const dir = temp();
+    const log = new ConversationLog(dir, true);
+    log.bytes = ConversationLog.MAX_BYTES - 100;
+    log.write({kind: 'you', text: '😀'.repeat(30)});   // 30 characters x2, 120 bytes in UTF-8
+    const name = ConversationLog.list(dir)[0].name;
+    assert.equal(JSON.parse(ConversationLog.read(dir, name).trim().split('\n').at(-1)).kind, 'log_full');
+    const logs = path.join(dir, 'logs');
+    const big = Math.ceil(ConversationLog.TOTAL_BYTES / 12);
+    for (let i = 0; i < 12; i++) fs.writeFileSync(path.join(logs, 'conversation-20250101-0000' + String(i).padStart(2, '0') + '.jsonl'), Buffer.alloc(big));
+    new ConversationLog(dir, true);
+    const sizes = ConversationLog.list(dir).map(l => l.bytes).reduce((a, b) => a + b, 0);
+    assert.ok(sizes + ConversationLog.MAX_BYTES <= ConversationLog.TOTAL_BYTES, 'room for one full log within the total');
+    assert.ok(!fs.existsSync(path.join(logs, 'conversation-20250101-000000.jsonl')), 'the oldest went first');
+    for (let i = 0; i < ConversationLog.KEEP + 5; i++) fs.writeFileSync(path.join(logs, 'conversation-20240101-' + String(i).padStart(6, '0') + '.jsonl'), 'x');
+    new ConversationLog(dir, true);
+    assert.ok(ConversationLog.list(dir).length <= ConversationLog.KEEP);
 });

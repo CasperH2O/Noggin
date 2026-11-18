@@ -163,16 +163,7 @@ test('time: Jibo\'s home timezone through jibo.utils.DateTime, else the system c
     assert.equal(typeof broken.hour, 'number');
 });
 
-test('readTimer: the clock\'s KB record, read-only; null when it cannot be read in time', async () => {
-    const kb = timer => ({onInit: () => Promise.resolve(), createModel: name => { assert.equal(name, '/jibo/clock/alarm_timer'); return {loadRoot: () => Promise.resolve({data: timer ? {timer} : {}})}; }});
-    const now = () => 1000000;
-    assert.deepEqual(await actions.readTimer({kb: kb({endTime: 1000000 + 125000, length: 600000, jobID: 'j'})}, now),
-        {set: true, remaining_s: 125, remaining: '2 minutes and 5 seconds', length_s: 600});
-    assert.deepEqual(await actions.readTimer({kb: kb({endTime: 999000})}, now), {set: false});
-    assert.deepEqual(await actions.readTimer({kb: kb(null)}, now), {set: false});
-    assert.equal(await actions.readTimer({}, now), null);
-    assert.equal(await actions.readTimer({kb: {createModel: () => ({loadRoot: () => new Promise(() => {})})}}, now, 30), null);
-    assert.equal(await actions.readTimer({kb: {createModel: () => { throw Error('x'); }}}, now), null);
+test('duration: spoken lengths', () => {
     assert.equal(actions.duration(3600), '1 hour'); assert.equal(actions.duration(3661), '1 hour, 1 minute and 1 second');
 });
 
@@ -400,4 +391,25 @@ test('picture: no usable subject is an error for the model; long ones are cut at
     const tool = actions.tools(on).find(t => t.name === 'picture');
     assert.deepEqual(tool.parameters.required, ['subject']);
     assert.match(tool.description, /stargazer/, 'tells it apart from the astronomy picture');
+});
+
+test('cloud turn: disableOnce is cleared whenever the pretend "Hey Jibo" did not use it, in any order', async () => {
+    const cloudTurn = require(path.join(source, 'noggin/lib/cloud-turn.js'));
+    const dialog = {_embodied: {listen: {_disableOnce: false}}};
+    const asked = [];
+    const jibo = {jetstream: {mimicGlobalTurn: o => { asked.push(o.clientASR); return Promise.resolve(); }},
+        embodied: {listen: {disableOnce: () => { dialog._embodied.listen._disableOnce = true; }}}};
+    const turn = cloudTurn.create(jibo, () => dialog);
+    await turn.ask('tell me about the news');
+    assert.deepEqual(asked, ['tell me about the news']);
+    assert.equal(turn.held(), true);
+    turn.release();   // the cloud never answered (the comeback gave up, or the handover failed)
+    assert.equal(dialog._embodied.listen._disableOnce, false);
+    turn.release();   // a second give-up path is harmless
+    await turn.ask('surprise me');
+    turn.used();      // the cloud's turn came: nothing left to clear
+    dialog._embodied.listen._disableOnce = 'set by someone else';
+    turn.release();
+    assert.equal(dialog._embodied.listen._disableOnce, 'set by someone else');
+    await assert.rejects(cloudTurn.create({}, () => dialog).ask('x'), /no mimicGlobalTurn/);
 });

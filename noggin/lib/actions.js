@@ -454,10 +454,6 @@ function alarmState(jibo, data, at) {
     const t = describeTime(localTime(jibo, when));
     return {set: true, time: t.time, day: t.date};
 }
-// @be/clock's timer: {set: false} | {set: true, remaining_s, remaining, length_s}, or null if it can't be read.
-function readTimer(jibo, now, timeoutMs) {
-    return clockRecord(jibo, timeoutMs).then(data => data ? timerState(data, now ? now() : Date.now()) : null);
-}
 // The timer and the alarm: {timer, alarm}, or null if the record can't be read.
 function readClock(jibo, now, timeoutMs) {
     return clockRecord(jibo, timeoutMs).then(data => {
@@ -467,5 +463,5 @@ function readClock(jibo, now, timeoutMs) {
     });
 }
 
-module.exports = {CLOCK, OWN, NIMBUS, APPS, SKILLS, RADIO, CLOUD, VOICES, TOOLS, voiceOf, cloudSkills, pictureSubject, offered, rules, apps, extras, tools, plan, duration, timerLength, alarmTime,
-    setTimerOptions, setAlarmOptions, openAppOptions, clockQuery, clockCancel, installed, setVolume, localTime, describeTime, readTimer, readClock};
+module.exports = {CLOCK, OWN, NIMBUS, APPS, SKILLS, RADIO, CLOUD, VOICES, TOOLS, voiceOf, cloudSkills, offered, rules, apps, extras, tools,
+    plan, duration, clockQuery, clockCancel, installed, setVolume, localTime, describeTime, readClock};

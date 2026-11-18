@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MIT
 // One JSON-lines log per conversation in <data>/logs (mode 0600), shown on the settings page.
 // Text only: what was said, expressions, timings and token use; never audio or the key.
-// Keeps the newest KEEP logs of at most MAX_BYTES each. Node 6: ES2015 only.
+// Keeps the newest KEEP logs of at most MAX_BYTES each, and at most TOTAL_BYTES together.
+// Node 6: ES2015 only.
 'use strict';
 const fs = require('fs'), path = require('path');
 const KEEP = 200;
 const MAX_BYTES = 2 * 1024 * 1024;
+const TOTAL_BYTES = 20 * 1024 * 1024;
 const NAME = /^conversation-\d{8}-\d{6}\.jsonl$/;
 
 function stamp(date) {
@@ -21,18 +23,29 @@ class ConversationLog {
         try {
             makeDir(this.dir);
             this.file = path.join(this.dir, 'conversation-' + stamp(new Date()) + '.jsonl');
-            const old = fs.readdirSync(this.dir).filter(n => NAME.test(n)).sort();
-            old.slice(0, Math.max(0, old.length - KEEP + 1)).forEach(n => { try { fs.unlinkSync(path.join(this.dir, n)); } catch (_) {} });
+            prune(this.dir);
         } catch (error) { this.file = null; this.error = error.message; }
     }
     write(entry) {
         if (!this.file) return;
         let line = JSON.stringify(Object.assign({t: new Date().toISOString()}, entry)) + '\n';
-        const full = this.bytes + line.length > MAX_BYTES;
+        const full = this.bytes + Buffer.byteLength(line, 'utf8') > MAX_BYTES;
         if (full) line = JSON.stringify({t: new Date().toISOString(), kind: 'log_full', bytes: this.bytes}) + '\n';
-        try { fs.appendFileSync(this.file, line, {mode: 384}); this.bytes += line.length; }
+        try { fs.appendFileSync(this.file, line, {mode: 384}); this.bytes += Buffer.byteLength(line, 'utf8'); }
         catch (_) { this.file = null; }
         if (full) this.file = null;
+    }
+}
+
+// Make room for one more log: the oldest go until there are fewer than KEEP and a full new
+// log still fits in TOTAL_BYTES.
+function prune(dir) {
+    const old = fs.readdirSync(dir).filter(n => NAME.test(n)).sort();
+    const sizes = old.map(n => { try { return fs.statSync(path.join(dir, n)).size; } catch (_) { return 0; } });
+    let total = sizes.reduce((sum, size) => sum + size, 0), count = old.length;
+    for (let i = 0; i < old.length && (count >= KEEP || total + MAX_BYTES > TOTAL_BYTES); i++) {
+        try { fs.unlinkSync(path.join(dir, old[i])); } catch (_) {}
+        total -= sizes[i]; count--;
     }
 }
 
@@ -60,9 +73,9 @@ function read(dataDir, name) {
     try { return fs.readFileSync(path.join(folder(dataDir), name), 'utf8'); } catch (_) { return null; }
 }
 
-ConversationLog.stamp = stamp;
 ConversationLog.list = list;
 ConversationLog.read = read;
 ConversationLog.KEEP = KEEP;
 ConversationLog.MAX_BYTES = MAX_BYTES;
+ConversationLog.TOTAL_BYTES = TOTAL_BYTES;
 module.exports = ConversationLog;

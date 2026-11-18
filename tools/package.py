@@ -55,6 +55,7 @@ def collect():
     entries = {name: (HERE / source).read_bytes() for name, source in STORE_FILES.items()}
     entries.update({name: (HERE / source).read_bytes() for name, source in OPTIONAL_FILES.items() if (HERE / source).is_file()})
     entries[f'{SKILL}/LICENSE'] = (HERE / 'LICENSE').read_bytes()     # the licence travels with the code
+    entries[f'{SKILL}/THIRD_PARTY.md'] = (HERE / 'THIRD_PARTY.md').read_bytes()
     for file in sorted((HERE / SKILL).rglob('*')):
         if file.is_file() and '__pycache__' not in file.parts and not file.name.startswith('.'):
             entries[f'{SKILL}/{file.relative_to(HERE / SKILL).as_posix()}'] = file.read_bytes()

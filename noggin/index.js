@@ -16,27 +16,9 @@ const RESUME_MS = 15000;
 // the comeback gives up (the conversation ended when the cloud's turn started).
 const CLOUD_LEAVE_MS = 30000;
 // Survives the skill's close (a skill switch closes a skill, it does not destroy it).
-let resume = null, watcher = null, listenHeld = false;
+let resume = null, watcher = null;
+const cloudTurn = require('./lib/cloud-turn').create(jibo, () => require('jibo-embodied-dialog'));
 function stopWatching() { if (watcher) { const w = watcher; watcher = null; w.cancel(); } }
-// Ask Jibo's cloud a fixed phrase (actions.CLOUD) as if the person had said it after "Hey
-// Jibo", the way BEam's main menu opens the weather or a joke: disableOnce() keeps the
-// listening look away for that pretend "Hey Jibo".
-function askCloud(phrase) {
-    const js = jibo.jetstream, listen = jibo.embodied && jibo.embodied.listen;
-    if (!js || typeof js.mimicGlobalTurn !== 'function') return Promise.reject(Error('no mimicGlobalTurn'));
-    try { if (listen && typeof listen.disableOnce === 'function') { listen.disableOnce(); listenHeld = true; } } catch (_) {}
-    return Promise.resolve(js.mimicGlobalTurn({clientASR: phrase}));
-}
-// The pretend "Hey Jibo" never came (the cloud was not asked): clear disableOnce, or it would
-// swallow the listening look of the next real "Hey Jibo" (as the main menu does).
-function releaseListen() {
-    if (!listenHeld) return;
-    listenHeld = false;
-    try {
-        const dialog = require('jibo-embodied-dialog');
-        if (dialog._embodied && dialog._embodied.listen) dialog._embodied.listen._disableOnce = false;
-    } catch (_) {}
-}
 
 class Noggin extends BeSkill {
     open() {
@@ -87,9 +69,9 @@ class Noggin extends BeSkill {
             classify: config.expressions ? openai.classifier(config) : null,
             actions: config.actions ? {
                 redirect: (pkg, options) => this.redirect(pkg, options),
-                cloud: askCloud,
+                cloud: phrase => cloudTurn.ask(phrase),
                 handover: state => this.watchHandover(state, config, log),
-                handoverFailed: () => { stopWatching(); releaseListen(); },
+                handoverFailed: () => { stopWatching(); cloudTurn.release(); },
                 readClock: () => actions.readClock(jibo),
                 setVolume: args => actions.setVolume(jibo, args),
                 installed: pkg => actions.installed(name => require.resolve(name), pkg),
@@ -110,13 +92,13 @@ class Noggin extends BeSkill {
         const started = Date.now();
         const w = watcher = comeback.watch(jibo, global.be, said => {
             if (watcher === w) watcher = null;
-            listenHeld = false;   // the cloud's turn used it up
+            cloudTurn.used();
             log.write({kind: 'comeback', ok: true, said: said.slice(0, 300), ms: Date.now() - started});
             resume = {at: Date.now(), pairs: state.pairs, tool: state.tool, args: state.args, said: said};
             if (!comeback.relaunch(jibo, OWN)) { resume = null; log.write({kind: 'comeback', ok: false, reason: 'no_relaunch'}); }
         }, {own: OWN, timeoutMs: config.comebackMs, leaveMs: state.target === actions.NIMBUS ? CLOUD_LEAVE_MS : 0, onGiveUp: (reason, ms) => {
             if (watcher === w) watcher = null;
-            listenHeld = false;
+            cloudTurn.release();
             log.write({kind: 'comeback', ok: false, reason: reason, ms: ms});
         }});
     }

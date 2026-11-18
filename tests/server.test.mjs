@@ -5,6 +5,7 @@ import {test} from 'node:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import net from 'node:net';
+import http from 'node:http';
 import path from 'node:path';
 import {createRequire} from 'node:module';
 const require = createRequire(import.meta.url);
@@ -93,6 +94,37 @@ test('guards: another site, non-JSON, wrong method, oversized and broken bodies 
         assert.equal((await r.call('POST', '/api/settings', JSON.stringify({persona: {soul: 'x'.repeat(server.BODY_MAX)}}))).status, 413);
         assert.equal((await r.call('POST', '/api/nothing', {})).status, 404);
         assert.equal(fs.existsSync(settings.file(r.dir)), false, 'nothing written');
+    } finally { await r.stop(); }
+});
+
+test('a new API address needs the key again in the same save; OpenAI\'s own address does not', async () => {
+    const r = await running();
+    try {
+        settings.update(r.dir, {apiKey: KEY});
+        let res = await r.call('POST', '/api/settings', {values: {apiBase: 'http://192.168.1.50:9000/v1'}});
+        assert.equal(res.status, 400);
+        assert.match((await res.json()).errors.values.apiBase, /key again/);
+        assert.equal(settings.read(r.dir).apiBase, 'https://api.openai.com/v1', 'nothing saved');
+        res = await r.call('POST', '/api/settings', {values: {apiBase: 'http://192.168.1.50:9000/v1', apiKey: 'sk-proxy-0123456789abcdef'}});
+        assert.equal(res.status, 200);
+        res = await r.call('POST', '/api/settings', {values: {greeting: 'Hey!'}});
+        assert.equal(res.status, 200, 'other saves need no key');
+        res = await r.call('POST', '/api/settings', {values: {apiBase: null}});
+        assert.equal(res.status, 200, 'back to the default address');
+        res = await r.call('POST', '/api/settings', {values: {apiBase: 'https://api.openai.com/v1'}});
+        assert.equal(res.status, 200);
+    } finally { await r.stop(); }
+});
+
+test('Host: Jibo\'s address, localhost, a one-word or .local name; a public domain name (DNS rebinding) is refused', async () => {
+    const r = await running();
+    const port = Number(r.base.split(':').pop());
+    const get = host => new Promise((resolve, reject) => {
+        http.get({host: '127.0.0.1', port, path: '/api/settings', headers: {Host: host}}, res => { res.resume(); resolve(res.statusCode); }).on('error', reject);
+    });
+    try {
+        for (const ok of ['192.168.1.20:8131', 'localhost:8131', 'jibo:8131', 'jibo.local', '[::1]:8131']) assert.equal(await get(ok), 200, ok);
+        for (const bad of ['evil.example', 'rebind.attacker.com:8131']) assert.equal(await get(bad), 403, bad);
     } finally { await r.stop(); }
 });
 
