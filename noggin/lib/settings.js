@@ -239,8 +239,8 @@ function read(dir) {
 }
 
 // Changes from the page: {key: value, or null for the default}. All or nothing: any error
-// saves nothing. Returns {ok, errors}.
-function update(dir, patch) {
+// saves nothing. Returns {ok, errors}. options.dryRun: check only.
+function update(dir, patch, options) {
     const errors = {};
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return {ok: false, errors: {_: 'Expected an object of settings.'}};
     let raw;
@@ -257,7 +257,7 @@ function update(dir, patch) {
         else next[key] = result.value;
     });
     if (Object.keys(errors).length) return {ok: false, errors: errors};
-    atomic(file(dir), JSON.stringify(next, null, 2) + '\n');
+    if (!(options && options.dryRun)) atomic(file(dir), JSON.stringify(next, null, 2) + '\n');
     return {ok: true, errors: {}};
 }
 
@@ -308,7 +308,8 @@ function persona(dir, packagedDir) {
     return out;
 }
 // Persona changes from the page: {soul|identity|facts: text, or null for the packaged text}.
-function updatePersona(dir, patch, packagedDir) {
+// options.dryRun: check only.
+function updatePersona(dir, patch, options, packagedDir) {
     const errors = {};
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return {ok: false, errors: {_: 'Expected an object of persona texts.'}};
     Object.keys(patch).forEach(name => {
@@ -318,6 +319,7 @@ function updatePersona(dir, patch, packagedDir) {
         else if (value !== null && value.length > PERSONA[name].max) errors[name] = 'At most ' + PERSONA[name].max + ' characters; this is ' + value.length + '.';
     });
     if (Object.keys(errors).length) return {ok: false, errors: errors};
+    if (options && options.dryRun) return {ok: true, errors: {}};
     Object.keys(patch).forEach(name => {
         const target = path.join(dir, 'persona', PERSONA[name].file), value = patch[name];
         if (value === null || value === packaged(name, packagedDir)) { try { fs.unlinkSync(target); } catch (_) {} }

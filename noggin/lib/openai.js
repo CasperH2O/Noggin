@@ -80,6 +80,30 @@ function nodeRequest(config, route, body, timeoutMs) {
         request.end(data);
     });
 }
+// Does this key work? GET /models, for the settings page: {ok, status, ms, error}.
+function checkKey(config, timeoutMs) {
+    const target = url.parse(config.apiBase + '/models'), started = Date.now();
+    const module_ = target.protocol === 'https:' ? https : http;
+    return new Promise(resolve => {
+        let settled = false;
+        const finish = result => { if (!settled) { settled = true; resolve(Object.assign({ms: Date.now() - started}, result)); } };
+        let request;
+        try {
+            request = module_.request({method: 'GET', protocol: target.protocol, hostname: target.hostname, port: target.port, path: target.path,
+                headers: {Authorization: 'Bearer ' + config.apiKey, Accept: 'application/json'}}, response => {
+                response.resume();
+                response.on('end', () => {
+                    const status = response.statusCode;
+                    finish(status === 200 ? {ok: true, status: status}
+                        : {ok: false, status: status, error: status === 401 ? 'OpenAI does not accept this key' : status === 429 ? 'no credit or too many requests' : 'OpenAI answered ' + status});
+                });
+            });
+        } catch (error) { return finish({ok: false, status: null, error: String(error.message || error)}); }
+        request.on('error', error => finish({ok: false, status: null, error: String(error.message || error)}));
+        request.setTimeout(timeoutMs || 8000, () => { request.abort(); finish({ok: false, status: null, error: 'no answer from OpenAI'}); });
+        request.end();
+    });
+}
 function pageJson(config, route, body) {
     const started = Date.now();
     if (typeof fetch !== 'function') return Promise.reject(Error('no fetch'));
@@ -134,4 +158,4 @@ function classifier(config, post) {
     return classify;
 }
 
-module.exports = {realtimeUrl, connect, nodeJson, pageJson, classifier};
+module.exports = {realtimeUrl, connect, nodeJson, pageJson, classifier, checkKey};

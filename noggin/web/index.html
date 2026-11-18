@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Noggin</title>
+    <link rel="icon" href="favicon.png">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="toolbar">
+        <div class="toolbar-start"><img class="toolbar-logo" src="logo.png" alt=""><span class="toolbar-title">Noggin</span></div>
+        <div class="toolbar-meta"><span class="live-dot" id="live-dot"></span><span id="live-text">Connecting…</span></div>
+    </header>
+    <main id="main"><div class="loading">Loading Noggin's settings…</div></main>
+    <div class="save-bar" id="save-bar" hidden>
+        <span id="save-text"></span>
+        <div class="save-bar-actions"><button class="btn btn-flat" id="discard" type="button">Discard</button><button class="btn btn-primary" id="save" type="button">Save</button></div>
+    </div>
+    <div class="toast" id="toast" role="status" hidden></div>
+    <nav class="bottom-nav" id="nav" aria-label="Sections"></nav>
+    <script src="app.js"></script>
+</body>
+</html>

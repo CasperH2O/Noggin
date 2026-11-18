@@ -12,7 +12,8 @@
     "type": "asset-pack",
     "launchRule": "launch.rule",
     "prompt": "Noggin",
-    "display-name": "noggin"
+    "display-name": "noggin",
+    "background": "background.js"
   },
   "engines": {
     "node": ">=6.0"
