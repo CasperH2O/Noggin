@@ -102,12 +102,12 @@ const SCHEMA = [
         help: 'Timers, alarms, the clock, music, radio, photos, dances and apps. Off: conversation only.'},
     {key: 'cloudSkills', type: 'set', default: ['weather', 'news', 'calendar', 'commute', 'personal_report', 'surprise', 'picture'],
         tab: 'skills', group: 'Jibo\'s skills', label: 'Cloud features', help: 'Jibo\'s cloud answers these, then Noggin comes back.', options: cloudOptions},
-    {key: 'openApps', type: 'map', default: {}, tab: 'skills', group: 'Jibo\'s skills', label: 'Extra apps',
-        help: 'Apps Jibo may open by name, next to his own.'},
+    {key: 'openApps', type: 'map', max: actions.MAX_APPS, noteMax: actions.NOTE_MAX, default: {}, tab: 'skills', group: 'Jibo\'s skills', label: 'Extra apps',
+        help: 'Apps Jibo may open by name, next to his own. Say what each one does, so Noggin knows when to open it.'},
+    {key: 'comebackMinutes', type: 'number', min: 1, max: 60, unit: 'min', default: 5, tab: 'skills', group: 'Jibo\'s skills', label: 'Come back within',
+        help: 'After an app or skill, Noggin comes back once it is done, if that is within this time.', advanced: true},
     {key: 'actionTimeoutMs', type: 'number', min: 1000, max: 60000, unit: 'ms', default: 6000, tab: 'skills', group: 'Jibo\'s skills', label: 'Handover timeout',
         help: 'How long another skill may take to open.', advanced: true},
-    {key: 'comebackMs', type: 'number', min: 0, max: 3600000, unit: 'ms', default: 180000, tab: 'skills', group: 'Jibo\'s skills', label: 'Come back within',
-        help: 'After another skill, Noggin comes back only when it is done within this.', advanced: true},
 
     {key: 'log', type: 'bool', default: true, tab: 'history', group: 'History', label: 'Keep conversation logs',
         help: 'What was said, expressions and timings; never audio or the key.'}
@@ -165,15 +165,17 @@ function check(field, value) {
     }
     case 'map': {
         if (!value || typeof value !== 'object' || Array.isArray(value)) return fail('Name and package pairs, please.');
-        const names = Object.keys(value);
-        if (names.length > 20) return fail('At most 20 apps.');
+        const names = Object.keys(value), out = {};
+        if (names.length > field.max) return fail('At most ' + field.max + ' apps.');
         for (let i = 0; i < names.length; i++) {
-            const name = names[i], pkg = value[name];
-            if (!/^[A-Za-z][A-Za-z0-9 ]{0,31}$/.test(name)) return fail('"' + name + '" is not a name: letters, digits and spaces.');
-            if (typeof pkg !== 'string' || !/^@[a-z0-9-]+\/[a-z0-9._-]+$/.test(pkg)) return fail('"' + pkg + '" is not a package name such as @be/stargazer.');
+            const name = names[i], given = value[name], entry = actions.appEntry(given);
+            if (!actions.APP_NAME.test(name)) return fail('"' + name + '" is not a name: letters, digits and spaces.');
+            const pkg = entry ? entry.pkg : given && typeof given === 'object' ? given.pkg : given;
+            if (typeof pkg !== 'string' || !actions.APP_PACKAGE.test(pkg)) return fail('"' + pkg + '" is not a package name such as @be/stargazer.');
+            if (given && typeof given === 'object' && given.about !== undefined && given.about !== null && typeof given.about !== 'string') return fail(name + ': what it does is text.');
+            if (entry.about.length > field.noteMax) return fail(name + ': at most ' + field.noteMax + ' characters for what it does.');
+            out[name] = entry;
         }
-        const out = {};
-        names.forEach(name => { out[name] = value[name]; });
         return {value: out};
     }
     default:
@@ -212,6 +214,16 @@ function stored(dir) {
     return value;
 }
 
+// A stored map longer than its cap (an older version allowed more): its first `max` entries (D32).
+function overCap(field, value) {
+    if (field.type !== 'map' || !value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const names = Object.keys(value);
+    if (names.length <= field.max) return null;
+    const kept = {};
+    names.slice(0, field.max).forEach(name => { kept[name] = value[name]; });
+    return kept;
+}
+
 // Every setting, with the default where settings.json has none or an invalid one.
 // `problems` lists the stored values that were ignored.
 function effective(raw) {
@@ -220,6 +232,13 @@ function effective(raw) {
         const value = raw[field.key];
         const unset = value === undefined || value === null || (value === '' && !field.empty);
         if (unset) { config[field.key] = field.default; return; }
+        const over = overCap(field, value);
+        if (over) {
+            const result = check(field, over);
+            problems[field.key] = 'Only the first ' + field.max + ' of ' + Object.keys(value).length + ' apps are used. Remove some and save.';
+            config[field.key] = result.error ? field.default : result.value;
+            return;
+        }
         const result = check(field, value);
         if (result.error) { problems[field.key] = result.error; config[field.key] = field.default; }
         else config[field.key] = result.value;

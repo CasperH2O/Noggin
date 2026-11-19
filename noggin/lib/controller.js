@@ -11,9 +11,9 @@
 // nothing was understood, and the reply is cancelled instead of spoken.
 // Actions (lib/actions.js): the model may call a tool. about_jibo, dance, set_volume and
 // check_clock run in Noggin and the model then answers with the result (a follow-up reply in the
-// same turn). get_time, the timer and alarm tools and use_skill hand over to another skill, which closes
-// Noggin; index.js comes back to Noggin when that skill is done, and Noggin resumes the conversation
-// without a greeting. play_music, play_radio and open_app hand over for good. The cloud tools
+// same turn). get_time, the timer and alarm tools, use_skill and open_app hand over to another skill,
+// which closes Noggin; index.js comes back to Noggin when that skill is done, and Noggin resumes the
+// conversation without a greeting. play_music and play_radio hand over for good. The cloud tools
 // (the `cloudSkills` setting) give the hotword back and ask Jibo's cloud a fixed phrase; @be/nimbus
 // answers, and Noggin comes back the same way.
 //
@@ -735,7 +735,7 @@ class Conversation {
     // switches to @be/nimbus, which speaks the answer.
     handOver(turn, handover, outputs, round) {
         const plan = handover.plan, call = handover.call, acts = this.acts, cloud = plan.kind === 'cloud';
-        const state = this.handover = {tool: call.name, target: plan.target, reason: plan.comeback ? 'handover' : 'open_app'};
+        const state = this.handover = {tool: call.name, target: plan.target, reason: plan.comeback ? 'handover' : 'leaves'};
         this.state = 'handover'; this.gate = false; this.led(BUSY);
         this.log.write({kind: 'handover', turn: turn.n, tool: call.name, target: plan.target, comeback: plan.comeback, phrase: cloud ? plan.phrase : undefined});
         const failed = error => {
@@ -773,8 +773,8 @@ class Conversation {
             });
             return;
         }
-        // A store skill or an app from the `openApps` setting that is not installed: say so at once (Be would only log it).
-        if (plan.check && acts.installed && !acts.installed(plan.target)) return failed(call.name === 'use_skill' ? 'that skill is not installed on Jibo' : 'that app is not installed on Jibo');
+        // An app from the `openApps` setting that is not installed: say so at once (Be would only log it).
+        if (plan.check && acts.installed && !acts.installed(plan.target)) return failed('that app is not installed on Jibo');
         this.handoverTimer = setTimeout(() => failed(plan.target === actions.CLOCK ? 'the clock did not open' : 'it did not open'), wait);
         try { acts.redirect(plan.target, plan.options); }
         catch (error) { failed('could not open ' + plan.target + ': ' + String(error && error.message || error).slice(0, 100)); }

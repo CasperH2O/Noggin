@@ -82,9 +82,21 @@ test('field checks: numbers, enums, sets, apps, urls, keys', () => {
     assert.deepEqual(settings.check(f('cloudSkills'), ['news', 'weather']).value, ['weather', 'news'], 'kept in the cloud order');
     assert.match(settings.check(f('cloudSkills'), ['joke']).error, /switched off/);
     assert.match(settings.check(f('cloudSkills'), ['doom']).error, /Unknown/);
-    assert.deepEqual(settings.check(f('openApps'), {Stars: '@be/stargazer'}).value, {Stars: '@be/stargazer'});
+    // A package alone (older settings) or {pkg, about}; always {pkg, about} after the check.
+    assert.deepEqual(settings.check(f('openApps'), {Stars: '@be/stargazer'}).value, {Stars: {pkg: '@be/stargazer', about: ''}});
+    assert.deepEqual(settings.check(f('openApps'), {Stars: {pkg: '@be/stargazer', about: '  Space\npictures  '}}).value, {Stars: {pkg: '@be/stargazer', about: 'Space pictures'}});
+    assert.match(settings.check(f('openApps'), {Stars: {pkg: '@be/stargazer', about: 'x'.repeat(121)}}).error, /at most 120 characters/);
+    assert.match(settings.check(f('openApps'), {Stars: {pkg: '@be/stargazer', about: 7}}).error, /what it does is text/);
+    assert.match(settings.check(f('openApps'), {Stars: {about: 'no package'}}).error, /package name/);
+    assert.match(settings.check(f('openApps'), {Stars: ['@be/stargazer']}).error, /package name/);
     assert.match(settings.check(f('openApps'), {calls: 'telejibo'}).error, /package name/);
     assert.match(settings.check(f('openApps'), {'../x': '@be/x'}).error, /not a name/);
+    const nine = {};
+    for (let i = 1; i <= 9; i++) nine['App ' + String.fromCharCode(96 + i)] = '@be/app-' + i;
+    assert.match(settings.check(f('openApps'), nine).error, /At most 8 apps/);
+    delete nine['App i'];
+    assert.equal(Object.keys(settings.check(f('openApps'), nine).value).length, 8);
+    assert.equal(settings.schemaView().find(x => x.key === 'openApps').max, 8, 'the page knows the cap');
     assert.equal(settings.check(f('apiBase'), 'http://127.0.0.1:38111/v1/').value, 'http://127.0.0.1:38111/v1');
     assert.ok(settings.check(f('apiBase'), 'ftp://x').error);
     assert.ok(settings.check(f('apiKey'), 'has space').error);
@@ -156,4 +168,42 @@ test('conversation logs: multi-byte text counts in bytes, and the oldest go when
     for (let i = 0; i < ConversationLog.KEEP + 5; i++) fs.writeFileSync(path.join(logs, 'conversation-20240101-' + String(i).padStart(6, '0') + '.jsonl'), 'x');
     new ConversationLog(dir, true);
     assert.ok(ConversationLog.list(dir).length <= ConversationLog.KEEP);
+});
+
+test('openApps over the cap: a save is refused; a stored longer list keeps its first 8, with a problem', () => {
+    const dir = temp();
+    const twelve = {};
+    for (let i = 1; i <= 12; i++) twelve['App ' + String.fromCharCode(96 + i)] = '@be/app-' + i;
+    assert.match(settings.update(dir, {apiKey: KEY, openApps: twelve}).errors.openApps, /At most 8/);
+    fs.writeFileSync(settings.file(dir), JSON.stringify({apiKey: KEY, openApps: twelve}));
+    const view = settings.publicView(dir);
+    assert.deepEqual(Object.keys(view.values.openApps), ['App a', 'App b', 'App c', 'App d', 'App e', 'App f', 'App g', 'App h']);
+    assert.match(view.problems.openApps, /first 8 of 12/);
+    assert.equal(Object.keys(settings.read(dir).openApps).length, 8);
+    // Another save leaves the list alone; trimming it clears the problem.
+    assert.equal(settings.update(dir, {silenceSeconds: 30}).ok, true);
+    assert.match(settings.publicView(dir).problems.openApps, /first 8/);
+    assert.equal(settings.update(dir, {openApps: {Stars: '@be/stargazer'}}).ok, true);
+    assert.equal(settings.publicView(dir).problems.openApps, undefined);
+});
+
+test('every config.<key> the code reads is a setting in the schema', () => {
+    const code = ['noggin/index.js'].concat(fs.readdirSync(path.join(source, 'noggin/lib')).filter(n => n.endsWith('.js')).map(n => 'noggin/lib/' + n));
+    const keys = new Set(settings.SCHEMA.map(f => f.key));
+    // Animation configs, and a test-only override with a built-in default (D20); not settings.
+    const other = new Set(['dofs', 'duration', 'replyWaitMs']);
+    for (const file of code) {
+        for (const [, name] of fs.readFileSync(path.join(source, file), 'utf8').matchAll(/\bconfig\.([a-zA-Z]+)/g)) {
+            if (!other.has(name)) assert.ok(keys.has(name), file + ' reads config.' + name + ', which is not a setting');
+        }
+    }
+});
+
+test('come back within: 5 minutes by default, 1 to 60, on the Skills tab under Advanced', () => {
+    const field = settings.SCHEMA.find(f => f.key === 'comebackMinutes');
+    assert.deepEqual([field.default, field.min, field.max, field.unit, field.tab, !!field.advanced], [5, 1, 60, 'min', 'skills', true]);
+    const dir = temp();
+    assert.equal(settings.update(dir, {apiKey: KEY, comebackMinutes: 0}).ok, false);
+    assert.equal(settings.update(dir, {apiKey: KEY, comebackMinutes: 10}).ok, true);
+    assert.equal(settings.read(dir).comebackMinutes, 10);
 });

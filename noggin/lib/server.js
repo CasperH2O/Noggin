@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // The settings page's HTTP server: the page itself (web/) and a small JSON API over Noggin's
-// settings, persona and conversation logs. It runs inside Be's process (background.js), so every
+// settings, persona and conversation logs, plus the custom skills BEacon has installed (read-only,
+// fetched here so the page never talks to BEacon). It runs inside Be's process (background.js), so every
 // handler is short, never blocks for long and never throws into Be.
 // Open on the local network like BEacon (D6), with BEacon's guards: a request that changes
 // something must come from this page (Origin/Referer), be JSON and stay small; the key is write-only.
@@ -8,13 +9,19 @@
 'use strict';
 const fs = require('fs'), path = require('path');
 const settings = require('./settings'), core = require('./core'), actions = require('./actions');
-const openai = require('./openai'), ConversationLog = require('./conversation-log');
+const openai = require('./openai'), ConversationLog = require('./conversation-log'), describe = require('./describe');
 
 const BODY_MAX = 128 * 1024;
 const REQUEST_TIMEOUT_MS = 15000;
 const MAX_CONNECTIONS = 16;
 // The persona size the page recommends: the instructions sent at every conversation start.
 const BUDGET = 5600;
+// BEacon runs in the same Be process; its list of custom skills carries each README (D33).
+const BEACON_PORT = 8123;
+const BEACON_TIMEOUT_MS = 4000;
+const BEACON_MAX = 4 * 1024 * 1024;
+// "Describe with AI" (D41): BEacon's list plus this stays inside REQUEST_TIMEOUT_MS.
+const DESCRIBE_TIMEOUT_MS = 10000;
 const STATIC = {
     '/': {file: 'index.html', type: 'text/html; charset=utf-8'},
     '/index.html': {file: 'index.html', type: 'text/html; charset=utf-8'},
@@ -81,10 +88,13 @@ function create(options) {
     const dataDir = typeof options.dataDir === 'function' ? options.dataDir : () => options.dataDir;
     const log = options.log || {info() {}, warn() {}, error() {}};
     const checkKey = options.checkKey || openai.checkKey;
+    const post = options.post || openai.post, describeTimeoutMs = options.describeTimeoutMs || DESCRIBE_TIMEOUT_MS;
+    let describing = false;
     const now = options.now || (() => new Date());
     const http = options.http || require('http');
-    let server = null;
-    const sockets = new Set();
+    const beacon = Object.assign({host: '127.0.0.1', port: Number(process.env.BEACON_PORT) || BEACON_PORT, timeoutMs: BEACON_TIMEOUT_MS}, options.beacon);
+    let server = null, inventory = null;
+    const sockets = new Set(), fetches = new Set();
 
     // Everything the page shows; never the key itself.
     function state() {
@@ -132,6 +142,97 @@ function create(options) {
         return checkKey({apiBase: config.apiBase, apiKey: key});
     }
 
+    // GET from BEacon: the parsed JSON, or an Error with a short reason. close() aborts it.
+    function fromBeacon(pathname) {
+        return new Promise((resolve, reject) => {
+            let done = false, timer = null, req = null;
+            const finish = (error, value) => {
+                if (done) return;
+                done = true;
+                clearTimeout(timer);
+                fetches.delete(abort);
+                if (error) reject(error); else resolve(value);
+            };
+            const abort = reason => { try { if (req) req.abort(); } catch (_) {} finish(Error(reason)); };
+            fetches.add(abort);
+            timer = setTimeout(() => abort('no answer in ' + beacon.timeoutMs / 1000 + ' s'), beacon.timeoutMs);
+            req = http.get({host: beacon.host, port: beacon.port, path: pathname, headers: {Accept: 'application/json'}}, res => {
+                if (res.statusCode !== 200) { res.resume(); finish(Error('status ' + res.statusCode)); return; }
+                const parts = [];
+                let size = 0;
+                res.on('data', chunk => {
+                    if (done) return;
+                    size += chunk.length;
+                    if (size > BEACON_MAX) abort('answer too large');
+                    else parts.push(chunk);
+                });
+                res.on('end', () => {
+                    if (done) return;
+                    try { finish(null, JSON.parse(Buffer.concat(parts).toString('utf8'))); }
+                    catch (_) { finish(Error('not JSON')); }
+                });
+                res.on('error', error => finish(error));
+            });
+            req.on('error', error => finish(Error(error.code === 'ECONNREFUSED' ? 'not running' : error.message)));
+        });
+    }
+
+    // BEacon's list of installed custom skills; requests during a fetch share it.
+    function installedSkills() {
+        if (!inventory) {
+            inventory = fromBeacon('/api/skills/custom');
+            const clear = () => { inventory = null; };
+            inventory.then(clear, clear);
+        }
+        return inventory;
+    }
+
+    // GET /api/skills/found: installed custom skills that could become extra apps (D31, D33).
+    function found() {
+        return installedSkills().then(list => {
+            const config = settings.publicView(dataDir()).values;
+            return {httpStatus: 200, body: {ok: true, found: actions.suggestions(list, config), builtIn: Object.keys(actions.APPS)}};
+        }, error => {
+            log.warn('skill scan: BEacon ' + error.message);
+            return {httpStatus: 502, body: {ok: false, error: 'BEacon did not answer (' + error.message + ').'}};
+        });
+    }
+
+    // POST /api/apps/describe {pkg}: one line on what an installed skill does, written by the
+    // fallback model from its README (D41). Only a package name comes in; the README is BEacon's,
+    // so this never sends other text to OpenAI. One at a time.
+    function describeApp(body) {
+        const pkg = typeof body.pkg === 'string' ? body.pkg : '';
+        if (!actions.APP_PACKAGE.test(pkg)) return {httpStatus: 400, body: {ok: false, error: 'not a package name'}};
+        let config;
+        try { config = settings.read(dataDir()); } catch (_) { return {httpStatus: 400, body: {ok: false, error: 'save an API key first'}}; }
+        if (describing) return {httpStatus: 429, body: {ok: false, error: 'Jibo is already describing an app'}};
+        describing = true;
+        const fail = (status, error) => ({httpStatus: status, body: {ok: false, error: error}});
+        return installedSkills().then(list => {
+            const skill = (list && Array.isArray(list.skills) ? list.skills : []).filter(item => item && item.packageName === pkg)[0];
+            if (!skill) return fail(404, 'not installed through BEacon');
+            if (!String(skill.readme || '').trim()) return fail(422, 'it has no README to describe');
+            const name = skill.manifest && typeof skill.manifest.name === 'string' ? skill.manifest.name : pkg;
+            return new Promise((resolve, reject) => {
+                let abort = null;
+                const timer = setTimeout(() => {
+                    const reason = 'no answer in ' + describeTimeoutMs / 1000 + ' s';
+                    if (abort) abort(reason); else reject(Error(reason));
+                }, describeTimeoutMs);
+                const untrack = () => { clearTimeout(timer); if (abort) fetches.delete(abort); };
+                post(config, '/responses', describe.request(config.fallbackModel, name, skill.readme), describeTimeoutMs, cancel => { abort = cancel; fetches.add(cancel); })
+                    .then(r => { untrack(); resolve(r); }, error => { untrack(); reject(error); });
+            }).then(r => {
+                if (r.status !== 200) return fail(502, r.status === 401 ? 'OpenAI does not accept the key' : 'OpenAI answered ' + r.status);
+                const line = describe.result(r.json);
+                if (line.refused) log.warn('describe ' + pkg + ': refused "' + line.refused.slice(0, 120) + '"');
+                return line.error ? fail(422, line.error) : {httpStatus: 200, body: {ok: true, about: line.about, model: config.fallbackModel}};
+            }, error => fail(502, 'OpenAI did not answer (' + String(error && error.message || error).slice(0, 80) + ')'));
+        }, error => fail(502, 'BEacon did not answer (' + error.message + ')'))
+            .then(result => { describing = false; return result; }, error => { describing = false; throw error; });
+    }
+
     function serveStatic(res, entry) {
         fs.readFile(path.join(webDir, entry.file), (error, data) => {
             if (error) return send(res, 404, 'text/plain; charset=utf-8', 'not found');
@@ -153,7 +254,8 @@ function create(options) {
         if (method === 'GET' && pathname === '/api/settings') return json(res, 200, state());
         if (method === 'GET' && pathname === '/api/logs') return json(res, 200, {logs: ConversationLog.list(dataDir()), keep: ConversationLog.KEEP});
         if (method === 'GET' && pathname.indexOf('/api/logs/') === 0) return serveLog(res, pathname.slice('/api/logs/'.length));
-        const writes = {'/api/settings': save, '/api/test-key': testKey};
+        if (method === 'GET' && pathname === '/api/skills/found') return found().then(result => json(res, result.httpStatus, result.body));
+        const writes = {'/api/settings': save, '/api/test-key': testKey, '/api/apps/describe': describeApp};
         if (!writes[pathname]) return json(res, 404, {ok: false, error: 'not found'});
         if (method !== 'POST') return json(res, 405, {ok: false, error: 'POST only'});
         if (!sameOrigin(req)) return json(res, 403, {ok: false, error: 'only from this settings page'});
@@ -201,6 +303,7 @@ function create(options) {
         server = null;
         sockets.forEach(socket => { try { socket.destroy(); } catch (_) {} });
         sockets.clear();
+        fetches.forEach(abort => abort('stopped'));
         if (!s) return Promise.resolve();
         return new Promise(resolve => { try { s.close(() => resolve()); } catch (_) { resolve(); } });
     }

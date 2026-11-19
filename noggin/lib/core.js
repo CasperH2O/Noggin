@@ -403,9 +403,9 @@ function resumeNote(resume, clock, said) {
     const did = tool === 'get_time' ? 'get_time (the ' + (args.show === 'date' ? 'date' : 'time') + ')'
         : tool === 'set_timer' ? 'set_timer for ' + (args.duration || 'the time asked')
         : tool === 'set_alarm' ? 'set_alarm for ' + (args.time || 'the time asked')
-        : tool === 'use_skill' && args.name ? 'use_skill (' + args.name + ')'
+        : (tool === 'use_skill' || tool === 'open_app') && args.name ? tool + ' (' + args.name + ')'
         : tool === 'picture' && args.subject ? 'picture (of ' + args.subject + ')' : tool;
-    const who = timer || alarm || tool === 'get_time' ? 'your clock' : actions.CLOUD[tool] ? 'your cloud' : 'that skill', Who = who.charAt(0).toUpperCase() + who.slice(1);
+    const who = timer || alarm || tool === 'get_time' ? 'your clock' : actions.CLOUD[tool] ? 'your cloud' : tool === 'open_app' ? 'that app' : 'that skill', Who = who.charAt(0).toUpperCase() + who.slice(1);
     let now = '';
     if (timer && clock && clock.timer) now += clock.timer.set ? 'A timer is now running with ' + clock.timer.remaining + ' left. ' : 'No timer is running now. ';
     if (alarm && clock && clock.alarm) now += clock.alarm.set ? 'Your alarm is now set for ' + clock.alarm.time + ', ' + clock.alarm.day + '. ' : 'No alarm is set now. ';

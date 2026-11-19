@@ -12,9 +12,9 @@ const openai = require('./lib/openai'), core = require('./lib/core'), Conversati
 const actions = require('./lib/actions'), comeback = require('./lib/comeback'), createLog = require('./lib/log');
 const OWN = require('./package.json').name;
 const RESUME_MS = 15000;
-// After a cloud request, @be/nimbus should take over within seconds; if no skill has by then,
-// the comeback gives up (the conversation ended when the cloud's turn started).
-const CLOUD_LEAVE_MS = 30000;
+// After any handover the other skill (or @be/nimbus for the cloud) takes over within seconds; if
+// none has by then, the comeback gives up, so a later unrelated skill never brings Noggin back.
+const LEAVE_MS = 30000;
 // Survives the skill's close (a skill switch closes a skill, it does not destroy it).
 let resume = null, watcher = null;
 const cloudTurn = require('./lib/cloud-turn').create(jibo, () => require('jibo-embodied-dialog'));
@@ -85,7 +85,7 @@ class Noggin extends BeSkill {
         return session.open().then(reason => { if (this.session === session) this.session = null; return reason; });
     }
     // The conversation handed an action to another skill: when it is done and Jibo is idle and
-    // quiet, open Noggin again (open() above picks up `resume`). open_app does not come back.
+    // quiet, open Noggin again (open() above picks up `resume`). Music and radio do not come back.
     watchHandover(state, config, log) {
         stopWatching();
         if (!state.comeback) return;
@@ -96,7 +96,7 @@ class Noggin extends BeSkill {
             log.write({kind: 'comeback', ok: true, said: said.slice(0, 300), ms: Date.now() - started});
             resume = {at: Date.now(), pairs: state.pairs, tool: state.tool, args: state.args, said: said};
             if (!comeback.relaunch(jibo, OWN)) { resume = null; log.write({kind: 'comeback', ok: false, reason: 'no_relaunch'}); }
-        }, {own: OWN, timeoutMs: config.comebackMs, leaveMs: state.target === actions.NIMBUS ? CLOUD_LEAVE_MS : 0, onGiveUp: (reason, ms) => {
+        }, {own: OWN, timeoutMs: config.comebackMinutes * 60000, leaveMs: LEAVE_MS, onGiveUp: (reason, ms) => {
             if (watcher === w) watcher = null;
             cloudTurn.release();
             log.write({kind: 'comeback', ok: false, reason: reason, ms: ms});

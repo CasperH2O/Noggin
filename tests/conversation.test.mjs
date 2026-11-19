@@ -918,17 +918,20 @@ test('check_clock reads the clock in Noggin; if it cannot, the clock answers ins
     g.talk.close();
 });
 
-test('open_app: only listed apps, and the conversation ends there without coming back', async () => {
+test('open_app: only listed apps; Noggin comes back afterwards, like use_skill', async () => {
     const acts = fakeActions();
-    const h = harness({actions: acts, config: {openApps: {recipes: '@be/recipe'}}});
+    const h = harness({actions: acts, config: {openApps: {recipes: {pkg: '@be/recipe', about: 'Recipes to cook along with'}}}});
     const ended = h.talk.open(); await untilListening(h);
     await youSay(h, 'open recipes');
-    callReply(h, 'r1', 'See you!', [['open_app', {name: 'Recipes'}]]);
+    callReply(h, 'r1', '', [['open_app', {name: 'Recipes'}]]);
     await until(() => acts.redirects.length === 1);
     assert.deepEqual(acts.redirects[0], ['@be/recipe', {nlu: {intent: 'menu', entities: {domain: '@be/recipe'}}, match: {skipSurprises: true}}]);
-    assert.equal(acts.handovers[0].comeback, false);
+    assert.equal(acts.handovers[0].comeback, true);
+    assert.deepEqual(acts.handovers[0].args, {name: 'recipes'});
     h.jibo.jetstream.events.skillSwitch.fire();
-    assert.equal(await ended, 'open_app');
+    assert.equal(await ended, 'handover');
+    // Back: the model hears it opened the app, by name.
+    assert.match(core.resumeNote({tool: 'open_app', args: {name: 'recipes'}, pairs: []}, null, 'Anything else?'), /Then you used open_app \(recipes\) and that app took over/);
 });
 
 test('cancel_timer / cancel_alarm: nothing set in the clock\'s record means no handover; the model says so', async () => {
@@ -997,7 +1000,7 @@ test('use_skill hands over and comes back; play_music and play_radio leave', asy
     assert.deepEqual(music.redirects[0], ['@be/music', {nlu: {intent: 'playSong', entities: {domain: 'music', query: 'Bohemian Rhapsody', artist: 'Queen'}}, match: {skipSurprises: true}}]);
     assert.equal(music.handovers[0].comeback, false);
     g.jibo.jetstream.events.skillSwitch.fire();
-    assert.equal(await ended, 'open_app');
+    assert.equal(await ended, 'leaves', 'music ends the conversation');
 });
 
 test('open_app: an extra app that is not installed fails at once, without waiting for the timeout', async () => {
@@ -1012,16 +1015,6 @@ test('open_app: an extra app that is not installed fails at once, without waitin
     assert.deepEqual(JSON.parse(h.sent.find(e => e.item && e.item.call_id === 's').item.output), {ok: false, error: 'that app is not installed on Jibo'});
     assert.equal(acts.redirects.length, 0); assert.equal(acts.failed, 1);
     h.talk.close();
-    // Stargazer (a store skill in use_skill) is checked the same way.
-    const store = fakeActions({installed: () => false});
-    const k = harness({actions: store});
-    k.talk.open(); await untilListening(k);
-    await youSay(k, 'show me a space picture');
-    callReply(k, 'r1', '', [['use_skill', {name: 'stargazer'}, 'z']]);
-    await until(() => k.sent.some(e => e.type === 'response.create'));
-    assert.deepEqual(JSON.parse(k.sent.find(e => e.item && e.item.call_id === 'z').item.output), {ok: false, error: 'that skill is not installed on Jibo'});
-    assert.equal(store.redirects.length, 0);
-    k.talk.close();
     // Built-in apps are part of Jibo: no check.
     const builtin = fakeActions({installed: () => false});
     const g = harness({actions: builtin});
@@ -1245,10 +1238,10 @@ test('the greeting smiles with the eye only (no body movement), outside the clas
 
 test('timer tools: the instructions and tool descriptions say to call them without words first', () => {
     const text = core.voiceSetup(new Date(2026, 10, 13, 9, 0), {apps: []});
-    assert.match(text, /For get_time, set_timer, cancel_timer, set_alarm, cancel_alarm and use_skill, call the tool without saying anything first/);
+    assert.match(text, /For get_time, set_timer, cancel_timer, set_alarm, cancel_alarm, use_skill and open_app, call the tool without saying anything first/);
     assert.doesNotMatch(text, /"Okay!"/);
     const tools = require(path.join(source, 'noggin/lib/actions.js')).tools({});
-    for (const name of ['get_time', 'set_timer', 'cancel_timer', 'set_alarm', 'cancel_alarm', 'use_skill']) assert.match(tools.find(t => t.name === name).description, /without saying anything first/);
+    for (const name of ['get_time', 'set_timer', 'cancel_timer', 'set_alarm', 'cancel_alarm', 'use_skill', 'open_app']) assert.match(tools.find(t => t.name === name).description, /without saying anything first/);
 });
 // ---- expressions next to speech (0.6.5) ----
 // A DOF set like jibo.expression.dofs: names, and minus() for a new set.

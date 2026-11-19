@@ -185,25 +185,99 @@
         }
         }
     }
-    // Extra apps: name -> package rows.
+    // Extra apps: name -> package rows, at most field.max (D32), and the installed custom skills
+    // a scan found, each added with one click (D31, D36).
+    const APP_NAME = /^[A-Za-z][A-Za-z0-9 ]{0,31}$/;
+    let found = null;          // the last scan: {busy}, {items, builtIn} or {error}; kept until reload
+    let redrawApps = null;     // the Extra apps editor on screen, redrawn when a scan ends
+    function scan() {
+        found = {busy: true, items: found && found.items, builtIn: found && found.builtIn};
+        if (redrawApps) redrawApps();
+        request('GET', '/api/skills/found').then(result => {
+            const ok = result.status === 200 && result.json && result.json.ok;
+            found = ok ? {items: result.json.found, builtIn: result.json.builtIn || []}
+                : {error: (result.json && result.json.error) || 'BEacon did not answer.'};
+        }).catch(() => { found = {error: 'Jibo did not answer.'}; })
+          .then(() => { if (redrawApps) redrawApps(); });
+    }
     function mapControl(field) {
         const rows = el('div', {class: 'map-rows'});
-        let entries = Object.keys(current(field.key) || {}).map(name => [name, current(field.key)[name]]);
+        const max = field.max || 8, noteMax = field.noteMax || 120;
+        const value = current(field.key) || {};
+        // [name, package, what it does]; an older value is a package alone.
+        let entries = Object.keys(value).map(name => typeof value[name] === 'string' ? [name, value[name], ''] : [name, value[name].pkg, value[name].about || '']);
+        const full = () => entries.length >= max;
         function commit() {
             const out = {};
-            entries.forEach(entry => { if (entry[0] || entry[1]) out[entry[0]] = entry[1]; });
+            entries.forEach(entry => { if (entry[0] || entry[1] || entry[2]) out[entry[0]] = {pkg: entry[1], about: entry[2]}; });
             setValue(field, out);
+        }
+        // "What it does": typed, from the README, or written by AI from the README on request (D39, D41).
+        // onText(text, source) keeps it; source: 'readme', 'ai' or '' (typed).
+        function aboutBlock(text, source, label, pkgOf, onText) {
+            const sources = {readme: 'From the skill\'s README.', ai: 'Written by AI from the README. Check it before you save.'};
+            const note = el('div', {class: 'field-help about-source', text: sources[source] || ''});
+            // A few lines, so a whole 120-character line shows; Enter would only add a space.
+            const input = el('textarea', {class: 'about', rows: 3, maxlength: noteMax, spellcheck: 'true', 'aria-label': label,
+                placeholder: 'What it does, for example: plays YouTube videos on Jibo\'s screen', oninput: () => { note.textContent = ''; onText(input.value, ''); },
+                onkeydown: event => { if (event.key === 'Enter') event.preventDefault(); }});
+            input.value = text;
+            const button = state.key.set ? el('button', {class: 'btn btn-flat', type: 'button', text: 'Describe with AI', title: 'Sends this skill\'s README to OpenAI with your key', onclick: () => {
+                button.disabled = true; button.textContent = 'Describing…';
+                request('POST', '/api/apps/describe', {pkg: pkgOf()}).then(r => {
+                    if (r.status === 200 && r.json && r.json.ok) {
+                        input.value = r.json.about; onText(r.json.about, 'ai');
+                        note.className = 'field-help about-source'; note.textContent = sources.ai;
+                    } else {
+                        note.className = 'field-error about-source'; note.textContent = 'Not described: ' + ((r.json && r.json.error) || 'Jibo refused it') + '.';
+                    }
+                }).catch(() => { note.className = 'field-error about-source'; note.textContent = 'Not described: Jibo did not answer.'; })
+                  .then(() => { button.disabled = false; button.textContent = 'Describe with AI'; });
+            }}) : null;
+            return el('div', {class: 'about-block'}, [input, el('div', {class: 'about-row'}, [note, button])]);
+        }
+        function foundRows() {
+            const out = [el('div', {class: 'found-head'}, [
+                el('div', {}, [el('div', {class: 'found-title', text: 'Found on this Jibo'}),
+                    el('div', {class: 'field-help', text: 'Custom skills installed through BEacon. Add the ones Jibo may open.'})]),
+                el('button', {class: 'btn', type: 'button', disabled: !!(found && found.busy), text: found && found.busy ? 'Scanning…' : found ? 'Scan again' : 'Scan', onclick: scan})])];
+            if (!found || found.busy && !found.items) return out;
+            if (found.error) return out.concat([el('div', {class: 'field-error', text: found.error})]);
+            const chosen = entries.map(entry => entry[1]);
+            const items = found.items.filter(item => chosen.indexOf(item.pkg) < 0);
+            if (!items.length) return out.concat([el('div', {class: 'field-help found-none', text: found.items.length ? 'Every skill found is in the list.' : 'No other custom skills are installed.'})]);
+            items.forEach(item => {
+                const note = el('div', {class: 'field-error', hidden: true});
+                const name = el('input', {type: 'text', value: item.name, placeholder: 'Name', maxlength: 32, 'aria-label': 'Name for ' + item.pkg, oninput: () => { item.name = name.value; }});
+                const add = el('button', {class: 'btn btn-flat', type: 'button', text: 'Add', disabled: full(), onclick: () => {
+                    const spoken = name.value.trim().replace(/\s+/g, ' ');
+                    const taken = entries.map(entry => entry[0].toLowerCase()).concat(found.builtIn || []);
+                    const problem = !APP_NAME.test(spoken) ? 'A name: letters, digits and spaces, starting with a letter.'
+                        : taken.indexOf(spoken.toLowerCase()) >= 0 ? '"' + spoken + '" is already used. Choose another name.' : '';
+                    if (problem) { note.textContent = problem; note.hidden = false; return; }
+                    // The README's line comes along, to edit or describe with AI in the list (D39, D41).
+                    entries.push([spoken, item.pkg, item.about || '', item.about ? 'readme' : '']); commit(); draw();
+                }});
+                out.push(el('div', {class: 'found-item'}, [
+                    el('div', {class: 'map-row'}, [name, el('span', {class: 'found-pkg', text: item.pkg, title: item.label || null}), add]), note]));
+            });
+            return out;
         }
         function draw() {
             rows.replaceChildren();
             entries.forEach((entry, i) => {
                 const name = el('input', {type: 'text', value: entry[0], placeholder: 'Name', 'aria-label': 'App name', oninput: () => { entry[0] = name.value; commit(); }});
                 const pkg = el('input', {type: 'text', value: entry[1], placeholder: '@be/package', 'aria-label': 'Package', oninput: () => { entry[1] = pkg.value; commit(); }});
-                rows.appendChild(el('div', {class: 'map-row'}, [name, pkg,
-                    el('button', {class: 'btn btn-flat-danger', type: 'button', text: 'Remove', onclick: () => { entries.splice(i, 1); commit(); draw(); }})]));
+                const about = aboutBlock(entry[2], entry[3], 'What ' + (entry[0] || 'this app') + ' does', () => entry[1], (text, source) => { entry[2] = text; entry[3] = source; commit(); });
+                rows.appendChild(el('div', {class: 'app-entry'}, [el('div', {class: 'map-row'}, [name, pkg,
+                    el('button', {class: 'btn btn-flat-danger', type: 'button', text: 'Remove', onclick: () => { entries.splice(i, 1); commit(); draw(); }})]), about]));
             });
-            rows.appendChild(el('div', {}, [el('button', {class: 'btn btn-flat', type: 'button', text: 'Add app', onclick: () => { entries.push(['', '']); draw(); }})]));
+            rows.appendChild(el('div', {}, [el('button', {class: 'btn btn-flat', type: 'button', text: 'Add app', disabled: full(), onclick: () => { entries.push(['', '', '']); draw(); }})]));
+            if (full()) rows.appendChild(el('div', {class: 'field-help cap-note', text: 'Jibo can open at most ' + max + ' extra apps. Remove one to add another.'}));
+            if (entries.length && state.key.set) rows.appendChild(el('div', {class: 'field-help', text: 'Describe with AI sends the app\'s README to OpenAI with your key.'}));
+            rows.appendChild(el('div', {class: 'found'}, foundRows()));
         }
+        redrawApps = () => { if (rows.isConnected) draw(); };
         draw();
         return rows;
     }
@@ -211,7 +285,7 @@
     function fieldRow(field) {
         const error = (errors.values || {})[field.key];
         const wide = field.type === 'map' || field.type === 'set';
-        return el('div', {class: 'field' + (error ? ' is-invalid' : ''), 'data-key': field.key}, [
+        return el('div', {class: 'field' + (field.type === 'map' ? ' is-tall' : '') + (error ? ' is-invalid' : ''), 'data-key': field.key}, [
             el('div', {class: 'field-text'}, [
                 el('div', {class: 'field-label', text: field.label}),
                 field.help ? el('div', {class: 'field-help', text: field.help}) : null,

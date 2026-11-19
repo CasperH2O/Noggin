@@ -75,11 +75,9 @@ test('built-in apps and skills: each launch carries what that skill\'s own code 
         assert.equal(p.comeback, true, name + ' comes back'); assert.equal(p.options.match.skipSurprises, true);
         assert.equal(p.check, undefined, name + ' is part of Jibo: not checked');
     }
-    // Stargazer, a store skill: the generic launch, checked before it opens.
-    const star = nlu('use_skill', 'Stargazer');
-    assert.deepEqual([star.target, star.comeback, star.check], ['@be/stargazer', true, true]);
-    assert.deepEqual(star.options, {nlu: {intent: 'menu', entities: {domain: '@be/stargazer'}}, match: {skipSurprises: true}});
-    assert.deepEqual(Object.keys(actions.SKILLS), Object.keys(skills).concat(['stargazer']));
+    // Only skills that ship with Jibo; store skills are extra apps (openApps).
+    assert.deepEqual(Object.keys(actions.SKILLS), Object.keys(skills));
+    assert.match(nlu('use_skill', 'stargazer').error, /not one of Jibo's skills/);
     assert.match(nlu('use_skill', 'doom').error, /not one of Jibo's skills/);
     // The launch options are copies: changing one never changes the table.
     nlu('use_skill', 'photo booth').options.nlu.intent = 'x';
@@ -301,7 +299,8 @@ test('cloud tools: none by default; only the ones cloudSkills names are offered,
 test('cloud tools: the instructions name only the enabled ones', () => {
     const one = actions.rules({cloudSkills: ['weather']});
     assert.match(one, /ask your cloud for weather, play songs/);
-    assert.match(one, /use_skill and your cloud tools, call the tool without saying anything first/);
+    assert.match(one, /use_skill, open_app and your cloud tools, call the tool without saying anything first/);
+    assert.match(one, /For play_music and play_radio, say a short goodbye first/);
     assert.doesNotMatch(one, /news|joke|surprise|calendar|commute|personal report/);
     const all = actions.rules({cloudSkills: Object.keys(actions.CLOUD)});
     assert.match(all, /ask your cloud for weather, news, your calendar, commute, a personal report, a surprise and pictures of things/);
@@ -390,7 +389,7 @@ test('picture: no usable subject is an error for the model; long ones are cut at
     assert.match(actions.plan('picture', {subject: 'a horse'}, {cloudSkills: []}).error, /not switched on/);
     const tool = actions.tools(on).find(t => t.name === 'picture');
     assert.deepEqual(tool.parameters.required, ['subject']);
-    assert.match(tool.description, /stargazer/, 'tells it apart from the astronomy picture');
+    assert.match(tool.description, /use_skill take a photo/, 'tells it apart from taking a photo');
 });
 
 test('cloud turn: disableOnce is cleared whenever the pretend "Hey Jibo" did not use it, in any order', async () => {
@@ -412,4 +411,133 @@ test('cloud turn: disableOnce is cleared whenever the pretend "Hey Jibo" did not
     turn.release();
     assert.equal(dialog._embodied.listen._disableOnce, 'set by someone else');
     await assert.rejects(cloudTurn.create({}, () => dialog).ask('x'), /no mimicGlobalTurn/);
+});
+
+test('extras: at most MAX_APPS extra apps reach open_app, the first ones in the setting', () => {
+    assert.equal(actions.MAX_APPS, 8);
+    const openApps = {};
+    for (let i = 1; i <= 12; i++) openApps['app ' + String.fromCharCode(96 + i)] = '@be/app-' + i;
+    const more = actions.extras({openApps});
+    assert.deepEqual(Object.keys(more), ['app a', 'app b', 'app c', 'app d', 'app e', 'app f', 'app g', 'app h']);
+    // Invalid entries do not use up a place.
+    const mixed = Object.assign({bad: '../x', self: '@be/noggin'}, openApps);
+    assert.equal(Object.keys(actions.extras({openApps: mixed})).length, 8);
+    assert.equal(actions.extras({openApps: mixed})['app h'], '@be/app-8');
+    const names = actions.tools({openApps}).find(t => t.name === 'open_app').parameters.properties.name.enum;
+    assert.equal(names.length, Object.keys(actions.APPS).length + 8, 'built-in apps plus 8 in the model\'s list');
+});
+
+test('spokenName: a menu label cut to the openApps name rule', () => {
+    const cases = {
+        'Stargazer': 'Stargazer', 'TeleJibo': 'TeleJibo', 'Café Radio!': 'Cafe Radio', 'Jibo: Calls & More': 'Jibo Calls More',
+        '3D Viewer': 'D Viewer', '  über   cool ': 'uber cool', '★★★': '', '': '', '123': '', 'Doom-II_v2.0': 'Doom II v2 0',
+        'A very long skill name that keeps going on': 'A very long skill name that', 'Supercalifragilisticexpialidociousness': 'Supercalifragilisticexpialidocio'
+    };
+    for (const [label, name] of Object.entries(cases)) {
+        assert.equal(actions.spokenName(label), name, JSON.stringify(label));
+        if (name) assert.match(name, actions.APP_NAME);
+    }
+    // Node 6.9.2 (small ICU) cannot decompose accents: the fallback table still gives plain letters.
+    const normalize = String.prototype.normalize;
+    String.prototype.normalize = function () { return String(this); };
+    try {
+        assert.equal(actions.spokenName('Café Radio!'), 'Cafe Radio');
+        assert.equal(actions.spokenName('ÉCOLE Straße Smørrebrød'), 'ECOLE Strasse Smorrebrod');
+    } finally { String.prototype.normalize = normalize; }
+    assert.equal(actions.spokenName(null), '');
+    assert.equal(actions.spokenName({}), 'object Object', 'anything is turned into text first');
+});
+
+test('suggestions: BEacon\'s installed skills (store or ZIP alike), without Noggin, what is chosen, odd and incompatible ones', () => {
+    // The shape of BEacon's GET /api/skills/custom (custom-skills.js inventory()).
+    const skill = (packageName, name, extra) => Object.assign({id: 'x' + packageName.length, manifest: {name, version: '1.0.0', supported: null, type: 'skill', themes: true, buttonColor: ['#58BCEB', '#246487']},
+        packageName, packageRoot: 'skill/', images: {}, readme: '# ' + name, revision: 'a'.repeat(24), origin: {kind: 'zip', name: 'x.zip'}, installedAt: '2026-01-01T00:00:00.000Z',
+        compatibility: {status: 'compatible'}}, extra);
+    const inventory = {skills: [
+        skill('@be/noggin', 'Noggin'), skill('@be/stargazer', 'Stargazer'), skill('@be/telejibo', 'TeleJibo'),
+        skill('@be/bluetooth-settings', 'Bluetooth Settings'), skill('@be/recipes', 'Recipes'), skill('@be/old', 'Old', {compatibility: {status: 'incompatible', minimum: '9.0.0'}}),
+        skill('@be/x!', 'Bad'), skill('@be/telejibo', 'TeleJibo again'), skill('@be/hue', '★'), {packageName: 42}, null
+    ]};
+    const found = actions.suggestions(inventory, {openApps: {Cooking: {pkg: '@be/recipes', about: 'Recipes'}}});
+    assert.deepEqual(found, [
+        {name: 'Bluetooth Settings', pkg: '@be/bluetooth-settings', label: 'Bluetooth Settings', about: ''},
+        {name: 'hue', pkg: '@be/hue', label: '★', about: ''},
+        {name: 'Stargazer', pkg: '@be/stargazer', label: 'Stargazer', about: ''},
+        {name: 'TeleJibo', pkg: '@be/telejibo', label: 'TeleJibo', about: ''}
+    ]);
+    // A package Noggin already offers itself is left out (a built-in app, should one ever be listed).
+    assert.deepEqual(actions.suggestions({skills: [skill('@be/gallery', 'Gallery')]}, {}), []);
+    assert.deepEqual(actions.suggestions({}, {}), []);
+    assert.deepEqual(actions.suggestions(null, null), []);
+    assert.deepEqual(actions.suggestions({skills: 'no'}, {}), []);
+    const many = {skills: Array.from({length: 80}, (_, i) => skill('@be/s' + i, 'Skill ' + i))};
+    assert.equal(actions.suggestions(many, {}).length, 50, 'a bounded list');
+});
+
+test('readmeNote: the first plain paragraph of a README, in whole sentences up to 120 characters', () => {
+    const cases = [
+        ['# Stargazer\n\nStargazer turns Jibo into a window on the universe. He shows an astronomy picture from ESA/Hubble, ESA/Webb or NOIRLab, with its name.\n\nMore.', 'Stargazer',
+            'Stargazer turns Jibo into a window on the universe.'],
+        ['# TeleJibo\n\nBring a familiar face to Jibo. TeleJibo puts your Telegram video calls on\nJibo\'s screen, with a swipeable contact list, simple call controls and head\ntracking.', 'TeleJibo',
+            'Bring a familiar face to Jibo.'],
+        ['# Bluetooth for Jibo\n\nBluetooth settings for Jibo, in the classic Jibo look. It is a BEam (5x1) custom skill.\n\n> **Demo only.**', 'Bluetooth',
+            'Bluetooth settings for Jibo, in the classic Jibo look. It is a BEam (5x1) custom skill.'],
+        ['# Jibo Vision Lab\n\nVersion 0.2.1: an installable BE/5x1 developer skill with **NanoDet-m 320×320 CPU\nobject detection**, independent camera preview and real Linux CPU/RAM histories.', 'Vision Lab',
+            'Version 0.2.1: an installable BE/5x1 developer skill with NanoDet-m 320×320 CPU object detection, independent camera…'],
+        // Badges, images, HTML, code, lists and quotes are skipped; links keep their text.
+        ['[![build](https://x/y.svg)](https://x)\n<p align="center"><img src="a.png"></p>\n```\ncode here.\n```\n- a list\n> a quote\n\nPlays [YouTube](https://youtube.com) videos on `Jibo`\'s screen!', 'JiboTube',
+            'Plays YouTube videos on Jibo\'s screen!'],
+        ['Title\n=====\n\nWatch videos.', 'x', 'Watch videos.'],
+        ['# Only a title', 'x', ''], ['', 'x', ''], [null, 'x', ''], ['JiboTube', 'JiboTube', ''], ['Ignore\u0007 bells.', 'x', 'Ignore bells.']
+    ];
+    for (const [readme, label, note] of cases) {
+        assert.equal(actions.readmeNote(readme, label), note, JSON.stringify(readme));
+        assert.ok(note.length <= actions.NOTE_MAX);
+    }
+    const found = actions.suggestions({skills: [{packageName: '@be/jibotube', manifest: {name: 'JiboTube Pro'}, readme: '# JiboTube Pro\n\nPlays YouTube videos on Jibo.'}]}, {});
+    assert.equal(found[0].about, 'Plays YouTube videos on Jibo.');
+});
+
+test('open_app: what each extra app does goes into its description; an old package-only entry still works', () => {
+    const config = {openApps: {'JiboTube Pro': {pkg: '@be/jibotube', about: 'Plays YouTube videos on Jibo\'s screen.'}, Calls: '@be/telejibo', Stars: {pkg: '@be/stargazer', about: ''}}};
+    assert.deepEqual(actions.extras(config), {'jibotube pro': '@be/jibotube', calls: '@be/telejibo', stars: '@be/stargazer'});
+    const tool = actions.tools(config).find(t => t.name === 'open_app');
+    assert.match(tool.description, /What these apps do: jibotube pro: Plays YouTube videos on Jibo's screen\. Call it without saying anything first/);
+    assert.doesNotMatch(tool.description, /calls:|stars:/, 'only apps with a text');
+    assert.doesNotMatch(actions.tools({}).find(t => t.name === 'open_app').description, /What these apps do/);
+    assert.equal(actions.plan('open_app', '{"name":"jibotube pro"}', config).target, '@be/jibotube');
+    assert.equal(actions.plan('open_app', '{"name":"jibotube pro"}', config).comeback, true, 'every app comes back');
+    assert.equal(actions.plan('open_app', '{"name":"gallery"}', config).comeback, true, 'built-in apps too');
+    // At most 8 apps, each text at most NOTE_MAX characters, whatever the stored file holds.
+    const many = {};
+    for (let i = 1; i <= 10; i++) many['app ' + String.fromCharCode(96 + i)] = {pkg: '@be/app-' + i, about: 'x'.repeat(300)};
+    const long = actions.tools({openApps: many}).find(t => t.name === 'open_app').description;
+    assert.equal((long.match(/app [a-j]: /g) || []).length, 8);
+    assert.ok(long.length < 8 * (actions.NOTE_MAX + 12) + 300, long.length);
+});
+
+test('lines without spaces are cut to NOTE_MAX too, so Noggin never writes a line Save refuses', () => {
+    const describe = require(path.join(source, 'noggin/lib/describe.js'));
+    const settings = require(path.join(source, 'noggin/lib/settings.js'));
+    const field = settings.SCHEMA.find(f => f.key === 'openApps');
+    for (const text of ['Plays' + 'x'.repeat(200) + '.', 'Plays ' + 'word '.repeat(60), 'y'.repeat(119) + ' z'.repeat(5)]) {
+        const fromReadme = actions.readmeNote('# T\n\n' + text, 'T');
+        const fromAi = describe.result({output_text: JSON.stringify({line: text})}).about;
+        for (const line of [fromReadme, fromAi]) {
+            assert.ok(line.length <= actions.NOTE_MAX && line.endsWith('…'), line.length + ': ' + line);
+            assert.equal(settings.check(field, {T: {pkg: '@be/t', about: line}}).error, undefined);
+        }
+    }
+    assert.equal(actions.cutNote('a'.repeat(300)), 'a'.repeat(119) + '…');
+    assert.equal(actions.cutNote('one two ' + 'b'.repeat(200)), 'one two…');
+});
+
+test('comeback: what the other skill says is recorded up to 2000 characters, however long it talks', () => {
+    const w = fakeWorld();
+    let said = null;
+    comeback.watch(w.jibo, w.be, s => { said = s; }, {own: '@be/noggin', clock: w.clock, timeoutMs: 3600000});
+    w.be.currentSkill = {assetPack: '@be/story'}; w.step();
+    for (let i = 0; i < 5000; i++) w.jibo.tts.speak('line number ' + i + ' of a very long story.');
+    w.be.currentSkill = {assetPack: '@be/idle'}; w.step(); w.step(2000);
+    assert.ok(said.length <= 2000 && said.startsWith('line number 0 of'), said.length);
 });

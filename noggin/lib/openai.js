@@ -3,7 +3,7 @@
 // WebSocket with the key in the subprotocol (proven on the robot: Chrome 53's TLS
 // reaches api.openai.com). The expression classifier uses Node https with a
 // keep-alive agent (Node's own CAs work on the robot) to OpenAI's Decisions API, falling back to the page's
-// fetch. Node 6 / Chrome 53: ES2015 only.
+// fetch; the settings page's "Describe with AI" uses the same Node https (post). Node 6 / Chrome 53: ES2015 only.
 'use strict';
 const https = require('https'), http = require('http'), url = require('url');
 const core = require('./core');
@@ -55,11 +55,12 @@ function connect(config, WebSocketClass) {
 
 // ---- HTTPS for the classifier ----
 const agents = {};
-function nodeJson(config, route, body, timeoutMs) {
-    try { return nodeRequest(config, route, body, timeoutMs); }
+// track(abort), when given, receives a function that cancels the request.
+function nodeJson(config, route, body, timeoutMs, track) {
+    try { return nodeRequest(config, route, body, timeoutMs, track); }
     catch (error) { return Promise.reject(error); }
 }
-function nodeRequest(config, route, body, timeoutMs) {
+function nodeRequest(config, route, body, timeoutMs, track) {
     const target = url.parse(config.apiBase + route), started = Date.now(), data = JSON.stringify(body);
     const module_ = target.protocol === 'https:' ? https : http;
     const agent = agents[target.protocol] || (agents[target.protocol] = new module_.Agent({keepAlive: true, maxSockets: 2}));
@@ -77,6 +78,7 @@ function nodeRequest(config, route, body, timeoutMs) {
         });
         request.on('error', reject);
         request.setTimeout(timeoutMs || 10000, () => { request.abort(); reject(Error('timeout')); });
+        if (track) track(reason => { request.abort(); reject(Error(reason || 'stopped')); });
         request.end(data);
     });
 }
@@ -158,4 +160,4 @@ function classifier(config, post) {
     return classify;
 }
 
-module.exports = {connect, classifier, checkKey};
+module.exports = {connect, classifier, checkKey, post: nodeJson};

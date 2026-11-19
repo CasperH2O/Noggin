@@ -12,6 +12,8 @@
 'use strict';
 
 const TIMEOUT_MS = 180000, QUIET_MS = 1500, POLL_MS = 250, IDLE = '@be/idle';
+// What the other skill said goes back to the model; an app may talk for up to an hour (D40).
+const SAID_MAX = 2000;
 
 // ESML ("<speak><anim .../> it's 3:15 . </speak>") -> plain words.
 function plain(esml) {
@@ -30,6 +32,7 @@ function watch(jibo, be, back, options) {
     const own = options.own, clock = options.clock || {setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: id => clearInterval(id), now: () => Date.now()};
     const timeoutMs = options.timeoutMs || TIMEOUT_MS, quietMs = options.quietMs || QUIET_MS, giveUp = options.onGiveUp || (() => {}), leaveMs = options.leaveMs || 0;
     const said = [], start = clock.now(), restore = [];
+    let saidChars = 0;
     let left = false, quietSince = null, done = false, lastKey = null;
     // Record both speech paths; skip a line the other path just recorded.
     function record(target, key) {
@@ -39,7 +42,7 @@ function watch(jibo, be, back, options) {
             // The same line often passes both paths (embodied speech hands it to tts), with
             // different case, punctuation or spacing ("7:30 AM" / "7: 30AM"): keep it once.
             const line = plain(text), key = line.toLowerCase().replace(/[^a-z0-9]+/g, '');
-            if (line && key !== lastKey) said.push(line);
+            if (line && key !== lastKey && saidChars < SAID_MAX) { said.push(line); saidChars += line.length + 1; }
             if (line) lastKey = key;
             return original.apply(this, arguments);
         };
@@ -70,7 +73,7 @@ function watch(jibo, be, back, options) {
         clock.clearInterval(timer);
         restore.forEach(undo => undo());
         if (hotword) { if (hotword.off) hotword.off(onHotword); else if (hotword.removeListener) hotword.removeListener(onHotword); }
-        if (ok) back(said.join(' ').slice(0, 2000));
+        if (ok) back(said.join(' ').slice(0, SAID_MAX));
         else giveUp(reason || 'cancelled', clock.now() - start);
     }
     return {cancel: () => finish(false, 'cancelled')};

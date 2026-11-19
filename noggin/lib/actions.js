@@ -7,21 +7,28 @@
 //                set_timer, set_alarm, cancel_timer, cancel_alarm (the cancels only when the
 //                record shows something to cancel), use_skill: another of Jibo's skills does it
 //                and speaks, by a local redirect carrying the NLU result its own code reads;
-//                Noggin comes back afterwards (lib/comeback.js).
-//   leaving:     play_music, play_radio, open_app (Jibo's built-in apps plus the
-//                `openApps` setting): the conversation ends there.
+//                open_app (Jibo's built-in apps plus the `openApps` setting, D38). Noggin comes
+//                back afterwards (lib/comeback.js).
+//   leaving:     play_music, play_radio: the conversation ends there.
 //   cloud:       weather, news, calendar, commute, personal_report, surprise, picture, each only
 //                when named in the `cloudSkills` setting (default: all): Jibo's cloud answers a
 //                fixed phrase through @be/nimbus, and Noggin comes back afterwards.
 //                joke is there but disabled (CLOUD.joke.disabled).
 //
-// A fixed, hand-made list (no discovery of installed skills). The NLU payloads follow what
-// BEam 13.0.11's @be/be skills read in open(). Node 6 / Chrome 53: ES2015 only.
+// A fixed, hand-made list; the settings page only suggests installed skills for `openApps` (D31).
+// The NLU payloads follow what BEam 13.0.11's @be/be skills read in open(). Node 6 / Chrome 53: ES2015 only.
 'use strict';
 
 const CLOCK = '@be/clock', OWN = '@be/noggin', NIMBUS = '@be/nimbus';
 const MIN_TIMER_S = 6, MAX_TIMER_S = 24 * 3600;    // @be/clock refuses 5 s or less and more than 24 h
 const PACKAGE = /^(@[a-z0-9-]+\/)?[a-z0-9._-]+$/;
+// The `openApps` setting: a spoken name and a scoped package per extra app, at most MAX_APPS (D32).
+const APP_NAME = /^[A-Za-z][A-Za-z0-9 ]{0,31}$/;
+const APP_PACKAGE = /^@[a-z0-9-]+\/[a-z0-9._-]+$/;
+const MAX_APPS = 8;
+// What an extra app does, for the model (D39): one short line each.
+const NOTE_MAX = 120;
+const MAX_FOUND = 50;
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const NO_ARGS = {type: 'object', properties: {}, additionalProperties: false};
@@ -34,8 +41,7 @@ function launch(intent, domain, entities) {
 }
 const clock = launch;
 
-// Jibo's built-in apps for open_app: they hold the screen (or run for minutes), so the
-// conversation ends there.
+// Jibo's built-in apps for open_app; Noggin comes back when the app is done (D38).
 const APPS = {
     clock: {pkg: CLOCK, options: launch('menu', 'clock')},
     settings: {pkg: '@be/settings', options: launch('menu', 'settings')},
@@ -53,10 +59,7 @@ const SKILLS = {
     'photo booth': {pkg: '@be/create', options: launch('createSomePhotos', 'create')},
     'word of the day': {pkg: '@be/word-of-the-day', options: launch('play', 'word-of-the-day')},
     'sing daisy bell': {pkg: '@be/daisy-bell', options: launch('sing', 'daisy-bell')},
-    'who am i': {pkg: '@be/who-am-i', options: launch('launchWhoAmI', 'who-am-i')},
-    // A store skill (apps/stargazer), so it may not be installed: checked before it opens. It reads
-    // nothing at launch; it shows a picture, says its name, and by default is done after 10 s.
-    'stargazer': {pkg: '@be/stargazer', store: true, options: {nlu: {intent: 'menu', entities: {domain: '@be/stargazer'}}, match: {skipSurprises: true}}}
+    'who am i': {pkg: '@be/who-am-i', options: launch('launchWhoAmI', 'who-am-i')}
 };
 // @be/radio's genres (its `station` entity takes these keys, case-sensitive).
 const RADIO = {'alternative': 'Alternative', 'blues': 'Blues', 'christian and gospel': 'ChristianAndGospel', 'classical': 'Classical',
@@ -107,15 +110,112 @@ function pictureSubject(text) {
     if (s.length > PICTURE_MAX) s = s.slice(0, PICTURE_MAX + 1).replace(/ [^ ]*$/, '').trim();
     return /[a-z0-9\u00c0-\u024f]/.test(s) ? s : '';
 }
-// Extra apps from the `openApps` setting (name -> package); anything that is not a package name is left out.
-function extras(config) {
-    const list = config && config.openApps, out = {};
+// One `openApps` entry as {pkg, about}: a package name alone (older settings) or {pkg, about}.
+function appEntry(value) {
+    if (typeof value === 'string') return {pkg: value, about: ''};
+    if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.pkg !== 'string') return null;
+    return {pkg: value.pkg, about: cleanNote(value.about)};
+}
+// A line too long for NOTE_MAX, cut at a word (or anywhere, without spaces) with "…" added.
+function cutNote(text) {
+    const cut = text.slice(0, NOTE_MAX - 1), word = cut.replace(/ [^ ]*$/, '');
+    return (word.length < cut.length && word ? word : cut) + '…';
+}
+// "What it does" as one plain line: no control characters, single spaces.
+function cleanNote(text) {
+    return typeof text === 'string' ? text.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim() : '';
+}
+// The usable extra apps, the first MAX_APPS (D32): [{name, pkg, about}], name in lower case.
+function extraList(config) {
+    const list = config && config.openApps, out = [], seen = {};
     if (!list || typeof list !== 'object' || Array.isArray(list)) return out;
     Object.keys(list).forEach(name => {
-        const pkg = list[name], k = key(name);
-        if (k && typeof pkg === 'string' && PACKAGE.test(pkg) && pkg !== OWN) out[k] = pkg;
+        const entry = appEntry(list[name]), k = key(name);
+        if (!k || !entry || !PACKAGE.test(entry.pkg) || entry.pkg === OWN) return;
+        if (seen[k]) { seen[k].pkg = entry.pkg; seen[k].about = entry.about.slice(0, NOTE_MAX); return; }
+        if (out.length >= MAX_APPS) return;
+        seen[k] = {name: k, pkg: entry.pkg, about: entry.about.slice(0, NOTE_MAX)};
+        out.push(seen[k]);
     });
     return out;
+}
+// Extra apps from the `openApps` setting: name -> package.
+function extras(config) {
+    const out = {};
+    extraList(config).forEach(app => { out[app.name] = app.pkg; });
+    return out;
+}
+// Accented Latin letters for runtimes whose normalize() cannot decompose (Node 6.9.2's small ICU).
+const PLAIN_LETTERS = {a: 'àáâãäåā', c: 'çćč', e: 'èéêëēėęě', i: 'ìíîïīį', n: 'ñńň', o: 'òóôõöøō', u: 'ùúûüūů', y: 'ýÿ', s: 'śš', z: 'źżž', l: 'ł', d: 'ð', g: 'ğ', r: 'ř'};
+const PLAIN = {ß: 'ss', æ: 'ae', œ: 'oe', þ: 'th'};
+Object.keys(PLAIN_LETTERS).forEach(plain => PLAIN_LETTERS[plain].split('').forEach(letter => { PLAIN[letter] = plain; }));
+// A label cut to the `openApps` name rule (D34): accents dropped, anything else a space, starting
+// with a letter, at most 32 characters cut at a word. '' when nothing is left.
+function spokenName(text) {
+    let s = String(text || '');
+    try { s = s.normalize('NFD'); } catch (_) {}
+    s = s.replace(/[^\x00-\x7f]/g, letter => {
+        const lower = letter.toLowerCase(), plain = PLAIN[lower];
+        return plain === undefined ? letter : lower === letter ? plain : plain.charAt(0).toUpperCase() + plain.slice(1);
+    });
+    s = s.replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9]+/g, ' ').replace(/^[^A-Za-z]+/, '').trim();
+    if (s.length > 32) {
+        const cut = s.slice(0, 33).replace(/ [^ ]*$/, '');
+        s = (cut.length <= 32 ? cut : s.slice(0, 32)).trim();
+    }
+    return APP_NAME.test(s) ? s : '';
+}
+// The start of a README as "what it does" (D39): the first plain paragraph without its markdown,
+// in whole sentences up to NOTE_MAX characters (a longer first sentence is cut at a word).
+function readmeNote(readme, label) {
+    const lines = String(readme || '').slice(0, 20000).split(/\r?\n/), paragraph = [];
+    let code = false;
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (/^(```|~~~)/.test(line)) { code = !code; if (paragraph.length) break; continue; }
+        if (code) continue;
+        // A heading underlined with === or --- is not prose either.
+        const underlined = i + 1 < lines.length && /^[=-]+$/.test(lines[i + 1].trim());
+        const prose = line && !underlined && !/^(#|!\[|\[!\[|<|\||>|[-*+] |\d+\. |[=-]+$)/.test(line);
+        if (prose) paragraph.push(line);
+        else if (paragraph.length) break;
+    }
+    const text = cleanNote(paragraph.join(' ').replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/\*\*|__|`|\*/g, ''));
+    if (!text || text.toLowerCase() === String(label || '').toLowerCase()) return '';
+    const sentences = [];
+    let start = 0;
+    for (let i = 0; i < text.length; i++) {
+        if ('.!?'.indexOf(text[i]) >= 0 && (i + 1 === text.length || text[i + 1] === ' ')) { sentences.push(text.slice(start, i + 1).trim()); start = i + 1; }
+    }
+    if (text.slice(start).trim()) sentences.push(text.slice(start).trim());
+    let note = '', full = false;
+    sentences.forEach(sentence => {
+        const next = note ? note + ' ' + sentence : sentence;
+        if (!full && next.length <= NOTE_MAX) note = next;
+        else full = true;
+    });
+    if (!note) note = cutNote(text);
+    return note;
+}
+// The custom skills BEacon lists (GET /api/skills/custom) that could become extra apps, as
+// [{name, pkg, label, about}] sorted by name. Left out (D37): Noggin, what Noggin already offers, what
+// `openApps` already has, odd package names and skills BEacon marks incompatible.
+function suggestions(inventory, config) {
+    const list = inventory && Array.isArray(inventory.skills) ? inventory.skills : [];
+    const openApps = config && config.openApps && typeof config.openApps === 'object' ? config.openApps : {};
+    const chosen = Object.keys(openApps).map(name => appEntry(openApps[name])).filter(Boolean).map(entry => entry.pkg);
+    const skip = [OWN].concat(Object.keys(APPS).map(name => APPS[name].pkg), Object.keys(SKILLS).map(name => SKILLS[name].pkg), chosen);
+    const out = [];
+    list.forEach(skill => {
+        const pkg = skill && skill.packageName;
+        if (typeof pkg !== 'string' || !APP_PACKAGE.test(pkg) || skip.indexOf(pkg) >= 0) return;
+        if (skill.compatibility && skill.compatibility.status === 'incompatible') return;
+        skip.push(pkg);
+        const label = skill.manifest && typeof skill.manifest.name === 'string' ? skill.manifest.name.slice(0, 120) : '';
+        out.push({name: spokenName(label) || spokenName(pkg.replace(/^@[^/]+\//, '')), pkg: pkg, label: label, about: readmeNote(skill.readme, label)});
+    });
+    out.sort((a, b) => a.name.toLowerCase() < b.name.toLowerCase() ? -1 : a.name.toLowerCase() > b.name.toLowerCase() ? 1 : 0);
+    return out.slice(0, MAX_FOUND);
 }
 // Every app open_app may open: name -> package (the built-in ones, then the `openApps` setting's extras).
 function apps(config) {
@@ -184,7 +284,7 @@ const TOOLS = [
         description: 'Cancels Jibo\'s alarm. Jibo\'s clock does it and says so; then the conversation continues. If no alarm is set, the result says so and you tell the person.'},
     {name: 'use_skill', voice: 'skill', ability: 'take photos and use a few of your skills', parameters: enumOf(Object.keys(SKILLS)),
         description: 'Starts one of Jibo\'s skills: take a photo, photo booth (four photos in a row), word of the day (a word guessing game), ' +
-            'sing daisy bell (Jibo sings the song), who am i (Jibo tells who the person is), stargazer (an astronomy picture with its name). It ends by itself, then the conversation continues.'},
+            'sing daisy bell (Jibo sings the song), who am i (Jibo tells who the person is). It ends by itself, then the conversation continues.'},
     // Jibo's cloud (CLOUD above), only those the `cloudSkills` setting names.
     {name: 'weather', cloud: true, voice: 'skill', parameters: NO_ARGS,
         description: 'Jibo\'s cloud tells the weather where Jibo lives (no other places).'},
@@ -203,7 +303,7 @@ const TOOLS = [
     {name: 'picture', cloud: true, voice: 'skill',
         description: 'Jibo\'s cloud finds a family-safe picture on the internet, shows it on his screen and says "Here\'s a picture of" the subject. ' +
             'Use it when the person asks to see a picture or photo of something (an animal, a place, a thing). ' +
-            'Not for taking a photo (use_skill take a photo) or the astronomy picture (use_skill stargazer).',
+            'Not for taking a photo (use_skill take a photo).',
         parameters: {type: 'object', additionalProperties: false, required: ['subject'], properties: {
             subject: {type: 'string', description: 'What to show, in a few English words with its article, as Jibo will say it: "a horse", "the eiffel tower", "puppies".'}}}},
     {name: 'play_music', voice: 'leaves', ability: 'play songs or the radio',
@@ -213,8 +313,8 @@ const TOOLS = [
     {name: 'play_radio', voice: 'leaves', ability: 'play songs or the radio',
         description: 'Plays internet radio in a genre; without a genre, Jibo\'s last station or his station list.',
         parameters: {type: 'object', additionalProperties: false, properties: {genre: {type: 'string', enum: Object.keys(RADIO)}}}},
-    {name: 'open_app', voice: 'leaves', ability: 'open your apps', apps: true,
-        description: 'Opens one of Jibo\'s apps on his screen.'}
+    {name: 'open_app', voice: 'skill', ability: 'open your apps', apps: true,
+        description: 'Opens one of Jibo\'s apps on his screen; when the person is done with it, the conversation continues.'}
 ];
 
 // The tools on offer: all of TOOLS, except the cloud ones the `cloudSkills` setting does not name.
@@ -222,10 +322,15 @@ function offered(config) {
     const cloud = cloudSkills(config);
     return TOOLS.filter(t => !t.cloud || cloud.indexOf(t.name) >= 0);
 }
+// What the extra apps do, for open_app's description (D39).
+function appNotes(config) {
+    const told = extraList(config).filter(app => app.about);
+    return told.length ? ' What these apps do: ' + told.map(app => app.name + ': ' + app.about.replace(/[.!?\u2026]+$/, '')).join('; ') + '.' : '';
+}
 // The function tools for session.update: each description ends with its voice rule.
 function tools(config) {
     const names = Object.keys(apps(config));
-    return offered(config).map(t => ({type: 'function', name: t.name, description: t.description + ' ' + VOICES[t.voice].tool,
+    return offered(config).map(t => ({type: 'function', name: t.name, description: t.description + (t.apps ? appNotes(config) : '') + ' ' + VOICES[t.voice].tool,
         parameters: t.apps ? enumOf(names) : t.parameters}));
 }
 const join = items => items.length > 1 ? items.slice(0, -1).join(', ') + ' and ' + items[items.length - 1] : items[0];
@@ -320,7 +425,7 @@ function handover(name, target, options, args, check) {
 // What a call means: {kind: 'local', run, args} | {kind: 'handover', target, options, comeback, args, check}
 // | {kind: 'cloud', target, phrase, comeback, args} | {kind: 'error', error}.
 // A cloud plan's args are {} except picture's {subject}.
-// `check`: a store skill or an app from the `openApps` setting; Noggin first checks that it is installed.
+// `check`: an app from the `openApps` setting; Noggin first checks that it is installed.
 // `cloud`: Noggin asks Jibo's cloud the fixed `phrase` (a mimicked global turn); @be/nimbus answers.
 function plan(name, argsText, config) {
     const args = parseArgs(argsText);
@@ -365,7 +470,7 @@ function plan(name, argsText, config) {
     if (name === 'use_skill') {
         const k = key(args.name), skill = SKILLS[k];
         if (!skill) return {kind: 'error', error: 'that is not one of Jibo\'s skills (' + Object.keys(SKILLS).join(', ') + ')'};
-        return handover(name, skill.pkg, copy(skill.options), {name: k}, !!skill.store);
+        return handover(name, skill.pkg, copy(skill.options), {name: k});
     }
     if (name === 'play_music') {
         const song = String(args.song || '').trim().slice(0, 160), artist = String(args.artist || '').trim().slice(0, 120);
@@ -463,5 +568,5 @@ function readClock(jibo, now, timeoutMs) {
     });
 }
 
-module.exports = {CLOCK, OWN, NIMBUS, APPS, SKILLS, RADIO, CLOUD, VOICES, TOOLS, voiceOf, cloudSkills, offered, rules, apps, extras, tools,
+module.exports = {CLOCK, OWN, NIMBUS, APPS, SKILLS, RADIO, CLOUD, VOICES, TOOLS, APP_NAME, APP_PACKAGE, MAX_APPS, NOTE_MAX, voiceOf, cloudSkills, offered, rules, apps, appEntry, cleanNote, cutNote, extras, spokenName, readmeNote, suggestions, tools,
     plan, duration, clockQuery, clockCancel, installed, setVolume, localTime, describeTime, readClock};
