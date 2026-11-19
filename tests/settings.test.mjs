@@ -17,12 +17,29 @@ test('schema: every field has a key, type, tab, group and label, and its default
     for (const field of settings.SCHEMA) {
         assert.ok(field.key && field.type && field.tab && field.group && field.label, JSON.stringify(field));
         assert.ok(!keys.has(field.key), 'duplicate ' + field.key); keys.add(field.key);
-        assert.ok(['brain', 'behaviour', 'skills', 'memory', 'history'].includes(field.tab), field.key + ' tab');
-        if (field.key === 'apiKey') continue;
+        assert.ok(['brain', 'behaviour', 'skills', 'memory', 'history', 'usage'].includes(field.tab), field.key + ' tab');
+        if (settings.SECRETS.includes(field.key)) continue;
         if (field.default === null) continue;
         assert.equal(settings.check(field, field.default).error, undefined, field.key + ' default');
     }
     assert.equal(settings.DEFAULTS.apiKey, undefined, 'the key has no default');
+    assert.equal(settings.DEFAULTS.adminKey, undefined, 'the admin key has no default');
+});
+
+test('the admin key: sk-admin- only, never in the page view, only as a hint; secrets() has both keys', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'noggin-settings-'));
+    assert.match(settings.update(dir, {adminKey: 'sk-proj-0123456789abcdefghij'}).errors.adminKey, /sk-admin-/);
+    assert.equal(settings.update(dir, {apiKey: 'sk-proj-0123456789abcdefghij', adminKey: 'sk-admin-0123456789abcdefghij'}).ok, true);
+    const view = settings.publicView(dir), text = JSON.stringify(view);
+    assert.ok(!text.includes('sk-admin-0123456789abcdefghij') && !text.includes('sk-proj-0123456789abcdefghij'));
+    assert.equal(view.values.adminKey, undefined);
+    assert.equal(view.adminKey.set, true);
+    assert.match(view.adminKey.hint, /^sk-…ghij/);
+    assert.deepEqual(settings.secrets(dir), {apiKey: 'sk-proj-0123456789abcdefghij', adminKey: 'sk-admin-0123456789abcdefghij'});
+    assert.equal(settings.read(dir).adminKey, undefined, 'a conversation\'s settings never carry the admin key');
+    assert.equal(settings.update(dir, {adminKey: null}).ok, true);
+    assert.equal(settings.secrets(dir).adminKey, '');
+    assert.equal(settings.publicView(dir).adminKey.set, false);
 });
 
 test('schema view: JSON-safe, patterns as strings, option lists resolved, joke shown as switched off', () => {

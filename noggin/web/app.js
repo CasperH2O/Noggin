@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Noggin's settings page: builds every tab from the schema the robot sends (GET /api/settings),
-// keeps unsaved changes until Save (POST /api/settings), and shows the conversation logs.
+// keeps unsaved changes until Save (POST /api/settings), shows the conversation logs and what
+// Jibo's OpenAI use costs (GET /api/usage).
 // Plain browser JavaScript, ES2015, no libraries.
 (function () {
     'use strict';
@@ -11,6 +12,7 @@
         {id: 'behaviour', label: 'Behaviour', icon: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>'},
         {id: 'skills', label: 'Skills', icon: '<rect x="4" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.6"/>'},
         {id: 'memory', label: 'Memory', icon: '<path d="M6.5 4h10A1.5 1.5 0 0 1 18 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-10Z"/><path d="M6.5 4v16M10 8.5h5M10 12h5M10 15.5h3"/>'},
+        {id: 'usage', label: 'Usage', icon: '<path d="M4 20h16"/><path d="M5.5 15.5 9.5 11l3.5 3 5.5-7"/><circle cx="18.5" cy="7" r="1.2"/>'},
         {id: 'history', label: 'History', icon: '<path d="M5 5h14a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 19 16h-8l-4.5 3.5V16H5a1.5 1.5 0 0 1-1.5-1.5v-8A1.5 1.5 0 0 1 5 5Z"/><path d="M8 9.5h8M8 12.5h5"/>'}
     ];
     const PERSONA_PARTS = [
@@ -24,6 +26,7 @@
         behaviour: 'How Jibo greets you, moves and listens.',
         skills: 'What Jibo may do for you during a conversation.',
         memory: 'What Jibo remembers about your household, and short notes of the last two weeks of conversations. Several people talk to Jibo and he cannot tell who is who, so everything here is shared by everyone in the house.',
+        usage: 'What Jibo\'s OpenAI use costs, read with a read-only admin key. Jibo asks OpenAI when you open this tab or press Refresh, and keeps the answer for 15 minutes.',
         history: 'What was said in recent conversations. Never audio, never the key.'
     };
 
@@ -31,6 +34,7 @@
     let pending = {};          // setting key -> new value (null: back to the default)
     let personaPending = {};   // soul|identity|facts -> new text
     let newKey = '';
+    let newAdminKey = '';
     let errors = {values: {}, persona: {}};
     let active = 'brain';
     try { active = localStorage.getItem('noggin-tab') || 'brain'; } catch (_) {}
@@ -44,6 +48,7 @@
             if (value === null || value === undefined || value === false) return;
             if (name === 'text') node.textContent = value;
             else if (name === 'html') node.innerHTML = value;
+            else if (name === 'style') Object.keys(value).forEach(k => { node.style[k] = value[k]; }); // CSSOM: the CSP refuses style attributes
             else if (name.indexOf('on') === 0) node.addEventListener(name.slice(2), value);
             else node.setAttribute(name, value === true ? '' : value);
         });
@@ -95,7 +100,7 @@
     }
 
     // ---- unsaved changes ----
-    function changes() { return Object.keys(pending).length + Object.keys(personaPending).length + (newKey ? 1 : 0); }
+    function changes() { return Object.keys(pending).length + Object.keys(personaPending).length + (newKey ? 1 : 0) + (newAdminKey ? 1 : 0); }
     function current(key) { return Object.prototype.hasOwnProperty.call(pending, key) ? pending[key] : state.values[key]; }
     function setValue(field, value) {
         const saved = state.values[field.key];
@@ -109,7 +114,7 @@
         $('save-text').replaceChildren(count + ' unsaved change' + (count === 1 ? '' : 's'), el('span', {class: 'save-later', text: ' · applies to the next conversation'}));
         document.querySelectorAll('[data-key]').forEach(node => {
             const key = node.getAttribute('data-key');
-            node.classList.toggle('is-changed', Object.prototype.hasOwnProperty.call(pending, key) || (key === 'apiKey' && !!newKey));
+            node.classList.toggle('is-changed', Object.prototype.hasOwnProperty.call(pending, key) || (key === 'apiKey' && !!newKey) || (key === 'adminKey' && !!newAdminKey));
         });
     }
     window.addEventListener('beforeunload', event => {
@@ -119,11 +124,14 @@
     function save() {
         const body = {values: Object.assign({}, pending), persona: Object.assign({}, personaPending)};
         if (newKey) body.values.apiKey = newKey;
+        if (newAdminKey) body.values.adminKey = newAdminKey;
+        const keysChanged = !!(newKey || newAdminKey || Object.prototype.hasOwnProperty.call(pending, 'adminKey'));
         $('save').disabled = true;
         return request('POST', '/api/settings', body).then(result => {
             if (result.status === 200) {
-                state = result.json; pending = {}; personaPending = {}; newKey = '';
+                state = result.json; pending = {}; personaPending = {}; newKey = ''; newAdminKey = '';
                 errors = {values: Object.assign({}, state.problems || {}), persona: {}};
+                if (keysChanged) { usage = null; usageWanted = true; }
                 render();
                 toast('Saved. Changes apply to the next conversation.');
                 return;
@@ -138,7 +146,7 @@
         }).then(() => { $('save').disabled = false; });
     }
     function discard() {
-        pending = {}; personaPending = {}; newKey = '';
+        pending = {}; personaPending = {}; newKey = ''; newAdminKey = '';
         errors = {values: Object.assign({}, state.problems || {}), persona: {}};
         render();
     }
@@ -460,7 +468,7 @@
     function memoryPanel() {
         const facts = el('div', {class: 'setting-block'}, [el('div', {class: 'empty', text: 'Loading…'})]);
         const notes = el('div', {class: 'setting-block'}, [el('div', {class: 'empty', text: 'Loading…'})]);
-        const usage = el('div', {class: 'field-help'});
+        const fullness = el('div', {class: 'field-help'});
         const failed = () => { facts.replaceChildren(el('div', {class: 'empty', text: 'Jibo did not answer.'})); notes.replaceChildren(); };
         function act(url, body) {
             return request('POST', url, body).then(result => {
@@ -491,7 +499,7 @@
             return row;
         }
         function show(m) {
-            usage.textContent = m.facts.length + (m.facts.length === 1 ? ' fact, ' : ' facts, ') + Math.round(100 * m.used / m.max) + '% of the space for facts.';
+            fullness.textContent = m.facts.length + (m.facts.length === 1 ? ' fact, ' : ' facts, ') + Math.round(100 * m.used / m.max) + '% of the space for facts.';
             const input = el('input', {type: 'text', maxlength: 160, placeholder: 'Sam\'s birthday is March 3', 'aria-label': 'New fact'});
             const add = () => { if (input.value.trim()) act('/api/memory/fact', {text: input.value}); };
             input.addEventListener('keydown', event => { if (event.key === 'Enter') add(); });
@@ -510,28 +518,266 @@
             if (window.confirm('Jibo forgets every fact and every note. This cannot be undone.')) act('/api/memory/clear', {confirm: true});
         }});
         return settingsPanel('memory').concat([
-            el('h2', {class: 'section-header', text: 'Facts'}), usage, facts,
+            el('h2', {class: 'section-header', text: 'Facts'}), fullness, facts,
             el('h2', {class: 'section-header', text: 'Recent conversations'}),
             el('div', {class: 'field-help', text: 'Notes Jibo keeps for two weeks. He has the newest few at hand; he looks up the rest when someone asks.'}), notes,
             el('div', {class: 'memory-tools'}, [el('a', {class: 'btn btn-flat', href: '/api/memory/export', download: 'noggin-memory.json', text: 'Export'}), forget])
         ]);
     }
 
+    // ---- usage: fetched when the tab opens and on Refresh; the robot caches it (D64) ----
+    let usage = null;          // the last answer of GET /api/usage, shown while a new one loads
+    let usageWanted = true;    // ask on the next Usage panel: the tab was opened or a key was saved (D64)
+    function money(value, currency) {
+        const code = String(currency || 'usd').toUpperCase();
+        if (value > 0 && value < 0.01) return '<' + money(0.01, currency);
+        try { return value.toLocaleString(undefined, {style: 'currency', currency: code, minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+        catch (_) { return value.toFixed(2) + ' ' + code; }
+    }
+    function tokens(n) {
+        if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + 'M';
+        if (n >= 1e3) return (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + 'k';
+        return String(Math.round(n));
+    }
+    function dayName(day, today) {
+        if (day === today) return 'Today';
+        const d = new Date(day + 'T12:00:00Z');
+        return d.toLocaleDateString(undefined, {weekday: 'short', timeZone: 'UTC'});
+    }
+    function ago(ms) {
+        const minutes = Math.round((Date.now() - ms) / 60000);
+        return minutes < 1 ? 'just now' : minutes === 1 ? '1 minute ago' : minutes + ' minutes ago';
+    }
+    // A monotone cubic through the points: slightly curved, never past a point or below zero (D68).
+    function curve(points) {
+        const n = points.length;
+        if (n < 2) return n ? 'M' + points[0].x + ',' + points[0].y : '';
+        const dx = [], slope = [], tangent = [];
+        for (let i = 0; i < n - 1; i++) { dx[i] = points[i + 1].x - points[i].x; slope[i] = (points[i + 1].y - points[i].y) / dx[i]; }
+        tangent[0] = slope[0]; tangent[n - 1] = slope[n - 2];
+        for (let i = 1; i < n - 1; i++) {
+            tangent[i] = slope[i - 1] * slope[i] <= 0 ? 0
+                : 3 * (dx[i - 1] + dx[i]) / ((2 * dx[i] + dx[i - 1]) / slope[i - 1] + (dx[i] + 2 * dx[i - 1]) / slope[i]);
+        }
+        let d = 'M' + points[0].x.toFixed(1) + ',' + points[0].y.toFixed(1);
+        for (let i = 0; i < n - 1; i++) {
+            const h = dx[i] / 3;
+            d += ' C' + (points[i].x + h).toFixed(1) + ',' + (points[i].y + tangent[i] * h).toFixed(1) + ' ' + (points[i + 1].x - h).toFixed(1) + ',' +
+                (points[i + 1].y - tangent[i + 1] * h).toFixed(1) + ' ' + points[i + 1].x.toFixed(1) + ',' + points[i + 1].y.toFixed(1);
+        }
+        return d;
+    }
+    function niceMax(value) {
+        if (!(value > 0)) return 1;
+        const step = Math.pow(10, Math.floor(Math.log10(value))), r = value / step;
+        return (r <= 1 ? 1 : r <= 2 ? 2 : r <= 2.5 ? 2.5 : r <= 5 ? 5 : 10) * step;
+    }
+    // One series per chart, a day per point; hover or tap a day for its value.
+    function dayChart(title, days, today, valueOf, format) {
+        const box = el('div', {class: 'chart'});
+        const tip = el('div', {class: 'chart-tip', hidden: true});
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const node = (tag, attrs) => { const n = document.createElementNS(svgNS, tag); Object.keys(attrs).forEach(k => n.setAttribute(k, attrs[k])); return n; };
+        function draw() {
+            const width = Math.max(280, box.clientWidth || 600), height = 180, left = 52, right = 14, top = 14, bottom = 26;
+            const values = days.map(valueOf), max = niceMax(Math.max.apply(null, values));
+            const x = i => left + (days.length === 1 ? 0 : i * (width - left - right) / (days.length - 1));
+            const y = v => top + (1 - v / max) * (height - top - bottom);
+            const svg = node('svg', {viewBox: '0 0 ' + width + ' ' + height, height: height, role: 'img', 'aria-label': title});
+            [0, 0.5, 1].forEach(f => {
+                svg.appendChild(node('line', {class: 'grid', x1: left, x2: width - right, y1: y(max * f), y2: y(max * f)}));
+                const label = node('text', {x: left - 8, y: y(max * f) + 4, 'text-anchor': 'end'});
+                label.textContent = format(max * f, true);
+                svg.appendChild(label);
+            });
+            const points = values.map((v, i) => ({x: x(i), y: y(v)}));
+            const line = curve(points);
+            svg.appendChild(node('path', {class: 'area', d: line + ' L' + x(days.length - 1) + ',' + y(0) + ' L' + x(0) + ',' + y(0) + ' Z'}));
+            svg.appendChild(node('path', {class: 'line', d: line}));
+            const cross = node('line', {class: 'cross', y1: top, y2: y(0), visibility: 'hidden'});
+            svg.appendChild(cross);
+            const dots = points.map(p => { const c = node('circle', {class: 'dot', cx: p.x, cy: p.y, r: 4}); svg.appendChild(c); return c; });
+            // Narrow: every other day, counted back from today, so the labels never touch.
+            days.forEach((d, i) => {
+                if (width < 480 && (days.length - 1 - i) % 2) return;
+                const label = node('text', {x: x(i), y: height - 6, 'text-anchor': i === 0 ? 'start' : i === days.length - 1 ? 'end' : 'middle'});
+                label.textContent = dayName(d.day, today);
+                svg.appendChild(label);
+            });
+            const step = days.length > 1 ? (width - left - right) / (days.length - 1) : width;
+            const show = i => {
+                dots.forEach((dot, j) => dot.classList.toggle('is-on', j === i));
+                cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i)); cross.setAttribute('visibility', 'visible');
+                tip.textContent = dayName(days[i].day, today) + ' · ' + format(values[i]);
+                tip.style.left = (x(i) / width * 100) + '%'; tip.style.top = (points[i].y + 4) + 'px';
+                tip.hidden = false;
+            };
+            const hide = () => { tip.hidden = true; cross.setAttribute('visibility', 'hidden'); dots.forEach(dot => dot.classList.remove('is-on')); };
+            days.forEach((d, i) => {
+                const hit = node('rect', {x: x(i) - step / 2, y: 0, width: step, height: height, fill: 'transparent'});
+                hit.addEventListener('mouseenter', () => show(i));
+                hit.addEventListener('click', () => show(i));
+                svg.appendChild(hit);
+            });
+            svg.addEventListener('mouseleave', hide);
+            box.replaceChildren(el('div', {class: 'chart-title', text: title}), svg, tip);
+        }
+        box.draw = draw;
+        return box;
+    }
+    function drawCharts() { document.querySelectorAll('.chart').forEach(chart => { if (chart.draw) chart.draw(); }); }
+    let resizeTimer = null;
+    window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(drawCharts, 150); });
+
+    function hourGrid(hours) {
+        const grid = el('div', {class: 'hours', role: 'img', 'aria-label': 'OpenAI requests per hour, last 7 days'});
+        grid.appendChild(el('span'));
+        for (let h = 0; h < 24; h++) grid.appendChild(el('span', {class: 'hour-label', text: h % 6 === 0 ? String(h) : ''}));
+        hours.rows.forEach(row => {
+            const label = new Date(row.day + 'T12:00:00Z').toLocaleDateString(undefined, {weekday: 'short', timeZone: 'UTC'});
+            grid.appendChild(el('span', {class: 'day-label', text: label}));
+            row.counts.forEach((count, h) => {
+                const cell = el('span', {class: 'cell' + (count ? ' is-used' : ''), title: label + ' ' + h + ':00 · ' + count + ' request' + (count === 1 ? '' : 's')});
+                if (count) cell.style.opacity = (0.25 + 0.75 * count / Math.max(1, hours.max)).toFixed(2);
+                grid.appendChild(cell);
+            });
+        });
+        return grid;
+    }
+
+    // The admin key: its saved hint, a field for a new one, how to make one, and Remove.
+    function adminKeyRow() {
+        const field = state.schema.filter(f => f.key === 'adminKey')[0];
+        const error = (errors.values || {}).adminKey, saved = state.adminKey && state.adminKey.set;
+        const removing = Object.prototype.hasOwnProperty.call(pending, 'adminKey');
+        const input = el('input', {type: 'password', value: newAdminKey, placeholder: saved ? 'Paste a new admin key to replace it' : 'sk-admin-…',
+            autocomplete: 'off', 'aria-label': 'New admin key', oninput: () => { newAdminKey = input.value.trim(); updateSaveBar(); }});
+        const remove = saved ? el('button', {class: 'btn btn-flat-danger', type: 'button', text: removing ? 'Keep' : 'Remove', onclick: () => {
+            if (removing) delete pending.adminKey; else pending.adminKey = null;
+            render();
+        }}) : null;
+        return el('div', {class: 'field' + (error ? ' is-invalid' : ''), 'data-key': 'adminKey'}, [
+            el('div', {class: 'field-text'}, [
+                el('div', {class: 'field-label', text: field.label}),
+                el('div', {class: 'field-help', text: field.help}),
+                saved ? el('div', {class: 'field-help'}, [removing ? 'Removed when you save: ' : 'Saved: ', el('span', {class: 'key-state', text: state.adminKey.hint})]) : null,
+                saved ? null : el('ol', {class: 'steps'}, [
+                    el('li', {text: 'On platform.openai.com, open Settings, then Admin keys.'}),
+                    el('li', {text: 'Create a key with the permission Read only.'}),
+                    el('li', {text: 'Paste it here and save. Jibo checks that it cannot change anything; any other key is refused.'})]),
+                error ? el('div', {class: 'field-error', text: error}) : null
+            ]),
+            el('div', {class: 'field-control'}, [input, remove])
+        ]);
+    }
+
+    const USAGE_PROBLEMS = {
+        removed: 'The saved admin key could change your OpenAI account, so Jibo deleted it and the dashboard is off. Make a key with Read only permission and save that one. Delete the old key on OpenAI if you made it for Jibo.'
+    };
+    function usageBody(u) {
+        if (u.state === 'no-key') return [el('div', {class: 'setting-block'}, [el('div', {class: 'empty', text: 'Save a read-only admin key above to see what Jibo costs.'})])];
+        if (!u.ok) return [el('div', {class: 'banner', text: USAGE_PROBLEMS[u.state] || u.error || 'No usage data.'})];
+        const c = u.currency, b = u.budget, out = [];
+        const tile = (label, value, sub) => el('div', {class: 'tile'}, [el('div', {class: 'tile-label', text: label}), el('div', {class: 'tile-value', text: value}), sub ? el('div', {class: 'tile-sub', text: sub}) : null]);
+        const pc = u.perConversation;
+        out.push(el('div', {class: 'tiles'}, [
+            tile('This month', money(b.spent, c), b.source === 'project' ? 'this project; Jibo ' + money(b.jibo, c) : b.spent > b.jibo + 0.005 ? 'Jibo ' + money(b.jibo, c) : 'all by Jibo'),
+            tile('Left', b.limit === null ? 'No limit' : money(b.left, c), b.limit === null ? 'none set on OpenAI' : 'of ' + money(b.limit, c) + ' a month'),
+            tile('Month forecast', '≈ ' + money(b.forecast, c), 'at the pace of the last 7 full days'),
+            tile('Per conversation', pc && pc.each !== null ? money(pc.each, c) : '–', pc ? pc.count + ' conversation' + (pc.count === 1 ? '' : 's') + (pc.partial ? ' since the oldest log' : ' in 7 days') : 'needs conversation logs')
+        ]));
+
+        // Budget: the whole account counts towards OpenAI's limit (D65).
+        if (b.limit !== null) {
+            const scale = Math.max(b.limit, b.forecast, b.spent) || 1, pct = v => Math.min(100, v / scale * 100) + '%';
+            const meter = el('div', {class: 'budget-meter'}, [el('div', {class: 'is-other', style: {width: pct(b.spent)}}), el('div', {class: 'is-jibo', style: {width: pct(b.jibo)}}),
+                el('div', {class: 'is-forecast', style: {left: pct(b.forecast)}})]);
+            const short = v => money(v, c).replace(/\.00$/, '');
+            b.alerts.filter(a => a !== b.limit).concat([b.limit]).forEach(a => meter.appendChild(el('div', {class: 'budget-mark' + (a / scale > 0.85 ? ' is-end' : ''),
+                style: {left: pct(a)}, text: short(a) + (a === b.limit ? ' limit' : '')})));
+            out.push(el('h2', {class: 'section-header', text: 'Budget this month'}), el('div', {class: 'setting-block'}, [meter,
+                el('div', {class: 'budget-legend'}, [el('span', {}, [el('span', {class: 'swatch'}), 'Jibo ' + money(b.jibo, c)]),
+                    b.spent > b.jibo + 0.005 ? el('span', {}, [el('span', {class: 'swatch is-other'}), 'Other keys ' + money(b.spent - b.jibo, c)]) : null,
+                    el('span', {}, [el('span', {class: 'swatch is-forecast'}), 'Forecast ' + money(b.forecast, c)])]),
+                el('div', {class: 'field-help help-bottom', text: (b.source === 'project' ? 'The limit of the project Jibo\'s key belongs to, for everything in that project. ' : 'The organization\'s limit, for everything on the account. ') +
+                    (b.enforced ? 'Hard limit: OpenAI stops answering at ' + money(b.limit, c) + ', and Jibo cannot talk until the next month.' : 'Not enforced: OpenAI only emails at the alerts' + (b.alerts.length ? ' (' + b.alerts.map(a => money(a, c)).join(', ') + ')' : '') + '.')})]));
+        }
+
+        out.push(el('h2', {class: 'section-header', text: 'Last 7 days'}), el('div', {class: 'setting-block'}, [
+            dayChart('Spent per day', u.days, u.today, d => d.cost, (v, axis) => axis ? money(v, c).replace(/\.00$/, '') : money(v, c)),
+            dayChart('Tokens per day', u.days, u.today, d => d.tokens, v => tokens(v)),
+            el('div', {class: 'field-help help-bottom', text: 'Days as OpenAI counts them (UTC). Today fills in during the day.' + (u.week.other > 0.005 ? ' Other keys on this account spent ' + money(u.week.other, c) + ' in these days.' : '')})]));
+
+        const total = u.features.reduce((sum, f) => sum + f.cost, 0) || 1;
+        out.push(el('h2', {class: 'section-header', text: 'What it was spent on'}), el('div', {class: 'setting-block rows'}, u.features.length ? u.features.map(f => el('div', {class: 'usage-row'}, [
+            el('div', {class: 'usage-name', text: f.label}), el('div', {class: 'usage-money', text: money(f.cost, c)}),
+            el('div', {class: 'usage-use', text: f.use}), el('div', {class: 'usage-tokens', text: tokens(f.tokens) + ' tokens'}),
+            el('div', {class: 'share'}, [el('div', {style: {width: (f.cost / total * 100).toFixed(1) + '%'}})])])) : [el('div', {class: 'empty', text: 'Nothing spent in the last 7 days.'})]));
+
+        out.push(el('h2', {class: 'section-header', text: 'Models'}), el('div', {class: 'setting-block rows'}, u.models.length ? u.models.map(m => el('div', {class: 'usage-row'}, [
+            el('div', {class: 'usage-name'}, [m.model, el('span', {class: 'chip', text: m.label})]), el('div', {class: 'usage-money', text: money(m.cost, c)}),
+            el('div', {class: 'usage-use', text: m.use}),
+            el('div', {class: 'usage-tokens', text: tokens(m.tokens) + ' tokens', title: tokens(m.input) + ' in · ' + tokens(m.cached) + ' from cache · ' + tokens(m.output) + ' out'})])) : [el('div', {class: 'empty', text: 'No models used in the last 7 days.'})]));
+
+        const notes = [];
+        if (u.caching.cachedTokens) notes.push(el('div', {class: 'note-row'}, [el('div', {class: 'usage-name', text: 'Caching saved about ' + money(u.caching.saved, c)}),
+            el('div', {class: 'usage-use', text: Math.round(u.caching.share * 100) + '% of the input came from OpenAI\'s cache at a lower price: the start of each conversation (the persona, the memory, the tools) stays the same from turn to turn. Editing the persona often makes this share drop.'})]));
+        if (u.whatIf) notes.push(el('div', {class: 'note-row'}, [el('div', {class: 'usage-name', text: u.whatIf.would === null ? 'The other conversation model' : 'With ' + u.whatIf.other + ': about ' + money(u.whatIf.would, c)}),
+            el('div', {class: 'usage-use', text: u.whatIf.would === null ? u.whatIf.other + ' has no price yet on this account for everything Jibo used (it is worked out from the bills of the last few weeks).'
+                : 'The same conversations cost ' + money(u.whatIf.actual, c) + ' with ' + u.whatIf.model + ' in the last 7 days. Prices are this account\'s own, from its bills. Change it on the Brain tab.'})]));
+        if (notes.length) out.push(el('h2', {class: 'section-header', text: 'Savings and choices'}), el('div', {class: 'setting-block'}, notes));
+
+        out.push(el('h2', {class: 'section-header', text: 'When Jibo is used'}), el('div', {class: 'setting-block'}, [hourGrid(u.hours),
+            el('div', {class: 'field-help help-bottom', text: 'Requests to OpenAI per hour, in Jibo\'s time. Darker is more.'})]));
+        return out;
+    }
+    function usagePanel() {
+        const body = el('div', {}, usage ? usageBody(usage) : [el('div', {class: 'setting-block'}, [el('div', {class: 'empty', text: 'Asking OpenAI…'})])]);
+        const status = el('span');
+        const refresh = el('button', {class: 'btn btn-flat', type: 'button', text: 'Refresh'});
+        const bar = el('div', {class: 'usage-status'}, [status, refresh]);
+        function showStatus(busy) {
+            refresh.disabled = !!busy;
+            bar.hidden = !(state.adminKey && state.adminKey.set);
+            status.textContent = busy ? 'Asking OpenAI…' : usage && usage.ok ? 'Counting ' + (usage.key.name ? '"' + usage.key.name + '" ' : '') + usage.key.hint +
+                ' · updated ' + ago(usage.fetchedAt) + (usage.tooSoon ? ' (Refresh again in a minute)' : '') : '';
+        }
+        function load(fresh) {
+            if (!(state.adminKey && state.adminKey.set)) { usage = {state: 'no-key'}; body.replaceChildren.apply(body, usageBody(usage)); showStatus(false); return; }
+            showStatus(true);
+            request('GET', '/api/usage' + (fresh ? '?refresh=1' : '')).then(result => {
+                usage = result.json || {ok: false, error: 'Jibo sent no answer.'};
+            }).catch(() => { usage = {ok: false, state: 'error', error: 'Jibo did not answer.'}; })
+              .then(() => {
+                  if (!body.isConnected) return;
+                  // The key row shows the deleted key's hint until redrawn.
+                  if (usage.state === 'removed' && state.adminKey.set) { state.adminKey = {set: false, hint: ''}; render(); return; }
+                  body.replaceChildren.apply(body, usageBody(usage)); showStatus(false); drawCharts();
+              });
+        }
+        refresh.addEventListener('click', () => load(true));
+        showStatus(false);
+        if (usageWanted || !usage) { usageWanted = false; load(false); }
+        return [el('h2', {class: 'section-header', text: 'OpenAI'}), el('div', {class: 'setting-block'}, [adminKeyRow()]), bar, body];
+    }
+
     // ---- page ----
     function render() {
         const main = $('main');
         const scroll = window.scrollY;
-        const panel = active === 'persona' ? personaPanel() : active === 'history' ? historyPanel() : active === 'memory' ? memoryPanel() : settingsPanel(active);
+        const panel = active === 'persona' ? personaPanel() : active === 'history' ? historyPanel() : active === 'memory' ? memoryPanel() : active === 'usage' ? usagePanel() : settingsPanel(active);
         const intro = active === 'persona' ? [] : [el('p', {class: 'hint', text: INTRO[active]})];
         const notices = state.broken ? [el('div', {class: 'banner', text: 'Jibo\'s settings file could not be read (' + state.broken + '). Saving writes a new one.'})] : [];
         main.replaceChildren(el('section', {class: 'panel is-active'}, notices.concat(intro, panel)));
         $('nav').replaceChildren.apply($('nav'), TABS.map(tab => el('button', {class: 'tab' + (tab.id === active ? ' is-active' : ''), type: 'button',
             'aria-current': tab.id === active ? 'page' : null, onclick: () => {
                 active = tab.id;
+                if (active === 'usage') usageWanted = true;
                 try { localStorage.setItem('noggin-tab', active); } catch (_) {}
                 render(); window.scrollTo(0, 0);
             }, html: icon(tab.icon) + '<span>' + tab.label + '</span>'})));
         updateSaveBar();
+        drawCharts();
         window.scrollTo(0, scroll);
     }
 

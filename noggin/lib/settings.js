@@ -115,12 +115,18 @@ const SCHEMA = [
         help: 'After each conversation, the fallback model writes a short note and picks out facts. This sends what was said to OpenAI once more. With conversation logs off, Jibo keeps only what was said until the note is written. Off: Jibo only remembers what you ask him to.'},
 
     {key: 'log', type: 'bool', default: true, tab: 'history', group: 'History', label: 'Keep conversation logs',
-        help: 'What was said, expressions and timings; never audio or the key.'}
+        help: 'What was said, expressions and timings; never audio or the key.'},
+
+    // Saved only after the read-only check (lib/usage.js, D61, D62).
+    {key: 'adminKey', type: 'secret', prefix: 'sk-admin-', default: '', tab: 'usage', group: 'OpenAI', label: 'Admin key',
+        help: 'A read-only admin key from the same OpenAI organization as Jibo\'s API key. It stays on Jibo and is never shown again.'}
 ];
+// Keys never sent to the page; it sees keyHint() instead.
+const SECRETS = ['apiKey', 'adminKey'];
 const BY_KEY = {};
 SCHEMA.forEach(field => { BY_KEY[field.key] = field; });
 const DEFAULTS = {};
-SCHEMA.forEach(field => { if (field.key !== 'apiKey') DEFAULTS[field.key] = field.default; });
+SCHEMA.forEach(field => { if (SECRETS.indexOf(field.key) < 0) DEFAULTS[field.key] = field.default; });
 const FIELDS = SCHEMA.map(field => field.key);
 
 const PERSONA = {soul: {file: 'SOUL.md', max: 8000}, identity: {file: 'IDENTITY.md', max: 8000}, facts: {file: 'FACTS.md', max: 4000}};
@@ -133,6 +139,7 @@ function check(field, value) {
     switch (field.type) {
     case 'secret':
         if (typeof value !== 'string' || !/^\S{4,400}$/.test(value.trim())) return fail('That does not look like an API key.');
+        if (field.prefix && value.trim().indexOf(field.prefix) !== 0) return fail('An admin key starts with ' + field.prefix + '.');
         return {value: value.trim()};
     case 'url':
         if (typeof value !== 'string' || value.length > 200 || !/^https?:\/\/[^\s/]+(\/\S*)?$/.test(value)) return fail('An http or https address.');
@@ -263,6 +270,7 @@ function read(dir) {
     catch (error) { throw Error('settings.json: ' + error.message); }
     const config = effective(raw).config;
     if (!config.apiKey) throw Error('no_key');
+    delete config.adminKey; // only for the Usage tab's own calls, through secrets() (D61)
     return config;
 }
 
@@ -295,14 +303,21 @@ function keyHint(key) {
     return {set: true, hint: key.slice(0, 3) + '…' + key.slice(-4) + ' (' + key.length + ' characters)'};
 }
 
-// Settings for the page: every value except the key, which only comes back as keyHint().
+// Settings for the page: every value except the keys, which only come back as keyHint().
 function publicView(dir) {
     let raw, broken = null;
     try { raw = stored(dir); } catch (error) { raw = {}; broken = error.message; }
     const result = effective(raw);
     const values = {};
-    FIELDS.forEach(key => { if (key !== 'apiKey') values[key] = result.config[key]; });
-    return {values: values, key: keyHint(result.config.apiKey), problems: result.problems, broken: broken};
+    FIELDS.forEach(key => { if (SECRETS.indexOf(key) < 0) values[key] = result.config[key]; });
+    return {values: values, key: keyHint(result.config.apiKey), adminKey: keyHint(result.config.adminKey), problems: result.problems, broken: broken};
+}
+// The saved keys themselves, for the server's own calls: {apiKey, adminKey}, '' when unset.
+function secrets(dir) {
+    let raw;
+    try { raw = stored(dir); } catch (_) { raw = {}; }
+    const config = effective(raw).config;
+    return {apiKey: config.apiKey || '', adminKey: config.adminKey || ''};
 }
 
 // The schema as JSON for the page (patterns as strings, option lists resolved).
@@ -356,5 +371,5 @@ function updatePersona(dir, patch, options, packagedDir) {
     return {ok: true, errors: {}};
 }
 
-module.exports = {SCHEMA, DEFAULTS, PERSONA, dataDir, file, read, update, publicView, schemaView, check,
+module.exports = {SCHEMA, DEFAULTS, PERSONA, SECRETS, dataDir, file, read, update, publicView, secrets, schemaView, check,
     persona, updatePersona, packaged, atomic};

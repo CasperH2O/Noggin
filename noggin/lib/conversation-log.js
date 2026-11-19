@@ -123,7 +123,50 @@ function dropRecap(dataDir, names) {
     names.filter(n => RECAP_NAME.test(n)).forEach(n => remove(folder(dataDir), n));
 }
 
+// When a log started (its name, in this process's local time), or NaN.
+function startedAt(name) {
+    const m = /^conversation-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/.exec(name);
+    return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime() : NaN;
+}
+// The start of a log: enough for its startup entry.
+const HEAD_BYTES = 8192;
+function head(dir, name) {
+    const file = path.join(dir, name);
+    if (typeof fs.openSync !== 'function') return fs.readFileSync(file, 'utf8').slice(0, HEAD_BYTES);
+    const fd = fs.openSync(file, 'r');
+    try {
+        const buffer = Buffer.alloc ? Buffer.alloc(HEAD_BYTES) : new Buffer(HEAD_BYTES);
+        return buffer.toString('utf8', 0, fs.readSync(fd, buffer, 0, HEAD_BYTES, 0));
+    } finally { fs.closeSync(fd); }
+}
+// Conversations started since sinceMs, for the Usage tab (D66): a log whose startup says `resumed`
+// continues the one before it, so it is not counted. {count, since}: since is the oldest log's
+// start when the logs kept do not reach back to sinceMs, else null.
+function started(dataDir, sinceMs) {
+    const dir = folder(dataDir), logs = list(dataDir);
+    let count = 0;
+    logs.forEach(item => {
+        if (!(startedAt(item.name) >= sinceMs)) return;
+        let resumed = false;
+        try {
+            head(dir, item.name).split('\n').some(line => {
+                let e;
+                try { e = JSON.parse(line); } catch (_) { return false; }
+                if (e && e.kind === 'startup') { resumed = !!e.resumed; return true; }
+                return false;
+            });
+        } catch (_) { return; }
+        if (!resumed) count++;
+    });
+    // Pruned (prune()): the oldest kept log is where counting really starts.
+    const oldest = logs.length ? startedAt(logs[logs.length - 1].name) : NaN;
+    const bytes = logs.reduce((sum, item) => sum + item.bytes, 0);
+    const pruned = logs.length >= KEEP - 1 || bytes > TOTAL_BYTES - MAX_BYTES;
+    return {count: count, since: pruned && oldest > sinceMs ? oldest : null};
+}
+
 ConversationLog.list = list;
+ConversationLog.started = started;
 ConversationLog.transcripts = transcripts;
 ConversationLog.dropRecap = dropRecap;
 ConversationLog.pruneRecap = (dataDir, now) => { try { pruneRecap(folder(dataDir), now); } catch (_) {} };

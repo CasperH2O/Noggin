@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // The settings page's HTTP server: the page itself (web/) and a small JSON API over Noggin's
 // settings, persona and conversation logs, plus the custom skills BEacon has installed (read-only,
-// fetched here so the page never talks to BEacon). It runs inside Be's process (background.js), so every
+// fetched here so the page never talks to BEacon) and what Jibo's OpenAI use costs (lib/usage.js). It runs inside Be's process (background.js), so every
 // handler is short, never blocks for long and never throws into Be.
 // Open on the local network like BEacon (D6), with BEacon's guards: a request that changes
 // something must come from this page (Origin/Referer), be JSON and stay small; the key is write-only.
@@ -10,7 +10,7 @@
 const fs = require('fs'), path = require('path');
 const settings = require('./settings'), core = require('./core'), actions = require('./actions');
 const openai = require('./openai'), ConversationLog = require('./conversation-log'), describe = require('./describe');
-const memory = require('./memory');
+const memory = require('./memory'), usage = require('./usage');
 
 const BODY_MAX = 128 * 1024;
 const REQUEST_TIMEOUT_MS = 15000;
@@ -94,11 +94,14 @@ function create(options) {
     const now = options.now || (() => new Date());
     // Jibo's local time ({year, monthNum, date, ...}), as the skill sees it (background.js passes
     // actions.localTime with Jibo's home timezone).
-    const local = options.local || (ms => { const d = new Date(ms); return {year: d.getFullYear(), monthNum: d.getMonth(), date: d.getDate()}; });
+    const local = options.local || (ms => { const d = new Date(ms); return {year: d.getFullYear(), monthNum: d.getMonth(), date: d.getDate(), hour: d.getHours()}; });
     const http = options.http || require('http');
     const beacon = Object.assign({host: '127.0.0.1', port: Number(process.env.BEACON_PORT) || BEACON_PORT, timeoutMs: BEACON_TIMEOUT_MS}, options.beacon);
     let server = null, inventory = null;
     const sockets = new Set(), fetches = new Set();
+    const costs = options.usage || usage.create({request: options.usageRequest, now: () => now().getTime(), local: local, log: log});
+    // Set when a saved admin key turned out to have write access and was deleted (D62).
+    let removedAdminKey = false;
 
     // Everything the page shows; never the key itself.
     function state() {
@@ -108,21 +111,38 @@ function create(options) {
         const chars = core.instructions(persona.soul, persona.identity, now(), abilities).length;
         const limits = {}, packaged = {};
         Object.keys(settings.PERSONA).forEach(name => { limits[name] = settings.PERSONA[name].max; packaged[name] = settings.packaged(name); });
-        return {version: version, schema: settings.schemaView(), values: view.values, key: view.key, problems: view.problems, broken: view.broken,
+        return {version: version, schema: settings.schemaView(), values: view.values, key: view.key, adminKey: view.adminKey, problems: view.problems, broken: view.broken,
             persona: {soul: persona.soul, identity: persona.identity, facts: persona.facts, edited: persona.edited, max: limits, packaged: packaged},
             budget: {chars: chars, recommended: BUDGET}};
     }
 
-    // POST /api/settings {values, persona}: both are checked before either is saved.
+    // POST /api/settings {values, persona}: both are checked before either is saved. A new admin
+    // key is saved only once OpenAI shows it is read-only (D62).
     function save(body) {
+        const values = body.values || {}, adminKey = values.adminKey;
+        if (typeof adminKey !== 'string' || !adminKey.trim()) return saveNow(body);
+        const checked = saveNow(body, {dryRun: true});
+        if (checked) return checked;
+        return costs.check(adminKey.trim()).then(verdict => {
+            if (verdict.state === 'read-only') return saveNow(body);
+            log.warn('settings: admin key not saved (' + verdict.state + ')');
+            return {httpStatus: 400, body: {ok: false, errors: {values: {adminKey: verdict.error + ' It was not saved.'}, persona: {}}}};
+        });
+    }
+    // options.dryRun: only the refusal, or null when everything is fine.
+    function saveNow(body, options) {
         const dir = dataDir(), values = body.values || {}, persona = body.persona || {};
         const a = settings.update(dir, values, {dryRun: true}), b = settings.updatePersona(dir, persona, {dryRun: true});
         const moved = movedWithoutKey(dir, values);
         if (moved) a.errors.apiBase = moved;
         if (!a.ok || !b.ok || moved) return {httpStatus: 400, body: {ok: false, errors: {values: a.errors, persona: b.errors}}};
+        if (options && options.dryRun) return null;
         settings.update(dir, values);
         settings.updatePersona(dir, persona);
-        log.info('settings saved: ' + Object.keys(values).concat(Object.keys(persona)).filter(k => k !== 'apiKey').join(', ') + (values.apiKey ? ' (and the key)' : ''));
+        if (Object.prototype.hasOwnProperty.call(values, 'apiKey') || Object.prototype.hasOwnProperty.call(values, 'adminKey')) costs.forget();
+        if (values.adminKey) removedAdminKey = false;
+        const secret = settings.SECRETS.filter(k => values[k]);
+        log.info('settings saved: ' + Object.keys(values).concat(Object.keys(persona)).filter(k => settings.SECRETS.indexOf(k) < 0).join(', ') + (secret.length ? ' (and ' + secret.join(', ') + ')' : ''));
         return {httpStatus: 200, body: Object.assign({ok: true}, state())};
     }
 
@@ -237,6 +257,23 @@ function create(options) {
             .then(result => { describing = false; return result; }, error => { describing = false; throw error; });
     }
 
+    // ---- usage (the Usage tab, D60-D68) ----
+    // GET /api/usage[?refresh=1]: from the robot's memory when fresh, else from OpenAI (D64).
+    function usageView(refresh) {
+        const dir = dataDir(), keys = settings.secrets(dir), config = settings.publicView(dir).values;
+        if (!keys.adminKey) return Promise.resolve({ok: false, state: removedAdminKey ? 'removed' : 'no-key'});
+        return costs.report({adminKey: keys.adminKey, apiKey: keys.apiKey, config: config,
+            conversations: config.log ? since => ConversationLog.started(dir, since) : null,
+            onWriteKey: checked => {
+                // Only the key that was checked: a new one may have been saved meanwhile.
+                if (settings.secrets(dir).adminKey !== checked) return;
+                const done = settings.update(dir, {adminKey: null});
+                if (!done.ok) throw Error('settings: ' + JSON.stringify(done.errors));
+                removedAdminKey = true;
+                log.warn('usage: the saved admin key has write access; deleted from Jibo');
+            }}, refresh).then(view => view.state === 'write' ? {ok: false, state: 'removed'} : view);
+    }
+
     // ---- memory (the Memory tab, D49) ----
     function today() { return memory.dayOf(local(now().getTime())); }
     // GET /api/memory: the facts and summaries, newest summaries first, and how full the facts are.
@@ -309,7 +346,7 @@ function create(options) {
     }
 
     function route(req, res) {
-        const pathname = String(req.url || '/').split('?')[0];
+        const pathname = String(req.url || '/').split('?')[0], query = String(req.url || '').split('?')[1] || '';
         const method = req.method;
         if (!localHost(req)) return json(res, 403, {ok: false, error: 'open this page by Jibo\'s address'});
         if (method === 'GET' && STATIC[pathname]) return serveStatic(res, STATIC[pathname]);
@@ -318,6 +355,7 @@ function create(options) {
         if (method === 'GET' && pathname.indexOf('/api/logs/') === 0) return serveLog(res, pathname.slice('/api/logs/'.length));
         if (method === 'GET' && pathname === '/api/skills/found') return found().then(result => json(res, result.httpStatus, result.body));
         if (method === 'GET' && pathname === '/api/memory') return json(res, 200, memoryView());
+        if (method === 'GET' && pathname === '/api/usage') return usageView(/(^|&)refresh=1(&|$)/.test(query)).then(view => json(res, 200, view));
         if (method === 'GET' && pathname === '/api/memory/export') return exportMemory(res);
         const writes = {'/api/settings': save, '/api/test-key': testKey, '/api/apps/describe': describeApp,
             '/api/memory/fact': saveFact, '/api/memory/delete': deleteMemory, '/api/memory/clear': clearMemory};
@@ -369,6 +407,7 @@ function create(options) {
         sockets.forEach(socket => { try { socket.destroy(); } catch (_) {} });
         sockets.clear();
         fetches.forEach(abort => abort('stopped'));
+        costs.close();
         if (!s) return Promise.resolve();
         return new Promise(resolve => { try { s.close(() => resolve()); } catch (_) { resolve(); } });
     }

@@ -487,3 +487,79 @@ test('memory tab: list, add (as asked), edit, refuse, delete, export, forget eve
         assert.ok(fs.existsSync(path.join(r.dir, 'logs', 'conversation-20261119-110000.jsonl')), 'History keeps its logs');
     } finally { await r.stop(); }
 });
+
+// The Usage tab (D61-D64): a fake admin API in place of OpenAI.
+const SCOPE = 'You have insufficient permissions for this operation. Missing scopes: api.management.write.';
+function fakeAdmin() {
+    const calls = [];
+    const request = (method, pathname, key) => {
+        calls.push(method + ' ' + pathname.split('?')[0]);
+        const p = pathname.split('?')[0].replace('/v1/organization', ''), r = (status, json) => Promise.resolve({status, json});
+        if (method !== 'GET') return /write/.test(key) ? r(404, {}) : r(403, {error: SCOPE});
+        if (p === '/projects') return r(200, {data: [{id: 'proj_a'}]});
+        if (p === '/projects/proj_a/api_keys') return r(200, {data: [{id: 'key_jibo', name: 'Jibo', redacted_value: 'sk-****' + KEY.slice(-4)}]});
+        if (p === '/projects/proj_a/spend_limit') return r(404, {});
+        if (p === '/spend_limit') return r(200, {threshold_amount: 2000, enforcement: {status: 'inactive'}});
+        if (p === '/spend_alerts') return r(200, {data: []});
+        if (p === '/costs') return r(200, {data: [{start_time: Math.floor(Date.now() / 1000), results: [{line_item: 'gpt-realtime-2.1 text, input', quantity: 1000, quantity_unit: 'tokens', api_key_id: 'key_jibo', amount: {value: '0.004', currency: 'usd'}}]}]});
+        if (p === '/usage/completions') return r(200, {data: []});
+        return r(404, {});
+    };
+    request.calls = calls;
+    return request;
+}
+const READ_KEY = 'sk-admin-read-0123456789abcdefghij', WRITE_KEY = 'sk-admin-write-0123456789abcdefghij';
+
+test('saving an admin key: refused unless OpenAI shows it is read-only; never sent back', async () => {
+    const admin = fakeAdmin(), r = await running({usageRequest: admin});
+    try {
+        settings.update(r.dir, {apiKey: KEY});
+        let res = await r.call('POST', '/api/settings', {values: {adminKey: 'sk-proj-not-an-admin-key-0000'}});
+        assert.equal(res.status, 400);
+        assert.match((await res.json()).errors.values.adminKey, /sk-admin-/);
+        assert.equal(admin.calls.length, 0, 'not an admin key: nothing sent to OpenAI');
+        res = await r.call('POST', '/api/settings', {values: {adminKey: WRITE_KEY, silenceSeconds: 20}});
+        assert.equal(res.status, 400);
+        assert.match((await res.json()).errors.values.adminKey, /Read only.*not saved/);
+        assert.equal(settings.secrets(r.dir).adminKey, '');
+        assert.equal(settings.publicView(r.dir).values.silenceSeconds, 60, 'nothing else saved with it');
+        res = await r.call('POST', '/api/settings', {values: {adminKey: READ_KEY}});
+        assert.equal(res.status, 200);
+        const text = await res.text();
+        assert.ok(!text.includes(READ_KEY));
+        assert.equal(JSON.parse(text).adminKey.set, true);
+        assert.equal(settings.secrets(r.dir).adminKey, READ_KEY);
+        assert.ok(!(await (await r.call('GET', '/api/settings')).text()).includes(READ_KEY));
+        assert.ok(!r.logs.some(line => line.includes(READ_KEY) || line.includes(WRITE_KEY)), 'keys never in the log');
+        res = await r.call('POST', '/api/settings', {values: {adminKey: null}});
+        assert.equal(res.status, 200);
+        assert.equal(settings.secrets(r.dir).adminKey, '');
+    } finally { await r.stop(); }
+});
+
+test('GET /api/usage: no key, the dashboard from memory on a second look, a saved write key deleted', async () => {
+    const admin = fakeAdmin(), r = await running({usageRequest: admin});
+    try {
+        let view = await (await r.call('GET', '/api/usage')).json();
+        assert.equal(view.state, 'no-key');
+        assert.equal(admin.calls.length, 0);
+        settings.update(r.dir, {apiKey: KEY, adminKey: READ_KEY});
+        view = await (await r.call('GET', '/api/usage')).json();
+        assert.equal(view.ok, true, JSON.stringify(view));
+        assert.equal(view.budget.limit, 20);
+        assert.equal(view.perConversation.count, 0, 'logs on: counted (none yet)');
+        const calls = admin.calls.length;
+        view = await (await r.call('GET', '/api/usage?refresh=1')).json();
+        assert.equal(view.cached, true);
+        assert.equal(admin.calls.length, calls);
+        settings.update(r.dir, {adminKey: WRITE_KEY});
+        view = await (await r.call('GET', '/api/usage')).json();
+        assert.equal(view.state, 'removed');
+        assert.equal(settings.secrets(r.dir).adminKey, '', 'a key with write access does not stay on Jibo');
+        assert.equal((await (await r.call('GET', '/api/usage')).json()).state, 'removed', 'the warning stays until a new key is saved');
+        settings.update(r.dir, {log: false, adminKey: READ_KEY});
+        await r.call('POST', '/api/settings', {values: {adminKey: READ_KEY}});
+        view = await (await r.call('GET', '/api/usage')).json();
+        assert.equal(view.perConversation, null, 'logs off: no cost per conversation');
+    } finally { await r.stop(); }
+});

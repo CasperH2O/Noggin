@@ -40,6 +40,17 @@ On the robot: BEacon, Store, Upload ZIP, and choose `Noggin.zip` from a release.
   object; both run in Be's process). Learning starts with the first conversation that has it on. One conversation per pass, 3 tries, at most 60 calls a day; logs from
   before learning was switched on are never sent. Facts are about the household in the third
   person, since Noggin cannot tell people apart; private things are dropped in code.
+- **Usage** (`noggin/lib/usage.js`). The Usage tab shows what Jibo's OpenAI use costs, read with an
+  admin key that must be read-only: before it is saved, and before every fetch, Noggin tries a write
+  that cannot change anything (deleting an invite that does not exist) and goes on only when OpenAI
+  refuses it for the missing `api.management.write` scope. A key that gets further is refused, or
+  deleted from Jibo when it was saved. The admin key only goes to `api.openai.com`, never to the API
+  address setting. Jibo's own key is found by matching the API key's start and last four
+  characters against the project keys' redacted values. Money and tokens come from the costs
+  endpoint (per UTC day, by line item and key), the hour grid from completions usage, the budget from
+  the spend limit and alerts; prices are worked out from the bills. Answers are kept in memory for
+  15 minutes (Refresh: at most once a minute) and never written to disk; names and emails in
+  OpenAI's answers never reach the page.
 
 ## Data on the robot
 
@@ -48,7 +59,7 @@ On the robot: BEacon, Store, Upload ZIP, and choose `Noggin.zip` from a release.
 
 | Path | What |
 |---|---|
-| `settings.json` | only the settings that differ from the defaults, and the API key (mode 0600) |
+| `settings.json` | only the settings that differ from the defaults, the API key and the read-only admin key (mode 0600) |
 | `persona/SOUL.md`, `IDENTITY.md`, `FACTS.md` | an edited persona part; without it, the packaged one in `noggin/persona/` |
 | `logs/conversation-*.jsonl` | one text log per conversation, the newest 200, at most 2 MB each and 20 MB together |
 | `memory.json` | facts (at most 60 and 2,400 characters), conversation notes (14 days, at most 300) and the recap's bookkeeping (mode 0600, written through `memory.json.new` and a rename) |
@@ -62,7 +73,8 @@ The page uses these; anything on the local network can too (no login, like BEaco
 | Request | What |
 |---|---|
 | `GET /api/settings` | schema, values, persona (current and packaged), the instructions size; the key only as a hint |
-| `POST /api/settings` | `{values: {key: value or null}, persona: {soul or identity or facts: text or null}}`; `null` restores the default. All or nothing: `400` with `errors` per field |
+| `POST /api/settings` | `{values: {key: value or null}, persona: {soul or identity or facts: text or null}}`; `null` restores the default. All or nothing: `400` with `errors` per field. A new `adminKey` is saved only when OpenAI shows it is read-only |
+| `GET /api/usage`, `GET /api/usage?refresh=1` | the Usage tab: `{ok, state, days, models, features, budget, caching, whatIf, perConversation, hours, key, fetchedAt, cached}`; `state` is `ok`, `no-key`, `removed` (a saved key had write access and was deleted), `rejected`, `unknown`, `no-match`, `no-api-key` or `error` with `error`. `budget.spent` is what the limit counts: the project's spend for a project limit, else the account's |
 | `POST /api/test-key` | `{key}` or the saved key: Jibo asks OpenAI for its model list |
 | `GET /api/logs`, `GET /api/logs/<name>` | the conversation logs, newest first, and one log as JSON lines |
 | `GET /api/skills/found` | the custom skills installed through BEacon that could become extra apps, as `{found: [{name, pkg, label, about}], builtIn}` (`about`: the start of the skill's README); Noggin asks BEacon (`127.0.0.1:8123`, or `BEACON_PORT`) itself. `502` when BEacon does not answer within 4 s |
@@ -101,6 +113,7 @@ The tests and tools run on a current Node.
 | `noggin/lib/settings.js` | every setting (schema, defaults, checks) and the persona overrides |
 | `noggin/lib/server.js` | the settings page's HTTP server and API |
 | `noggin/lib/actions.js` | the tools the model may call and how each one runs |
+| `noggin/lib/usage.js` | the Usage tab: the read-only check, Jibo's key, costs, usage and limits from OpenAI |
 | `noggin/web/` | the settings page: plain HTML, CSS and JavaScript |
 | `noggin/persona/` | the default persona: SOUL, IDENTITY and FACTS |
 | `tests/` | unit tests (Node's test runner) |
