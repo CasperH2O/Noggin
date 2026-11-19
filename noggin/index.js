@@ -37,7 +37,10 @@ class Noggin extends BeSkill {
             if (current()) log.info('conversation ended: ' + reason);
         }, error => {
             if (current()) log.error('conversation failed: ' + (error && error.stack || error));
-        }).then(() => { if (current()) this.exit({noElementsOfSurprise: true}); });
+        }).then(() => {
+            recap.nudge();
+            if (current()) this.exit({noElementsOfSurprise: true});
+        });
     }
     say(text) {
         const speech = jibo.embodied && jibo.embodied.speech;
@@ -52,7 +55,7 @@ class Noggin extends BeSkill {
                 ? 'I need an OpenAI key before we can talk. Please add one on my settings page.'
                 : 'My settings look broken. Please check them on my settings page.').then(() => error.message);
         }
-        const persona = settings.persona(dataDir), log = new ConversationLog(dataDir, config.log !== false);
+        const persona = settings.persona(dataDir), log = new ConversationLog(dataDir, config.log !== false, {recap: !!(config.memory && config.memoryLearn)});
         // On the robot the microphone runs as a separate arecord process: an ALSA failure
         // inside BE's own process would take Jibo's face and body down with it.
         let session = null;
@@ -117,6 +120,7 @@ class Noggin extends BeSkill {
             if (watcher === w) watcher = null;
             cloudTurn.release();
             log.write({kind: 'comeback', ok: false, reason: reason, ms: ms});
+            recap.nudge();
         }});
     }
     close(done) {

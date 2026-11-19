@@ -219,3 +219,68 @@ test('tail: the end of a conversation that ended under 10 minutes ago, unless it
     memory.addSummary(state, {text: 'Talked about the cat.', day: '2026-11-19', at: t0, logs: [name]});
     assert.equal(recap.tail(dir, state, t0 + 4 * 60000, null), '');
 });
+
+const ConversationLog = require(path.join(source, 'noggin/lib/conversation-log.js'));
+
+test('logs off, learning on: a recap transcript with only who said what and how it ended, hidden from History', () => {
+    const dir = setup();
+    const off = new ConversationLog(dir, false);
+    off.write({kind: 'you', text: 'hi'});
+    assert.equal(off.file, null);
+    const t = new ConversationLog(dir, false, {recap: true});
+    t.write({kind: 'startup', resumed: false, ms: {a: 1}, boot: 'x'});
+    t.write({kind: 'you', turn: 1, text: 'my cat is Moos'});
+    t.write({kind: 'speak', text: 'not kept'});
+    t.write({kind: 'jibo', turn: 1, text: 'Moos!', usage: {input_tokens: 9}, reaction: 'happy'});
+    t.write({kind: 'session_end', reason: 'goodbye', turns: 1});
+    assert.match(path.basename(t.file), /^recap-\d{8}-\d{6}\.jsonl$/);
+    const kept = fs.readFileSync(t.file, 'utf8').trim().split('\n').map(l => JSON.parse(l));
+    assert.deepEqual(kept.map(e => { const c = Object.assign({}, e); delete c.t; return c; }),
+        [{kind: 'startup', resumed: false}, {kind: 'you', text: 'my cat is Moos'}, {kind: 'jibo', text: 'Moos!'}, {kind: 'session_end', reason: 'goodbye'}]);
+    assert.deepEqual(ConversationLog.list(dir), []);
+    assert.deepEqual(ConversationLog.transcripts(dir), [path.basename(t.file)]);
+    // A conversation log is never deleted as a recap transcript.
+    const real = new ConversationLog(dir, true);
+    real.write({kind: 'you', text: 'x'});
+    ConversationLog.dropRecap(dir, [path.basename(real.file)]);
+    assert.ok(fs.existsSync(real.file));
+});
+
+test('recap transcripts: deleted once recapped, and when learning is off; old ones pruned', async () => {
+    const dir = setup(), t0 = new Date(2026, 10, 19, 10, 0, 0).getTime();
+    let now = t0, cfg = config;
+    const deps = {dataDir: dir, get config() { return cfg; }, now: () => now, local, post: () => Promise.resolve({status: 200, json: answer({summary: 'Talked about Moos the cat.', add: [], remove: []})})};
+    await recap.pass(deps);
+    const file = path.join(dir, 'logs', stamp(t0 + 1000).replace('conversation-', 'recap-'));
+    fs.writeFileSync(file, log([{kind: 'you', text: 'my cat is Moos'}, {kind: 'session_end'}]));
+    fs.utimesSync(file, (t0 + 2000) / 1000, (t0 + 2000) / 1000);
+    now = t0 + 5000;
+    assert.deepEqual((await recap.pass(deps)).recapped, [path.basename(file)]);
+    assert.equal(fs.existsSync(file), false);
+    assert.equal(memory.read(dir).summaries[0].text, 'Talked about Moos the cat.');
+    fs.writeFileSync(file, log([{kind: 'you', text: 'private'}, {kind: 'session_end'}]));
+    cfg = Object.assign({}, config, {memoryLearn: false});
+    await recap.pass(deps);
+    assert.equal(fs.existsSync(file), false);
+
+    const old = path.join(dir, 'logs', 'recap-20261101-100000.jsonl');
+    fs.writeFileSync(old, '{}\n');
+    fs.utimesSync(old, (Date.now() - ConversationLog.RECAP_MS - 60000) / 1000, (Date.now() - ConversationLog.RECAP_MS - 60000) / 1000);
+    new ConversationLog(dir, false, {recap: true});
+    assert.equal(fs.existsSync(old), false);
+});
+
+test('nudge: the end of a conversation makes the loop look a few seconds later, once; stop removes the listener', async () => {
+    const dir = setup();
+    let reads = 0;
+    const loop = recap.loop({dataDir: dir, readConfig: () => { reads++; throw Error('no_key'); }, local, poster: () => () => Promise.resolve(),
+        log: {info() {}, warn() {}, error() {}}, firstMs: 1e9, nudgeMs: 10});
+    recap.nudge(); recap.nudge();
+    await new Promise(r => setTimeout(r, 40));
+    assert.equal(reads, 1);
+    loop.stop();
+    recap.nudge();
+    await new Promise(r => setTimeout(r, 40));
+    assert.equal(reads, 1);
+    assert.equal(process.listenerCount(recap.SIGNAL), 0);
+});

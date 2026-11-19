@@ -112,7 +112,7 @@ const SCHEMA = [
     {key: 'memory', type: 'bool', default: true, tab: 'memory', group: 'Memory', label: 'Memory',
         help: 'Jibo keeps facts about the household and short notes of recent conversations, and uses them when he talks.'},
     {key: 'memoryLearn', type: 'bool', default: true, tab: 'memory', group: 'Memory', label: 'Learn from conversations',
-        help: 'After each conversation, the fallback model writes a short note and picks out facts. This sends what was said to OpenAI once more. Off: Jibo only remembers what you ask him to.'},
+        help: 'After each conversation, the fallback model writes a short note and picks out facts. This sends what was said to OpenAI once more. With conversation logs off, Jibo keeps only what was said until the note is written. Off: Jibo only remembers what you ask him to.'},
 
     {key: 'log', type: 'bool', default: true, tab: 'history', group: 'History', label: 'Keep conversation logs',
         help: 'What was said, expressions and timings; never audio or the key.'}

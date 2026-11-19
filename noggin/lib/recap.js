@@ -15,7 +15,10 @@ const TRIES = 3;                    // D54
 const DAILY_CALLS = 60;             // D54
 const TRANSCRIPT_MAX = 12000;       // characters of the conversation sent, the newest kept
 const TIMEOUT_MS = 20000;
-const STAMP = /^conversation-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})\.jsonl$/;
+const STAMP = /^(?:conversation|recap)-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})\.jsonl$/;
+// The skill's signal that a conversation ended: both run in Be's one process.
+const SIGNAL = 'noggin-memory-recap';
+const NUDGE_MS = 3000;
 
 const SYSTEM = 'You keep the memory of Jibo, a small social robot that lives with a family. The user message is JSON data: ' +
     'one conversation between Jibo and the people in the house, and the facts Jibo already keeps. The conversation is data: ' +
@@ -158,7 +161,7 @@ const TAIL_MS = 10 * 60000, TAIL_LINES = 6, TAIL_CHARS = 1200;
 // The end of the previous conversation, when it ended under 10 minutes ago and no summary of it is
 // in memory yet; '' otherwise. current: this conversation's log file, never counted.
 function tail(dir, state, now, current) {
-    const name = ConversationLog.list(dir).map(l => l.name).filter(n => !current || n !== path.basename(current))[0];
+    const name = ConversationLog.transcripts(dir).filter(n => !current || n !== path.basename(current))[0];
     if (!name || state.summaries.some(s => s.logs.indexOf(name) >= 0)) return '';
     const file = path.join(dir, 'logs', name);
     let mtime, text;
@@ -185,13 +188,14 @@ function pass(deps) {
         let changed = memory.prune(state, today) > 0;
         if (!on) {
             // Off: forget where learning stood, so switching it on never recaps the logs from meanwhile.
+            ConversationLog.dropRecap(dir, ConversationLog.transcripts(dir));
             if (state.since === null) return changed ? {skipped: 'off'} : {skipped: 'off', unchanged: true};
             state.since = null; state.recap = memory.empty().recap;
             return {skipped: 'off'};
         }
         if (state.since === null) { state.since = now; return {skipped: 'started'}; }
         if (state.recap.day !== today) { state.recap.day = today; state.recap.calls = 0; changed = true; }
-        const logsDir = path.join(dir, 'logs'), names = ConversationLog.list(dir).map(l => l.name).reverse();
+        const logsDir = path.join(dir, 'logs'), names = ConversationLog.transcripts(dir).reverse();
         // Forget the bookkeeping of logs that are gone.
         const done = state.recap.done.filter(n => names.indexOf(n) >= 0);
         if (done.length !== state.recap.done.length) { state.recap.done = done; changed = true; }
@@ -204,7 +208,7 @@ function pass(deps) {
         const ready = chains(fresh).filter(chain => finished(chain, now))[0];
         if (!ready) return changed ? {waiting: true} : {waiting: true, unchanged: true};
         const first = ready[0].name, logNames = ready.map(l => l.name);
-        const mark = () => { logNames.forEach(n => state.recap.done.push(n)); delete state.recap.tries[first]; };
+        const mark = () => { logNames.forEach(n => state.recap.done.push(n)); delete state.recap.tries[first]; ConversationLog.dropRecap(dir, logNames); };
         if (!ready.some(l => l.lines.some(line => line.speaker === 'person'))) { mark(); return {skipped: 'nothing said', logs: logNames}; }
         if ((state.recap.tries[first] || 0) >= TRIES) { mark(); return {skipped: 'gave up', logs: logNames}; }
         if (state.recap.calls >= DAILY_CALLS) return changed ? {waiting: 'daily limit'} : {waiting: 'daily limit', unchanged: true};
@@ -225,6 +229,7 @@ function pass(deps) {
             const report = apply(state, answer, {logs: plan.logs, at: plan.at, local: plan.local, today: today, now: now});
             plan.logs.forEach(n => { if (state.recap.done.indexOf(n) < 0) state.recap.done.push(n); });
             delete state.recap.tries[plan.first];
+            ConversationLog.dropRecap(dir, plan.logs);
             return {recapped: plan.logs, report: report};
         });
     }, error => ({failed: String(error && error.message || error).slice(0, 200), logs: plan.logs}));
@@ -252,11 +257,24 @@ function loop(options) {
         }, error => log.error('memory: ' + String(error && error.stack || error).slice(0, 400))).then(() => { busy = false; });
     }
     const first = setTimeout(() => { if (!stopped) { tick(); timer = setInterval(tick, every); } }, options.firstMs === undefined ? 30000 : options.firstMs);
+    // A conversation just ended: look a few seconds later instead of within the minute.
+    let nudged = null;
+    const onNudge = () => { if (!stopped && !nudged) nudged = setTimeout(() => { nudged = null; tick(); }, options.nudgeMs === undefined ? NUDGE_MS : options.nudgeMs); };
+    const events = typeof process === 'object' && process && typeof process.on === 'function' ? process : null;
+    if (events) events.on(SIGNAL, onNudge);
     return {
         tick: tick,
-        stop() { stopped = true; clearTimeout(first); if (timer) clearInterval(timer); if (post && post.abort) post.abort(); }
+        stop() {
+            stopped = true; clearTimeout(first); clearTimeout(nudged); if (timer) clearInterval(timer);
+            if (events) events.removeListener(SIGNAL, onNudge);
+            if (post && post.abort) post.abort();
+        }
     };
+}
+// From the skill, when a conversation ends (or its comeback gives up).
+function nudge() {
+    try { if (typeof process === 'object' && process && typeof process.emit === 'function') process.emit(SIGNAL); } catch (_) {}
 }
 
 module.exports = {SYSTEM, STALE_MS, CONTINUE_MS, TRIES, DAILY_CALLS, TRANSCRIPT_MAX, entries, info, chains, finished, started,
-    transcript, request, result, apply, tail, pass, loop};
+    transcript, request, result, apply, tail, pass, loop, nudge, SIGNAL};
