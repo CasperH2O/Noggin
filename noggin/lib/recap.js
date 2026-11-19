@@ -99,7 +99,7 @@ function transcript(chain) {
     while (i > 0 && chars + lines[i - 1].text.length <= TRANSCRIPT_MAX) { i--; chars += lines[i].text.length; }
     return lines.slice(i).map(l => ({speaker: l.speaker, text: l.text.slice(0, 2000)}));
 }
-// The conversation's day and the 13 after it, "Friday, November 21: 2026-11-21": a small model
+// The conversation's day and the 13 after it, each with its weekday and YYYY-MM-DD: a small model
 // looks a weekday up more reliably than it counts.
 function nextDays(at) {
     const out = [];
