@@ -109,6 +109,11 @@ const SCHEMA = [
     {key: 'actionTimeoutMs', type: 'number', min: 1000, max: 60000, unit: 'ms', default: 6000, tab: 'skills', group: 'Jibo\'s skills', label: 'Handover timeout',
         help: 'How long another skill may take to open.', advanced: true},
 
+    {key: 'memory', type: 'bool', default: true, tab: 'memory', group: 'Memory', label: 'Memory',
+        help: 'Jibo keeps facts about the household and short notes of recent conversations, and uses them when he talks.'},
+    {key: 'memoryLearn', type: 'bool', default: true, tab: 'memory', group: 'Memory', label: 'Learn from conversations',
+        help: 'After each conversation, the fallback model writes a short note and picks out facts. This sends what was said to OpenAI once more. Off: Jibo only remembers what you ask him to.'},
+
     {key: 'log', type: 'bool', default: true, tab: 'history', group: 'History', label: 'Keep conversation logs',
         help: 'What was said, expressions and timings; never audio or the key.'}
 ];

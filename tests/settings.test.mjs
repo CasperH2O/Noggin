@@ -17,7 +17,7 @@ test('schema: every field has a key, type, tab, group and label, and its default
     for (const field of settings.SCHEMA) {
         assert.ok(field.key && field.type && field.tab && field.group && field.label, JSON.stringify(field));
         assert.ok(!keys.has(field.key), 'duplicate ' + field.key); keys.add(field.key);
-        assert.ok(['brain', 'behaviour', 'skills', 'history'].includes(field.tab), field.key + ' tab');
+        assert.ok(['brain', 'behaviour', 'skills', 'memory', 'history'].includes(field.tab), field.key + ' tab');
         if (field.key === 'apiKey') continue;
         if (field.default === null) continue;
         assert.equal(settings.check(field, field.default).error, undefined, field.key + ' default');
