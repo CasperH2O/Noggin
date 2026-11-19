@@ -36,8 +36,8 @@ On the robot: BEacon, Store, Upload ZIP, and choose `Noggin.zip` from a release.
   serve explicit requests; `recall` searches older notes by keyword. After a conversation ends,
   `background.js` sends its text and the current facts to the Fallback model once (Responses API,
   strict JSON) and stores the note and the fact changes. It looks every minute, and a few seconds
-  after the skill signals the end of a conversation (a `noggin-memory-recap` event on `process`;
-  both run in Be's process). One conversation per pass, 3 tries, at most 60 calls a day; logs from
+  after the skill signals the end of a conversation (a listener list on the shared `global`
+  object; both run in Be's process). Learning starts with the first conversation that has it on. One conversation per pass, 3 tries, at most 60 calls a day; logs from
   before learning was switched on are never sent. Facts are about the household in the third
   person, since Noggin cannot tell people apart; private things are dropped in code.
 

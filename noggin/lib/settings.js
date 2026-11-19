@@ -203,9 +203,14 @@ function atomic(target, data) {
     makeDir(path.dirname(target));
     const temporary = target + '.new';
     try { fs.unlinkSync(temporary); } catch (_) {}
-    const fd = fs.openSync(temporary, 'wx', 384);
-    try { fs.writeFileSync(fd, data); fs.fsyncSync(fd); }
-    finally { fs.closeSync(fd); }
+    if (typeof fs.fsyncSync !== 'function' || typeof fs.openSync !== 'function') {
+        // The simulator's fs has no file descriptors: write, then rename, without the fsync.
+        fs.writeFileSync(temporary, data, {mode: 384});
+    } else {
+        const fd = fs.openSync(temporary, 'wx', 384);
+        try { fs.writeFileSync(fd, data); fs.fsyncSync(fd); }
+        finally { fs.closeSync(fd); }
+    }
     fs.renameSync(temporary, target);
 }
 

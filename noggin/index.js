@@ -63,7 +63,7 @@ class Noggin extends BeSkill {
             ? new Microphone.ProcessMicrophone({device: config.micDevice, onExit: report => session && session.onMicExit(report)})
             : new Microphone(jibo, {onTrack: name => log.write({kind: 'microphone_track', event: name})});
         const abilities = config.actions ? {apps: Object.keys(actions.apps(config)), config: config} : null;
-        const notes = this.memoryNotes(dataDir, config, back, log);
+        const notes = this.memoryNotes(dataDir, config, back, log, openedAt);
         const instructions = core.instructions(persona.soul, persona.identity, actions.localTime(jibo), abilities, notes);
         session = this.session = new Conversation({
             jibo: jibo, config: config, log: log,
@@ -93,9 +93,10 @@ class Noggin extends BeSkill {
     }
     // What Jibo remembers, for the end of the instructions (D44): null when memory is off or
     // cannot be read. After a handover the comeback carries the conversation, so no tail (D52).
-    memoryNotes(dataDir, config, back, log) {
+    memoryNotes(dataDir, config, back, log, openedAt) {
         if (!config.memory) return null;
         try {
+            if (config.memoryLearn) recap.start(dataDir, openedAt);
             const state = memory.read(dataDir), today = memory.dayOf(actions.localTime(jibo));
             const tail = back ? '' : recap.tail(dataDir, state, Date.now(), log.file);
             return {learn: config.memoryLearn !== false, block: memory.block(state, today, tail)};

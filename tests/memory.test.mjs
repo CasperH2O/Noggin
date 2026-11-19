@@ -247,3 +247,14 @@ test('addFact: saying a dated fact again never makes it permanent; a later date 
     memory.addFact(state, 'Sam likes jazz', 'auto', {expires: '2026-11-27'});
     assert.equal(state.facts[1].expires, undefined, 'a lasting fact stays lasting');
 });
+
+test('update: works with an fs that has no file descriptors (the simulator), still 0600 and complete', () => {
+    const dir = tmp(), fsyncSync = fs.fsyncSync;
+    try {
+        fs.fsyncSync = undefined;
+        memory.update(dir, state => memory.addFact(state, 'Sam likes jazz', 'asked'));
+    } finally { fs.fsyncSync = fsyncSync; }
+    assert.equal(memory.read(dir).facts[0].text, 'Sam likes jazz.');
+    assert.equal(fs.statSync(path.join(dir, 'memory.json')).mode & 0o777, 0o600);
+    assert.ok(!fs.existsSync(path.join(dir, 'memory.json.new')));
+});

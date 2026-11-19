@@ -16,8 +16,9 @@ const DAILY_CALLS = 60;             // D54
 const TRANSCRIPT_MAX = 12000;       // characters of the conversation sent, the newest kept
 const TIMEOUT_MS = 20000;
 const STAMP = /^(?:conversation|recap)-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})\.jsonl$/;
-// The skill's signal that a conversation ended: both run in Be's one process.
-const SIGNAL = 'noggin-memory-recap';
+// The skill's signal that a conversation ended: both run in Be's one process and share its global
+// object, where the loop keeps its listener under this name (D59).
+const SIGNAL = 'nogginMemoryRecap';
 const NUDGE_MS = 3000;
 
 const SYSTEM = 'You keep the memory of Jibo, a small social robot that lives with a family. The user message is JSON data: ' +
@@ -315,21 +316,38 @@ function loop(options) {
         if (stopped || nudged) return;
         nudged = setTimeout(() => { nudged = null; tick(); }, nudgeMs);
     };
-    const events = typeof process === 'object' && process && typeof process.on === 'function' ? process : null;
-    if (events) events.on(SIGNAL, onNudge);
+    const listeners = hub();
+    if (listeners) listeners.push(onNudge);
     return {
         tick: tick,
         stop() {
             stopped = true; clearTimeout(first); clearTimeout(nudged); if (timer) clearInterval(timer);
-            if (events) events.removeListener(SIGNAL, onNudge);
+            if (listeners && listeners.indexOf(onNudge) >= 0) listeners.splice(listeners.indexOf(onNudge), 1);
             if (post && post.abort) post.abort();
         }
     };
 }
+// The listeners on the shared global object, or null where there is none.
+function hub() {
+    const shared = typeof global === 'object' && global ? global : null;
+    if (!shared) return null;
+    if (!Array.isArray(shared[SIGNAL])) shared[SIGNAL] = [];
+    return shared[SIGNAL];
+}
 // From the skill, when a conversation ends (or its comeback gives up).
 function nudge() {
-    try { if (typeof process === 'object' && process && typeof process.emit === 'function') process.emit(SIGNAL); } catch (_) {}
+    const listeners = hub();
+    (listeners ? listeners.slice() : []).forEach(fn => { try { fn(); } catch (_) {} });
+}
+// Learning starts now (D54), unless it already has: the skill calls it as a conversation opens,
+// so the first conversation after an install is learned from too, before the loop's first pass.
+function start(dir, now) {
+    memory.update(dir, state => {
+        if (state.since !== null) return {unchanged: true};
+        state.since = now;
+        return {};
+    });
 }
 
 module.exports = {STALE_MS, CONTINUE_MS, TRIES, DAILY_CALLS, TRANSCRIPT_MAX, LINE_MAX, entries, info, chains, finished,
-    request, result, apply, tail, pass, loop, nudge, SIGNAL};
+    request, result, apply, tail, pass, loop, nudge, start, SIGNAL};

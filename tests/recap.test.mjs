@@ -315,5 +315,18 @@ test('nudge: the end of a conversation makes the loop look a few seconds later, 
     recap.nudge();
     await new Promise(r => setTimeout(r, 40));
     assert.equal(reads, 1);
-    assert.equal(process.listenerCount(recap.SIGNAL), 0);
+    assert.equal(global[recap.SIGNAL].length, 0);
+});
+
+test('start: the skill starts learning as a conversation opens, so the first conversation after an install is learned from', async () => {
+    const dir = setup(), t0 = new Date(2026, 10, 19, 10, 0, 0).getTime();
+    recap.start(dir, t0);
+    recap.start(dir, t0 + 99999);
+    assert.equal(memory.read(dir).since, t0, 'only the first start counts');
+    writeLog(dir, t0, [{kind: 'you', text: 'my cat is called Moos'}, {kind: 'session_end', reason: 'goodbye'}], t0 + 20000);
+    let calls = 0;
+    const r = await recap.pass({dataDir: dir, config, now: () => t0 + 30000, local,
+        post: () => { calls++; return Promise.resolve({status: 200, json: answer({summary: 'Someone named the cat Moos.', add: [], remove: []})}); }});
+    assert.equal(r.recapped.length, 1);
+    assert.equal(calls, 1);
 });
