@@ -13,6 +13,8 @@ const TOTAL_BYTES = 20 * 1024 * 1024;
 const NAME = /^conversation-\d{8}-\d{6}\.jsonl$/;
 const RECAP_NAME = /^recap-\d{8}-\d{6}\.jsonl$/;
 const RECAP_KEEP = 50;
+const RECAP_MAX_BYTES = 256 * 1024; // text only, so far less than a full log
+const RECAP_TOTAL_BYTES = 4 * 1024 * 1024;
 const RECAP_MS = 2 * 86400000;      // a recap transcript never kept longer than this
 // What a recap transcript keeps of each entry, by kind.
 const RECAP_FIELDS = {startup: ['resumed'], you: ['text'], jibo: ['text'], handover: ['comeback'], comeback: ['ok', 'reason'], session_end: ['reason']};
@@ -46,7 +48,7 @@ class ConversationLog {
             entry = kept;
         }
         let line = JSON.stringify(Object.assign({t: new Date().toISOString()}, entry)) + '\n';
-        const full = this.bytes + Buffer.byteLength(line, 'utf8') > MAX_BYTES;
+        const full = this.bytes + Buffer.byteLength(line, 'utf8') > (this.recapOnly ? RECAP_MAX_BYTES : MAX_BYTES);
         if (full) line = JSON.stringify({t: new Date().toISOString(), kind: 'log_full', bytes: this.bytes}) + '\n';
         try { fs.appendFileSync(this.file, line, {mode: 384}); this.bytes += Buffer.byteLength(line, 'utf8'); }
         catch (_) { this.file = null; }
@@ -67,15 +69,23 @@ function prune(dir) {
 }
 
 // Recap transcripts the recap never got to (learning switched off, a key that stopped working):
-// the oldest beyond RECAP_KEEP, and any older than RECAP_MS.
+// any older than RECAP_MS go, then the oldest until there are fewer than RECAP_KEEP and a full
+// new one still fits in RECAP_TOTAL_BYTES.
 function pruneRecap(dir, now) {
-    const names = fs.readdirSync(dir).filter(n => RECAP_NAME.test(n)).sort();
-    names.forEach((n, i) => {
-        let old = false;
-        try { old = now - fs.statSync(path.join(dir, n)).mtime.getTime() > RECAP_MS; } catch (_) {}
-        if (old || i < names.length - RECAP_KEEP) { try { fs.unlinkSync(path.join(dir, n)); } catch (_) {} }
+    const kept = [];
+    fs.readdirSync(dir).filter(n => RECAP_NAME.test(n)).sort().forEach(n => {
+        let stat = null;
+        try { stat = fs.statSync(path.join(dir, n)); } catch (_) { return; }
+        if (now - stat.mtime.getTime() > RECAP_MS) remove(dir, n);
+        else kept.push({name: n, bytes: stat.size});
     });
+    let total = kept.reduce((sum, k) => sum + k.bytes, 0);
+    for (let i = 0; i < kept.length && (kept.length - i >= RECAP_KEEP || total + RECAP_MAX_BYTES > RECAP_TOTAL_BYTES); i++) {
+        remove(dir, kept[i].name);
+        total -= kept[i].bytes;
+    }
 }
+function remove(dir, name) { try { fs.unlinkSync(path.join(dir, name)); } catch (_) {} }
 
 function makeDir(dir) {
     try { fs.mkdirSync(dir, 448); }
@@ -108,17 +118,18 @@ function transcripts(dataDir) {
     const at = n => n.replace(/^[a-z]+-/, '');
     return names.sort((a, b) => at(a) < at(b) ? 1 : at(a) > at(b) ? -1 : 0);
 }
-function isRecap(name) { return RECAP_NAME.test(name); }
 // Delete recap transcripts (only those: a conversation log is never deleted here).
 function dropRecap(dataDir, names) {
-    names.filter(isRecap).forEach(n => { try { fs.unlinkSync(path.join(folder(dataDir), n)); } catch (_) {} });
+    names.filter(n => RECAP_NAME.test(n)).forEach(n => remove(folder(dataDir), n));
 }
 
 ConversationLog.list = list;
 ConversationLog.transcripts = transcripts;
-ConversationLog.isRecap = isRecap;
 ConversationLog.dropRecap = dropRecap;
+ConversationLog.pruneRecap = (dataDir, now) => { try { pruneRecap(folder(dataDir), now); } catch (_) {} };
 ConversationLog.RECAP_KEEP = RECAP_KEEP;
+ConversationLog.RECAP_MAX_BYTES = RECAP_MAX_BYTES;
+ConversationLog.RECAP_TOTAL_BYTES = RECAP_TOTAL_BYTES;
 ConversationLog.RECAP_MS = RECAP_MS;
 ConversationLog.read = read;
 ConversationLog.KEEP = KEEP;

@@ -66,7 +66,10 @@ function info(name, list) {
         else if (e.kind === 'comeback') { waiting = false; continues = !!e.ok; }
         else if (e.kind === 'session_end') ended = true;
     });
-    result.status = !ended ? 'open' : waiting ? 'waiting' : continues ? 'continues' : 'done';
+    if (!ended) result.status = 'open';
+    else if (waiting) result.status = 'waiting';
+    else if (continues) result.status = 'continues';
+    else result.status = 'done';
     return result;
 }
 // Logs (oldest first, each {name, resumed, status, lines, mtime}) grouped into conversations.
@@ -92,12 +95,15 @@ function started(name) {
 }
 
 // ---- the request ----
+const LINE_MAX = 2000;
+// The conversation's lines, each cut to LINE_MAX, the newest that fit in TRANSCRIPT_MAX.
 function transcript(chain) {
     let lines = [];
     chain.forEach(log => { lines = lines.concat(log.lines); });
+    lines = lines.map(l => ({speaker: l.speaker, text: l.text.slice(0, LINE_MAX)}));
     let chars = 0, i = lines.length;
     while (i > 0 && chars + lines[i - 1].text.length <= TRANSCRIPT_MAX) { i--; chars += lines[i].text.length; }
-    return lines.slice(i).map(l => ({speaker: l.speaker, text: l.text.slice(0, 2000)}));
+    return lines.slice(i);
 }
 // The conversation's day and the 13 after it, each with its weekday and YYYY-MM-DD: a small model
 // looks a weekday up more reliably than it counts.
@@ -183,8 +189,9 @@ function tail(dir, state, now, current) {
     if (!name || state.summaries.some(s => s.logs.indexOf(name) >= 0)) return '';
     const file = path.join(dir, 'logs', name);
     let mtime, text;
-    try { mtime = fs.statSync(file).mtime.getTime(); text = fs.readFileSync(file, 'utf8'); } catch (_) { return ''; }
+    try { mtime = fs.statSync(file).mtime.getTime(); } catch (_) { return ''; }
     if (now - mtime > TAIL_MS) return '';
+    try { text = fs.readFileSync(file, 'utf8'); } catch (_) { return ''; }
     const lines = info(name, entries(text)).lines.slice(-TAIL_LINES);
     if (!lines.length) return '';
     let body = lines.map(l => (l.speaker === 'person' ? 'Person: ' : 'Jibo: ') + l.text).join('\n');
@@ -195,8 +202,19 @@ function tail(dir, state, now, current) {
 }
 
 // ---- one pass of the loop ----
+// A transcript as recap needs it: what info() says, and when the log last changed.
+function readLog(logsDir, name) {
+    let mtime = 0, text = '';
+    try {
+        mtime = fs.statSync(path.join(logsDir, name)).mtime.getTime();
+        text = fs.readFileSync(path.join(logsDir, name), 'utf8');
+    } catch (_) {}
+    return Object.assign(info(name, entries(text)), {mtime: mtime});
+}
+function saidSomething(chain) { return chain.some(log => log.lines.some(line => line.speaker === 'person')); }
 // deps: {dataDir, config, post(route, body, timeoutMs) -> Promise<{status, json}>, now(), local(ms) -> local
-// time, log}. Resolves what it did: {skipped} | {waiting} | {recapped, report} | {failed}.
+// time, stopped() -> true once the loop stopped}. Resolves what it did: {skipped} | {waiting} |
+// {recapped, report} | {failed}.
 function pass(deps) {
     const config = deps.config, dir = deps.dataDir, now = deps.now ? deps.now() : Date.now();
     const today = memory.dayOf(deps.local(now));
@@ -212,22 +230,26 @@ function pass(deps) {
             return {skipped: 'off'};
         }
         if (state.since === null) { state.since = now; return {skipped: 'started'}; }
+        ConversationLog.pruneRecap(dir, now);
         if (state.recap.day !== today) { state.recap.day = today; state.recap.calls = 0; changed = true; }
         const logsDir = path.join(dir, 'logs'), names = ConversationLog.transcripts(dir).reverse();
         // Forget the bookkeeping of logs that are gone.
         const done = state.recap.done.filter(n => names.indexOf(n) >= 0);
         if (done.length !== state.recap.done.length) { state.recap.done = done; changed = true; }
         Object.keys(state.recap.tries).forEach(n => { if (names.indexOf(n) < 0) { delete state.recap.tries[n]; changed = true; } });
-        const fresh = names.filter(n => done.indexOf(n) < 0 && (started(n) || 0) >= state.since - 1000).map(n => {
-            let mtime = 0, text = '';
-            try { mtime = fs.statSync(path.join(logsDir, n)).mtime.getTime(); text = fs.readFileSync(path.join(logsDir, n), 'utf8'); } catch (_) {}
-            return Object.assign(info(n, entries(text)), {mtime: mtime});
-        });
+        // Only logs that started after learning was switched on, and not recapped yet.
+        const fresh = names
+            .filter(n => done.indexOf(n) < 0 && (started(n) || 0) >= state.since - 1000)
+            .map(n => readLog(logsDir, n));
         const ready = chains(fresh).filter(chain => finished(chain, now))[0];
         if (!ready) return changed ? {waiting: true} : {waiting: true, unchanged: true};
         const first = ready[0].name, logNames = ready.map(l => l.name);
-        const mark = () => { logNames.forEach(n => state.recap.done.push(n)); delete state.recap.tries[first]; ConversationLog.dropRecap(dir, logNames); };
-        if (!ready.some(l => l.lines.some(line => line.speaker === 'person'))) { mark(); return {skipped: 'nothing said', logs: logNames}; }
+        const mark = () => {
+            logNames.forEach(n => state.recap.done.push(n));
+            delete state.recap.tries[first];
+            ConversationLog.dropRecap(dir, logNames);
+        };
+        if (!saidSomething(ready)) { mark(); return {skipped: 'nothing said', logs: logNames}; }
         if ((state.recap.tries[first] || 0) >= TRIES) { mark(); return {skipped: 'gave up', logs: logNames}; }
         if (state.recap.calls >= DAILY_CALLS) return changed ? {waiting: 'daily limit'} : {waiting: 'daily limit', unchanged: true};
         state.recap.calls++;
@@ -239,6 +261,8 @@ function pass(deps) {
     if (!plan) return Promise.resolve(decided);
     const body = request(config.fallbackModel, plan.chain, plan.facts, plan.local);
     return Promise.resolve().then(() => deps.post('/responses', body, TIMEOUT_MS)).then(r => {
+        // A stopped loop (an update started the next revision) leaves memory.json to the new one.
+        if (deps.stopped && deps.stopped()) return {failed: 'stopped', logs: plan.logs};
         if (!r || r.status !== 200) return {failed: 'HTTP ' + (r && r.status), logs: plan.logs};
         const answer = result(r.json);
         if (answer.error) return {failed: answer.error, logs: plan.logs};
@@ -253,6 +277,14 @@ function pass(deps) {
     }, error => ({failed: String(error && error.message || error).slice(0, 200), logs: plan.logs}));
 }
 
+// A recap for the system log: "recapped 2 log(s); summary kept, 1 fact(s) added, 0 removed".
+function describe(r) {
+    const report = r.report;
+    let text = 'recapped ' + r.recapped.length + ' log(s); summary ' + (report.summary ? 'kept' : 'none') +
+        ', ' + report.added.length + ' fact(s) added, ' + report.removed.length + ' removed';
+    if (report.refused.length) text += ', refused: ' + report.refused.join('; ');
+    return text;
+}
 // The loop background.js runs: a pass every minute, never two at once (D54).
 // options: {dataDir, readConfig() (throws when there is no usable config), poster(config), local, log, everyMs, firstMs}.
 function loop(options) {
@@ -264,11 +296,12 @@ function loop(options) {
         try { config = options.readConfig(); } catch (_) { config = null; }
         if (!config) return;
         // A new key or address gets a new connection.
-        if (!post || key !== config.apiKey + ' ' + config.apiBase) { post = options.poster(config); key = config.apiKey + ' ' + config.apiBase; }
+        const connection = config.apiKey + ' ' + config.apiBase;
+        if (!post || key !== connection) { post = options.poster(config); key = connection; }
         busy = true;
-        Promise.resolve().then(() => pass({dataDir: options.dataDir, config: config, post: post, local: options.local})).then(r => {
-            if (r.recapped) log.info('memory: recapped ' + r.recapped.length + ' log(s); summary ' + (r.report.summary ? 'kept' : 'none') +
-                ', ' + r.report.added.length + ' fact(s) added, ' + r.report.removed.length + ' removed' + (r.report.refused.length ? ', refused: ' + r.report.refused.join('; ') : ''));
+        const deps = {dataDir: options.dataDir, config: config, post: post, local: options.local, stopped: () => stopped};
+        Promise.resolve().then(() => pass(deps)).then(r => {
+            if (r.recapped) log.info('memory: ' + describe(r));
             else if (r.failed) log.warn('memory: recap failed: ' + r.failed);
             else if (r.skipped === 'gave up') log.warn('memory: gave up on ' + r.logs.join(', '));
             else if (r.waiting === 'daily limit') log.warn('memory: daily recap limit reached');
@@ -277,7 +310,11 @@ function loop(options) {
     const first = setTimeout(() => { if (!stopped) { tick(); timer = setInterval(tick, every); } }, options.firstMs === undefined ? 30000 : options.firstMs);
     // A conversation just ended: look a few seconds later instead of within the minute.
     let nudged = null;
-    const onNudge = () => { if (!stopped && !nudged) nudged = setTimeout(() => { nudged = null; tick(); }, options.nudgeMs === undefined ? NUDGE_MS : options.nudgeMs); };
+    const nudgeMs = options.nudgeMs === undefined ? NUDGE_MS : options.nudgeMs;
+    const onNudge = () => {
+        if (stopped || nudged) return;
+        nudged = setTimeout(() => { nudged = null; tick(); }, nudgeMs);
+    };
     const events = typeof process === 'object' && process && typeof process.on === 'function' ? process : null;
     if (events) events.on(SIGNAL, onNudge);
     return {
@@ -294,5 +331,5 @@ function nudge() {
     try { if (typeof process === 'object' && process && typeof process.emit === 'function') process.emit(SIGNAL); } catch (_) {}
 }
 
-module.exports = {SYSTEM, STALE_MS, CONTINUE_MS, TRIES, DAILY_CALLS, TRANSCRIPT_MAX, entries, info, chains, finished, started,
-    transcript, request, result, apply, tail, pass, loop, nudge, SIGNAL};
+module.exports = {STALE_MS, CONTINUE_MS, TRIES, DAILY_CALLS, TRANSCRIPT_MAX, LINE_MAX, entries, info, chains, finished,
+    request, result, apply, tail, pass, loop, nudge, SIGNAL};

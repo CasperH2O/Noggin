@@ -29,6 +29,18 @@ On the robot: BEacon, Store, Upload ZIP, and choose `Noggin.zip` from a release.
 - **Settings** (`noggin/lib/settings.js`). One schema lists every setting with its default, type,
   limits, label and help; the server checks against it and the page is built from it.
 
+- **Memory** (`noggin/lib/memory.js`, `noggin/lib/recap.js`). Jibo keeps facts about the household
+  and a one-line note per conversation (kept 14 days) in `memory.json`. At session start the facts
+  and the newest notes go at the end of the instructions, within a fixed budget, and stay the same
+  all session so the prompt cache keeps them cheap. The tools `remember`, `forget` and `recall`
+  serve explicit requests; `recall` searches older notes by keyword. After a conversation ends,
+  `background.js` sends its text and the current facts to the Fallback model once (Responses API,
+  strict JSON) and stores the note and the fact changes. It looks every minute, and a few seconds
+  after the skill signals the end of a conversation (a `noggin-memory-recap` event on `process`;
+  both run in Be's process). One conversation per pass, 3 tries, at most 60 calls a day; logs from
+  before learning was switched on are never sent. Facts are about the household in the third
+  person, since Noggin cannot tell people apart; private things are dropped in code.
+
 ## Data on the robot
 
 `/opt/jibo/Knowledge/beacon/custom-skills/noggin/` (in a development checkout,
@@ -38,7 +50,10 @@ On the robot: BEacon, Store, Upload ZIP, and choose `Noggin.zip` from a release.
 |---|---|
 | `settings.json` | only the settings that differ from the defaults, and the API key (mode 0600) |
 | `persona/SOUL.md`, `IDENTITY.md`, `FACTS.md` | an edited persona part; without it, the packaged one in `noggin/persona/` |
-| `logs/conversation-*.jsonl` | one text log per conversation, the newest 200, at most 2 MB each |
+| `logs/conversation-*.jsonl` | one text log per conversation, the newest 200, at most 2 MB each and 20 MB together |
+| `memory.json` | facts (at most 60 and 2,400 characters), conversation notes (14 days, at most 300) and the recap's bookkeeping (mode 0600, written through `memory.json.new` and a rename) |
+| `memory.json.bad` | a `memory.json` that could not be read, kept aside once |
+| `logs/recap-*.jsonl` | only with logs off and learning on: who said what, until the recap is done; not shown in History; at most 50, 256 KB each, 4 MB together, 2 days |
 
 ## Settings API
 
@@ -51,6 +66,11 @@ The page uses these; anything on the local network can too (no login, like BEaco
 | `POST /api/test-key` | `{key}` or the saved key: Jibo asks OpenAI for its model list |
 | `GET /api/logs`, `GET /api/logs/<name>` | the conversation logs, newest first, and one log as JSON lines |
 | `GET /api/skills/found` | the custom skills installed through BEacon that could become extra apps, as `{found: [{name, pkg, label, about}], builtIn}` (`about`: the start of the skill's README); Noggin asks BEacon (`127.0.0.1:8123`, or `BEACON_PORT`) itself. `502` when BEacon does not answer within 4 s |
+| `GET /api/memory` | `{facts: [{id, text, source, expires}], summaries: [{id, text, when}], used, max}`; `source` is `auto` (learned) or `asked` |
+| `POST /api/memory/fact` | `{text, expires?}` adds a fact, `{id, text, expires?}` changes one; either way it counts as asked. `400` with `error` when it is too long, reads like an instruction or the facts are full |
+| `POST /api/memory/delete` | `{kind: 'fact' or 'summary', id}`; `404` when it is gone |
+| `POST /api/memory/clear` | `{confirm: true}`: every fact and note goes, and the conversations so far are never recapped |
+| `GET /api/memory/export` | the facts and notes as a JSON download |
 | `POST /api/apps/describe` | `{pkg}` → `{about, model}`: one line on what an installed skill does, written by the Fallback model from the README BEacon has, with the saved key. Only a package name comes in. One call at a time (`429` while busy); `404` when the skill is not installed through BEacon, `422` without a README or for an answer that reads like instructions, `502` when OpenAI or BEacon does not answer |
 
 A `POST` must be JSON (`Content-Type: application/json`) and must not name another site in its

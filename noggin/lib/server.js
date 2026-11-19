@@ -92,6 +92,9 @@ function create(options) {
     const post = options.post || openai.post, describeTimeoutMs = options.describeTimeoutMs || DESCRIBE_TIMEOUT_MS;
     let describing = false;
     const now = options.now || (() => new Date());
+    // Jibo's local time ({year, monthNum, date, ...}), as the skill sees it (background.js passes
+    // actions.localTime with Jibo's home timezone).
+    const local = options.local || (ms => { const d = new Date(ms); return {year: d.getFullYear(), monthNum: d.getMonth(), date: d.getDate()}; });
     const http = options.http || require('http');
     const beacon = Object.assign({host: '127.0.0.1', port: Number(process.env.BEACON_PORT) || BEACON_PORT, timeoutMs: BEACON_TIMEOUT_MS}, options.beacon);
     let server = null, inventory = null;
@@ -235,15 +238,14 @@ function create(options) {
     }
 
     // ---- memory (the Memory tab, D49) ----
-    function today() { const d = now(); return memory.dayOf({year: d.getFullYear(), monthNum: d.getMonth(), date: d.getDate()}); }
+    function today() { return memory.dayOf(local(now().getTime())); }
     // GET /api/memory: the facts and summaries, newest summaries first, and how full the facts are.
     function memoryView() {
         const state = memory.read(dataDir()), day = today();
         return {ok: true,
-            facts: state.facts.map(f => ({id: f.id, text: f.text, source: f.source, expires: f.expires || null, created: f.created})),
+            facts: state.facts.map(f => ({id: f.id, text: f.text, source: f.source, expires: f.expires || null})),
             summaries: state.summaries.slice().reverse().map(s => ({id: s.id, text: s.text, when: memory.label(s, day)})),
-            used: state.facts.reduce((sum, f) => sum + f.text.length + 3, 0), max: memory.FACT_CHARS, maxFacts: memory.MAX_FACTS,
-            keepDays: memory.KEEP_DAYS, learning: state.since !== null};
+            used: state.facts.reduce((sum, f) => sum + f.text.length + 3, 0), max: memory.FACT_CHARS};
     }
     const MEMORY_ERRORS = {full: 'Jibo\'s memory is full: delete a fact first.', 'too long': 'At most ' + memory.FACT_MAX + ' characters.',
         empty: 'Write the fact first.', 'not a plain memory': 'That reads like an instruction, a link or code, not a fact.',
@@ -273,11 +275,17 @@ function create(options) {
         if (!r.ok) return {httpStatus: 404, body: {ok: false, error: MEMORY_ERRORS.unknown}};
         return memoryView();
     }
-    // POST /api/memory/clear {confirm: true}: every fact and note goes. Which logs were already
-    // recapped is kept, so nothing old is recapped again.
+    // POST /api/memory/clear {confirm: true}: every fact and note goes, and every conversation so
+    // far counts as recapped (its recap transcript deleted), so nothing from before comes back.
     function clearMemory(body) {
         if (body.confirm !== true) return {httpStatus: 400, body: {ok: false, error: 'not confirmed'}};
-        memory.update(dataDir(), state => { state.facts = []; state.summaries = []; });
+        const dir = dataDir(), all = ConversationLog.transcripts(dir);
+        memory.update(dir, state => {
+            state.facts = []; state.summaries = [];
+            state.recap.done = all.slice(0, memory.MAX_DONE);
+            state.recap.tries = {};
+        });
+        ConversationLog.dropRecap(dir, all);
         log.info('memory: everything forgotten on the settings page');
         return memoryView();
     }

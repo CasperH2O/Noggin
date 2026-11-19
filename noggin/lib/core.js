@@ -371,14 +371,18 @@ function personaText(soul, identity) {
 // {apps: [names], config} when Noggin offers its tools (lib/actions.js); config's cloudSkills
 // says which cloud tools are named. memory: null (off) or {learn, block}: block (lib/memory.js)
 // goes after everything else and stays the same all session, so the prompt cache keeps it (D44).
+// The memory sentences of the setup: what Jibo's notes are, how they grow, and which tools he has.
+function memoryNotes(memory, tools) {
+    let text = 'Your memory is the notes after this setup; never claim to remember something that is not in them. ';
+    if (memory.learn) text += 'After each conversation you keep a short note of it and the facts worth keeping, so what people tell you stays with you. ';
+    if (tools) text += 'When someone asks you to remember or forget something, use remember or forget; for an earlier conversation your notes do not cover, use recall. ';
+    else if (!memory.learn) text += 'You cannot keep anything new yourself. ';
+    return text;
+}
 function voiceSetup(now, abilities, memory) {
     const at = actions.describeTime(now);
     const memoryTools = !!(memory && abilities && abilities.config && abilities.config.memory === true);
-    const notes = !memory ? ''
-        : 'Your memory is the notes after this setup; never claim to remember something that is not in them. ' +
-          (memory.learn ? 'After each conversation you keep a short note of it and the facts worth keeping, so what people tell you stays with you. ' : '') +
-          (memoryTools ? 'When someone asks you to remember or forget something, use remember or forget; for an earlier conversation your notes do not cover, use recall. '
-              : memory.learn ? '' : 'You cannot keep anything new yourself. ');
+    const notes = memory ? memoryNotes(memory, memoryTools) : '';
     const none = memory ? 'tools or files: never claim to look something up or do something you cannot. '
         : 'tools, files or saved memory: never claim to look something up, remember something for later, or do something you cannot. ';
     // Which tools, and who speaks for each, come from the tool table (lib/actions.js).

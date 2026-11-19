@@ -63,26 +63,43 @@ function read(dir) {
     }
     return sane(value);
 }
-// Only well-formed entries survive a read, whatever the file holds.
+// Only well-formed entries survive a read, whatever the file holds: no duplicate ids or facts,
+// every cap applied, and `next` above every id in use.
+const ID = /^[fs]\d+$/;
+const LOG_NAME = /^(conversation|recap)-\d{8}-\d{6}\.jsonl$/;
+const MAX_DONE = 1000;      // more than all logs and recap transcripts that can exist at once
+const MAX_TRIES = 300;
+const list = value => Array.isArray(value) ? value : [];
+function saneFact(f) {
+    if (!f || !ID.test(f.id) || typeof f.text !== 'string' || !f.text) return null;
+    const fact = {id: f.id, text: f.text.slice(0, FACT_MAX), source: f.source === 'asked' ? 'asked' : 'auto', created: Number(f.created) || 0};
+    if (typeof f.updated === 'number') fact.updated = f.updated;
+    if (typeof f.expires === 'string' && DAY.test(f.expires)) fact.expires = f.expires;
+    return fact;
+}
+function saneSummary(s) {
+    if (!s || !ID.test(s.id) || typeof s.text !== 'string' || !s.text || typeof s.day !== 'string' || !DAY.test(s.day)) return null;
+    return {id: s.id, text: s.text.slice(0, SUMMARY_MAX), day: s.day, part: typeof s.part === 'string' ? s.part : '', at: Number(s.at) || 0,
+        logs: list(s.logs).filter(n => typeof n === 'string').slice(0, 20)};
+}
 function sane(value) {
-    const state = empty();
+    const state = empty(), ids = {}, texts = {};
+    const unique = (entry, textKey) => {
+        if (!entry || ids[entry.id] || (textKey && texts[textKey])) return false;
+        ids[entry.id] = true;
+        if (textKey) texts[textKey] = true;
+        return true;
+    };
     state.since = typeof value.since === 'number' ? value.since : null;
-    state.next = typeof value.next === 'number' && value.next > 0 ? Math.floor(value.next) : 1;
-    const id = /^[fs]\d+$/;
-    state.facts = (Array.isArray(value.facts) ? value.facts : []).filter(f => f && id.test(f.id) && typeof f.text === 'string' && f.text)
-        .map(f => {
-            const fact = {id: f.id, text: f.text.slice(0, FACT_MAX), source: f.source === 'asked' ? 'asked' : 'auto', created: Number(f.created) || 0};
-            if (typeof f.updated === 'number') fact.updated = f.updated;
-            if (typeof f.expires === 'string' && DAY.test(f.expires)) fact.expires = f.expires;
-            return fact;
-        }).slice(0, MAX_FACTS);
-    state.summaries = (Array.isArray(value.summaries) ? value.summaries : []).filter(s => s && id.test(s.id) && typeof s.text === 'string' && s.text && typeof s.day === 'string' && DAY.test(s.day))
-        .map(s => ({id: s.id, text: s.text.slice(0, SUMMARY_MAX), day: s.day, part: typeof s.part === 'string' ? s.part : '', at: Number(s.at) || 0,
-            logs: Array.isArray(s.logs) ? s.logs.filter(n => typeof n === 'string').slice(0, 20) : []}))
-        .slice(-MAX_SUMMARIES);
+    state.facts = list(value.facts).map(saneFact).filter(f => unique(f, f && key(f.text))).slice(0, MAX_FACTS);
+    state.summaries = list(value.summaries).map(saneSummary).filter(s => unique(s, null)).slice(-MAX_SUMMARIES);
+    const highest = Object.keys(ids).reduce((max, id) => Math.max(max, +id.slice(1)), 0);
+    state.next = Math.max(highest + 1, typeof value.next === 'number' ? Math.floor(value.next) : 1);
     const recap = value.recap && typeof value.recap === 'object' ? value.recap : {};
-    state.recap.done = Array.isArray(recap.done) ? recap.done.filter(n => typeof n === 'string').slice(-1000) : [];
-    state.recap.tries = recap.tries && typeof recap.tries === 'object' && !Array.isArray(recap.tries) ? recap.tries : {};
+    state.recap.done = list(recap.done).filter(n => typeof n === 'string' && LOG_NAME.test(n)).slice(-MAX_DONE);
+    const tries = recap.tries && typeof recap.tries === 'object' ? recap.tries : {};
+    Object.keys(tries).filter(n => LOG_NAME.test(n) && isFinite(tries[n]) && tries[n] > 0).slice(0, MAX_TRIES)
+        .forEach(n => { state.recap.tries[n] = Math.floor(tries[n]); });
     state.recap.day = typeof recap.day === 'string' ? recap.day : null;
     state.recap.calls = Number(recap.calls) || 0;
     return state;
@@ -126,7 +143,12 @@ function clean(text, max) {
 // ---- dates (local to Jibo's home: a {year, monthNum, date, hour} from actions.localTime) ----
 const two = n => (n < 10 ? '0' : '') + n;
 function dayOf(t) { return t.year + '-' + two(t.monthNum + 1) + '-' + two(t.date); }
-function partOf(t) { return t.hour < 5 ? 'night' : t.hour < 12 ? 'morning' : t.hour < 18 ? 'afternoon' : 'evening'; }
+function partOf(t) {
+    if (t.hour < 5) return 'night';
+    if (t.hour < 12) return 'morning';
+    if (t.hour < 18) return 'afternoon';
+    return 'evening';
+}
 function dayNumber(day) { const p = day.split('-'); return Date.UTC(+p[0], +p[1] - 1, +p[2]) / DAY_MS; }
 // "Today", "Yesterday", "On Monday" (this week), "On November 3".
 function when(day, today) {
@@ -148,7 +170,8 @@ function label(summary, today) {
 function factChars(facts) { return facts.reduce((sum, f) => sum + f.text.length + 3, 0); }
 function newId(state, prefix) { return prefix + state.next++; }
 // Add a fact: {ok, fact} or {ok: false, reason: 'empty'|'too long'|'not a plain memory'|'full'|'expired'}.
-// The same fact again is {ok, fact, duplicate} (and becomes 'asked' when it was asked again).
+// The same fact again is {ok, fact, duplicate} (and becomes 'asked' when it was asked again). Saying
+// it again never changes when it ends, except that a later date moves the end.
 // When the facts are full, the oldest automatic facts give way; asked facts never do (D45).
 function addFact(state, text, source, options) {
     options = options || {};
@@ -161,8 +184,7 @@ function addFact(state, text, source, options) {
     const same = state.facts.filter(f => key(f.text) === k)[0];
     if (same) {
         if (source === 'asked' && same.source !== 'asked') { same.source = 'asked'; same.updated = now; }
-        if (expires && same.expires) same.expires = expires;
-        if (!expires) delete same.expires;
+        if (expires && same.expires && expires > same.expires) same.expires = expires;
         return {ok: true, fact: same, duplicate: true};
     }
     const fact = {id: newId(state, 'f'), text: cleaned.text, source: source, created: now};
@@ -279,6 +301,10 @@ function block(state, today, tail) {
 }
 
 // ---- the tools (remember, forget, recall) ----
+const REMEMBER_ERRORS = {
+    full: 'your memory is full: someone has to forget something first, or remove notes on your settings page',
+    expired: 'that day has passed'
+};
 // args from actions.plan: {op, text, expires} | {op, about} | {op, query}. The result goes to the
 // model as it is. The memory block in the instructions stays as it was for the session (D44), so a
 // change says so.
@@ -289,8 +315,7 @@ function tool(dir, args, today) {
             return added.ok ? added : {unchanged: true, ok: false, reason: added.reason};
         });
         if (r.ok) return {ok: true, saved: r.fact.text, already: r.duplicate ? 'this was already saved' : undefined};
-        return {ok: false, error: r.reason === 'full' ? 'your memory is full: someone has to forget something first, or remove notes on your settings page'
-            : r.reason === 'expired' ? 'that day has passed' : 'that cannot be saved as a fact (' + r.reason + ')'};
+        return {ok: false, error: REMEMBER_ERRORS[r.reason] || 'that cannot be saved as a fact (' + r.reason + ')'};
     }
     if (args.op === 'forget') {
         const r = update(dir, state => {
@@ -311,6 +336,6 @@ function tool(dir, args, today) {
     return {ok: false, error: 'unknown memory action'};
 }
 
-module.exports = {FILE, FACT_MAX, FACT_CHARS, MAX_FACTS, SUMMARY_MAX, SUMMARY_CHARS, LOADED_SUMMARIES, KEEP_DAYS, MAX_SUMMARIES,
-    file, empty, read, write, update, key, words, clean, dayOf, partOf, when, label, addFact, editFact, removeFact, removeSummary,
+module.exports = {FACT_MAX, FACT_CHARS, MAX_FACTS, SUMMARY_CHARS, LOADED_SUMMARIES, KEEP_DAYS, MAX_SUMMARIES, MAX_DONE,
+    empty, read, write, update, clean, dayOf, partOf, label, addFact, editFact, removeFact, removeSummary,
     addSummary, prune, search, findFacts, loaded, block, tool};

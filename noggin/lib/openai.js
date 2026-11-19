@@ -114,20 +114,39 @@ function pageJson(config, route, body) {
         .then(response => response.json().catch(() => null).then(json => ({status: response.status, json: json, ms: Date.now() - started})));
 }
 // post(route, body, timeoutMs) -> {status, json, ms}: Node https, and the page's fetch from the
-// first time Node fails (the simulator has no Node TLS). abort() cancels a Node request.
+// first time Node's TLS fails (the simulator). Being offline is not a reason to switch: those errors
+// just fail this call. Either way the call ends within timeoutMs, and abort() ends it at once.
+const OFFLINE = ['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ECONNRESET', 'ENETUNREACH', 'EHOSTUNREACH', 'ETIMEDOUT'];
 function poster(config) {
     let usePage = false, cancel = null;
-    const post = (route, body, timeoutMs) => usePage ? pageJson(config, route, body)
-        : nodeJson(config, route, body, timeoutMs, abort => { cancel = abort; }).then(r => {
-            cancel = null;
+    function timed(promise, timeoutMs) {
+        return new Promise((resolve, reject) => {
+            const end = error => { clearTimeout(timer); cancel = null; reject(error); };
+            const timer = setTimeout(() => end(Error('timeout')), timeoutMs || 20000);
+            cancel = reason => end(Error(reason || 'stopped'));
+            promise.then(value => { clearTimeout(timer); cancel = null; resolve(value); }, end);
+        });
+    }
+    function viaNode(route, body, timeoutMs) {
+        let abortNode = null;
+        const request = nodeJson(config, route, body, timeoutMs, abort => { abortNode = abort; }).then(r => {
             if (r.json === null) throw Error('unreadable response');
             return r;
-        }).catch(error => {
-            cancel = null;
-            if (error && error.message === 'stopped') throw error;
-            usePage = true;
-            return pageJson(config, route, body);
         });
+        return timed(request, timeoutMs).catch(error => {
+            if (abortNode) abortNode('stopped');
+            throw error;
+        });
+    }
+    const post = (route, body, timeoutMs) => {
+        if (usePage) return timed(pageJson(config, route, body), timeoutMs);
+        return viaNode(route, body, timeoutMs).catch(error => {
+            const offline = error && (OFFLINE.indexOf(error.code) >= 0 || /^(timeout|stopped)$/.test(error.message));
+            if (offline) throw error;
+            usePage = true;
+            return timed(pageJson(config, route, body), timeoutMs);
+        });
+    };
     post.abort = () => { if (cancel) cancel('stopped'); };
     return post;
 }

@@ -20,18 +20,23 @@ Noggin needs BEam 3.1.9 or newer, an internet connection and your own OpenAI API
 
 During a conversation Jibo can tell you the time and date on his clock, set and cancel timers and alarms, change his volume, dance, play music and the radio, take a photo, open his apps, and ask his cloud for the weather, the news, your calendar, your commute, a personal report, a surprise or a picture of something. When another skill or app takes over, Noggin comes back afterwards with "Anything else?" (within 5 minutes; you can change that). Music and the radio end the conversation.
 
+Jibo remembers. After a conversation he keeps a short note of it for two weeks, and the facts worth keeping about your household (names, pets, likes, plans), so he can come back to them next time. Say "remember that…", "forget that…" or "what did we talk about last week?" to ask him directly. Several people talk to Jibo and he cannot tell who is who, so what he remembers is shared by the whole household; he leaves out health details, codes, money, addresses and anything you ask him to keep secret.
+
 ## The settings page
 
-The page has five tabs. Changes apply to the next conversation.
+The page has six tabs. Changes apply to the next conversation.
 
 - **Brain:** your OpenAI key and the models Noggin uses.
 - **Persona:** who Jibo is: his soul, his identity and more facts about him. Everything can be changed, and **Reset to default** brings back Noggin's own text. The default persona keeps every answer right for a young child.
 - **Behaviour:** the greeting, when a conversation ends, expressions and dances. Advanced settings for the microphone are folded away.
 - **Skills:** which of Jibo's skills and cloud features Noggin may use, and up to 8 extra apps it may open by name, each with a line on what it does so Noggin knows when to open it. Scan finds the skills you installed through BEacon and fills in that line from their description; add each with one click.
+- **Memory:** the facts Jibo keeps and his notes of recent conversations: add, change or delete them, export them, or make him forget everything. Switch memory, or learning from conversations, off here.
 - **History:** recent conversations as text, to read or download. Never audio, never the key.
 
 The settings page has no password, like BEacon: anyone on your home network can open it. The key is never shown again once saved.
 
 ## Privacy
 
-What you say goes to OpenAI to be answered, with your key. Noggin keeps conversation logs on Jibo as text (you can turn this off on the History tab) and sends them nowhere.
+What you say goes to OpenAI to be answered, with your key. Noggin keeps conversation logs on Jibo as text (you can turn this off on the History tab); the logs themselves are sent nowhere.
+
+With **Learn from conversations** on (the default), each finished conversation's text and the facts Jibo keeps go to OpenAI once more, so a small model can write the note and pick out facts. The notes and facts stay on Jibo. With conversation logs off, Jibo keeps only what was said until that note is written. Turn learning off on the Memory tab and Jibo only remembers what you ask him to; turn memory off and he remembers nothing.

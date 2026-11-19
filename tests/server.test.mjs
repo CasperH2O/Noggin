@@ -443,13 +443,17 @@ test('close() aborts a describe call in progress', async () => {
 const memory = require(path.join(source, 'noggin/lib/memory.js'));
 
 test('memory tab: list, add (as asked), edit, refuse, delete, export, forget everything; writes only from the page', async () => {
-    const r = await running({now: () => new Date(2026, 10, 19, 12, 0)});
+    // Jibo's home timezone decides "today", not the process clock (here one day ahead of it).
+    const r = await running({now: () => new Date(2026, 10, 18, 12, 0), local: () => ({year: 2026, monthNum: 10, date: 19})});
     try {
         memory.update(r.dir, state => {
             memory.addFact(state, 'Sam likes jazz', 'auto');
             memory.addSummary(state, {text: 'Talked about jazz.', day: '2026-11-18', part: 'evening', at: 1, logs: []});
             state.recap.done = ['conversation-20261118-200000.jsonl'];
         });
+        fs.mkdirSync(path.join(r.dir, 'logs'));
+        fs.writeFileSync(path.join(r.dir, 'logs', 'conversation-20261119-110000.jsonl'), '{"kind":"you","text":"waiting for its recap"}\n');
+        fs.writeFileSync(path.join(r.dir, 'logs', 'recap-20261119-113000.jsonl'), '{"kind":"you","text":"logs off"}\n');
         let view = await (await r.call('GET', '/api/memory')).json();
         assert.deepEqual(view.facts.map(f => [f.text, f.source]), [['Sam likes jazz.', 'auto']]);
         assert.deepEqual(view.summaries.map(s => [s.when, s.text]), [['Yesterday evening', 'Talked about jazz.']]);
@@ -477,6 +481,9 @@ test('memory tab: list, add (as asked), edit, refuse, delete, export, forget eve
         assert.equal((await r.call('POST', '/api/memory/clear', {})).status, 400);
         view = await (await r.call('POST', '/api/memory/clear', {confirm: true})).json();
         assert.deepEqual([view.facts.length, view.summaries.length], [0, 0]);
-        assert.deepEqual(memory.read(r.dir).recap.done, ['conversation-20261118-200000.jsonl'], 'what was recapped stays recapped');
+        // Nothing said before the clear comes back: every transcript counts as recapped, recap transcripts are gone.
+        assert.deepEqual(memory.read(r.dir).recap.done, ['recap-20261119-113000.jsonl', 'conversation-20261119-110000.jsonl']);
+        assert.ok(!fs.existsSync(path.join(r.dir, 'logs', 'recap-20261119-113000.jsonl')));
+        assert.ok(fs.existsSync(path.join(r.dir, 'logs', 'conversation-20261119-110000.jsonl')), 'History keeps its logs');
     } finally { await r.stop(); }
 });

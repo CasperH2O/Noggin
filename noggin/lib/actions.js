@@ -243,6 +243,8 @@ const VOICES = {
 };
 const CLOCK_ABILITY = 'use your timer and alarm';
 const MEMORY_ABILITY = 'keep, forget and look up memories';
+// The argument each memory tool takes.
+const MEMORY_FIELD = {remember: 'text', forget: 'about', recall: 'query'};
 const enumOf = list => ({type: 'object', additionalProperties: false, required: ['name'], properties: {name: {type: 'string', enum: list}}});
 // The tools, each with who speaks (`voice`) and the ability it gives (for the instructions).
 const TOOLS = [
@@ -464,7 +466,7 @@ function plan(name, argsText, config) {
     }
     if (name === 'remember' || name === 'forget' || name === 'recall') {
         if (!config || config.memory !== true) return {kind: 'error', error: 'memory is switched off for Jibo'};
-        const field = name === 'remember' ? 'text' : name === 'forget' ? 'about' : 'query';
+        const field = MEMORY_FIELD[name];
         const text = String(args[field] || '').trim().slice(0, 300);
         if (!text) return {kind: 'error', error: 'no ' + field + ' given'};
         const out = {op: name};

@@ -24,6 +24,14 @@ function logger(api) {
     return createLog(api && api.log);
 }
 
+// Jibo's local time in his home timezone, as the skill sees it.
+function localTime() {
+    const actions = require('./lib/actions');
+    let jibo = null;
+    try { jibo = require('jibo'); } catch (_) {}
+    return ms => actions.localTime(jibo, ms);
+}
+
 function start(api) {
     const log = logger(api);
     stopped = false;
@@ -40,6 +48,7 @@ function start(api) {
             dataDir: settings.dataDir,
             webDir: path.join(__dirname, 'web'),
             version: require('./package.json').version,
+            local: localTime(),
             log: log,
             http: http
         });
@@ -53,14 +62,12 @@ function start(api) {
 
 function startRecap(log) {
     try {
-        const settings = require('./lib/settings'), actions = require('./lib/actions');
-        let jibo = null;
-        try { jibo = require('jibo'); } catch (_) {}
+        const settings = require('./lib/settings');
         recapLoop = require('./lib/recap').loop({
             dataDir: settings.dataDir(),
             readConfig: () => settings.read(settings.dataDir()),
             poster: config => require('./lib/openai').poster(config),
-            local: ms => actions.localTime(jibo, ms),
+            local: localTime(),
             log: log
         });
     } catch (error) {

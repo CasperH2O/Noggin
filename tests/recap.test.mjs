@@ -61,7 +61,11 @@ test('request: transcript and facts as a JSON value, newest lines kept, strict a
     assert.equal(data.conversation_date, '2026-11-19');
     assert.equal(data.conversation_started, 'Wednesday, November 19, 2026, 7:05 PM');
     assert.deepEqual(data.known_facts, [{id: 'f1', text: 'Sam is vegetarian.', source: 'asked'}]);
-    assert.deepEqual(data.conversation.map(l => l.speaker), ['person', 'jibo']);
+    // Each line is cut to LINE_MAX before the budget, so a huge line never empties the transcript.
+    assert.deepEqual(data.conversation.map(l => l.speaker), ['person', 'person', 'jibo']);
+    assert.equal(data.conversation[0].text.length, recap.LINE_MAX);
+    const huge = recap.request('m', [{lines: [{speaker: 'person', text: 'y'.repeat(recap.TRANSCRIPT_MAX * 2)}]}], [], {year: 2026, monthNum: 10, date: 19, hour: 9, minute: 0});
+    assert.equal(JSON.parse(huge.input[1].content).conversation.length, 1);
     assert.equal(r.text.format.strict, true);
     assert.deepEqual(r.text.format.schema.properties.add.items.required, ['text', 'expires', 'private']);
     assert.equal(data.next_days[0], 'today, Thursday, November 19: 2026-11-19');
@@ -188,7 +192,7 @@ test('pass: switched off, nothing is sent and switching on again skips what was 
     assert.equal(calls, 0);
 });
 
-test('loop: one pass at a time, nothing without a config, stop aborts the request in flight', async () => {
+test('loop: one pass at a time, nothing without a config, stop aborts the request in flight and writes nothing after', async () => {
     const dir = setup(), lines = [];
     const quiet = {info: m => lines.push(m), warn: m => lines.push(m), error: m => lines.push(m)};
     let release, aborted = 0, posted = 0, cfg = null;
@@ -211,7 +215,9 @@ test('loop: one pass at a time, nothing without a config, stop aborts the reques
     assert.equal(aborted, 1);
     release({status: 200, json: answer({summary: 'Someone said hello.', add: [], remove: []})});
     await new Promise(r => setTimeout(r, 20));
-    assert.match(lines.join('\n'), /recapped 1 log/);
+    // The next revision of background.js owns memory.json now.
+    assert.equal(memory.read(dir).summaries.length, 0);
+    assert.match(lines.join('\n'), /recap failed: stopped/);
 });
 
 test('tail: the end of a conversation that ended under 10 minutes ago, unless it has a summary or is this one', () => {
@@ -228,6 +234,16 @@ test('tail: the end of a conversation that ended under 10 minutes ago, unless it
 });
 
 const ConversationLog = require(path.join(source, 'noggin/lib/conversation-log.js'));
+
+test('a recap transcript stops at RECAP_MAX_BYTES', () => {
+    const dir = setup(), t = new ConversationLog(dir, false, {recap: true}), file = t.file;
+    for (let i = 0; i < 400; i++) t.write({kind: 'you', text: 'z'.repeat(1000)});
+    const lines = fs.readFileSync(file, 'utf8').trim().split('\n');
+    // The closing log_full marker is the only line past the cap.
+    assert.ok(fs.statSync(file).size <= ConversationLog.RECAP_MAX_BYTES + 100);
+    assert.equal(t.file, null);
+    assert.equal(JSON.parse(lines.at(-1)).kind, 'log_full');
+});
 
 test('logs off, learning on: a recap transcript with only who said what and how it ended, hidden from History', () => {
     const dir = setup();
@@ -269,6 +285,16 @@ test('recap transcripts: deleted once recapped, and when learning is off; old on
     cfg = Object.assign({}, config, {memoryLearn: false});
     await recap.pass(deps);
     assert.equal(fs.existsSync(file), false);
+
+    // Within two days: at most RECAP_KEEP files, and a full new one always fits in RECAP_TOTAL_BYTES.
+    const full = 'x'.repeat(ConversationLog.RECAP_MAX_BYTES);
+    for (let i = 0; i < ConversationLog.RECAP_KEEP + 10; i++) fs.writeFileSync(path.join(dir, 'logs', 'recap-20261119-' + String(100000 + i) + '.jsonl'), full);
+    ConversationLog.pruneRecap(dir, Date.now());
+    const left = fs.readdirSync(path.join(dir, 'logs')).filter(n => /^recap-/.test(n));
+    assert.ok(left.length < ConversationLog.RECAP_KEEP);
+    assert.ok((left.length + 1) * ConversationLog.RECAP_MAX_BYTES <= ConversationLog.RECAP_TOTAL_BYTES);
+    assert.ok(left.includes('recap-20261119-' + String(100000 + ConversationLog.RECAP_KEEP + 9) + '.jsonl'), 'the newest stay');
+    left.forEach(n => fs.unlinkSync(path.join(dir, 'logs', n)));
 
     const old = path.join(dir, 'logs', 'recap-20261101-100000.jsonl');
     fs.writeFileSync(old, '{}\n');

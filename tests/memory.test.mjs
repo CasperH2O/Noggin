@@ -198,3 +198,52 @@ test('tool: remember, the same again, full; forget exact, ambiguous, unknown; re
     for (let i = 0; i < 80; i++) memory.tool(full, {op: 'remember', text: 'Asked fact ' + i + ' ' + 'q'.repeat(120)}, today);
     assert.match(memory.tool(full, {op: 'remember', text: 'One more ' + 'q'.repeat(120)}, today).error, /memory is full/);
 });
+
+test('read: duplicate ids and facts go, next stays above every id, bookkeeping is checked and capped', () => {
+    const dir = tmp();
+    const tries = {'conversation-20261119-100000.jsonl': 2, 'conversation-20261119-110000.jsonl': 'x', 'not-a-log': 1, 'recap-20261119-120000.jsonl': -1};
+    for (let i = 0; i < 400; i++) tries['conversation-20261118-' + String(100000 + i) + '.jsonl'] = 1;
+    fs.writeFileSync(path.join(dir, 'memory.json'), JSON.stringify({next: 2,
+        facts: [{id: 'f7', text: 'Sam likes jazz.'}, {id: 'f7', text: 'Other.'}, {id: 'f8', text: 'sam likes JAZZ'}],
+        summaries: [{id: 's9', text: 'A.', day: '2026-11-18'}, {id: 's9', text: 'B.', day: '2026-11-18'}],
+        recap: {done: Array.from({length: 1500}, (_, i) => 'conversation-20261118-' + String(100000 + i) + '.jsonl').concat(['../../etc/passwd', 5]), tries}}));
+    const state = memory.read(dir);
+    assert.deepEqual(state.facts.map(f => f.id), ['f7']);
+    assert.deepEqual(state.summaries.map(s => s.text), ['A.']);
+    assert.equal(state.next, 10);
+    assert.equal(state.recap.done.length, memory.MAX_DONE);
+    assert.ok(state.recap.done.every(n => /^conversation-/.test(n)));
+    assert.equal(state.recap.tries['conversation-20261119-100000.jsonl'], 2);
+    assert.equal(state.recap.tries['conversation-20261119-110000.jsonl'], undefined);
+    assert.equal(state.recap.tries['not-a-log'], undefined);
+    assert.ok(Object.keys(state.recap.tries).length <= 300);
+    memory.addFact(state, 'New fact', 'auto');
+    assert.equal(state.facts.at(-1).id, 'f10');
+});
+
+test('summaries: at most MAX_SUMMARIES; a full memory.json stays small', () => {
+    const dir = tmp(), state = memory.empty();
+    for (let i = 0; i < memory.MAX_SUMMARIES + 20; i++) memory.addSummary(state, {text: 'S' + i + ' ' + 'w'.repeat(230), day: '2026-11-19', at: i, logs: Array(20).fill('conversation-20261119-100000.jsonl')});
+    assert.equal(state.summaries.length, memory.MAX_SUMMARIES);
+    assert.match(state.summaries[0].text, /^S20 /);
+    for (let i = 0; i < memory.MAX_FACTS; i++) memory.addFact(state, 'F' + i + ' ' + 'q'.repeat(30), 'auto');
+    state.recap.done = Array.from({length: memory.MAX_DONE}, (_, i) => 'conversation-20261118-' + String(100000 + i) + '.jsonl');
+    memory.write(dir, state);
+    // Read at every session start: well under 2 MB even when everything is full.
+    assert.ok(fs.statSync(path.join(dir, 'memory.json')).size < 2 * 1024 * 1024);
+    assert.equal(memory.read(dir).summaries.length, memory.MAX_SUMMARIES);
+});
+
+test('addFact: saying a dated fact again never makes it permanent; a later date moves the end', () => {
+    const state = memory.empty();
+    memory.addFact(state, 'Emma has the dentist on Friday', 'auto', {expires: '2026-11-20'});
+    memory.addFact(state, 'Emma has the dentist on Friday', 'asked');
+    assert.equal(state.facts[0].expires, '2026-11-20');
+    memory.addFact(state, 'Emma has the dentist on Friday', 'auto', {expires: '2026-11-18'});
+    assert.equal(state.facts[0].expires, '2026-11-20');
+    memory.addFact(state, 'Emma has the dentist on Friday', 'auto', {expires: '2026-11-27'});
+    assert.equal(state.facts[0].expires, '2026-11-27');
+    memory.addFact(state, 'Sam likes jazz', 'auto');
+    memory.addFact(state, 'Sam likes jazz', 'auto', {expires: '2026-11-27'});
+    assert.equal(state.facts[1].expires, undefined, 'a lasting fact stays lasting');
+});
