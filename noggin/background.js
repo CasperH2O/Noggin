@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
-// Noggin's settings page, started by BEam when Jibo boots and after every install or update
-// (package.json jibo.background). It serves http://<jibo>:8131 from inside Be's process and
-// has no screen. stop() runs before an update or removal and frees the port.
+// Noggin's background part, started by BEam when Jibo boots and after every install or update
+// (package.json jibo.background), inside Be's process with no screen: the settings page on
+// http://<jibo>:8131, and the memory recap after each conversation (lib/recap.js).
+// stop() runs before an update or removal: it frees the port and stops the recap.
 'use strict';
 const path = require('path');
 const createLog = require('./lib/log');
@@ -12,7 +13,7 @@ const HOST = '0.0.0.0';
 const RETRY_MS = 2000;
 const RETRIES = 5;
 
-let server = null, retryTimer = null, stopped = false;
+let server = null, retryTimer = null, stopped = false, recapLoop = null;
 
 // Jibo's own logger reaches /var/log/messages; BEam's api.log only reaches the console.
 function logger(api) {
@@ -26,6 +27,7 @@ function logger(api) {
 function start(api) {
     const log = logger(api);
     stopped = false;
+    startRecap(log);
     let http;
     try { http = require('http'); } catch (_) { http = null; }
     if (!http || typeof http.createServer !== 'function') {
@@ -49,6 +51,24 @@ function start(api) {
     listen(log, 0);
 }
 
+function startRecap(log) {
+    try {
+        const settings = require('./lib/settings'), actions = require('./lib/actions');
+        let jibo = null;
+        try { jibo = require('jibo'); } catch (_) {}
+        recapLoop = require('./lib/recap').loop({
+            dataDir: settings.dataDir(),
+            readConfig: () => settings.read(settings.dataDir()),
+            poster: config => require('./lib/openai').poster(config),
+            local: ms => actions.localTime(jibo, ms),
+            log: log
+        });
+    } catch (error) {
+        log.error('memory recap off: ' + error.message);
+        recapLoop = null;
+    }
+}
+
 function listen(log, attempt) {
     const current = server;
     if (!current || stopped) return;
@@ -66,6 +86,7 @@ function listen(log, attempt) {
 
 function stop() {
     stopped = true;
+    if (recapLoop) { recapLoop.stop(); recapLoop = null; }
     if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
     const current = server;
     server = null;

@@ -210,5 +210,33 @@ function pass(deps) {
     }, error => ({failed: String(error && error.message || error).slice(0, 200), logs: plan.logs}));
 }
 
+// The loop background.js runs: a pass every minute, never two at once (D54).
+// options: {dataDir, readConfig() (throws when there is no usable config), poster(config), local, log, everyMs, firstMs}.
+function loop(options) {
+    const log = options.log, every = options.everyMs || 60000;
+    let timer = null, busy = false, stopped = false, post = null, key = null;
+    function tick() {
+        if (stopped || busy) return;
+        let config;
+        try { config = options.readConfig(); } catch (_) { config = null; }
+        if (!config) return;
+        // A new key or address gets a new connection.
+        if (!post || key !== config.apiKey + ' ' + config.apiBase) { post = options.poster(config); key = config.apiKey + ' ' + config.apiBase; }
+        busy = true;
+        Promise.resolve().then(() => pass({dataDir: options.dataDir, config: config, post: post, local: options.local})).then(r => {
+            if (r.recapped) log.info('memory: recapped ' + r.recapped.length + ' log(s); summary ' + (r.report.summary ? 'kept' : 'none') +
+                ', ' + r.report.added.length + ' fact(s) added, ' + r.report.removed.length + ' removed' + (r.report.refused.length ? ', refused: ' + r.report.refused.join('; ') : ''));
+            else if (r.failed) log.warn('memory: recap failed: ' + r.failed);
+            else if (r.skipped === 'gave up') log.warn('memory: gave up on ' + r.logs.join(', '));
+            else if (r.waiting === 'daily limit') log.warn('memory: daily recap limit reached');
+        }, error => log.error('memory: ' + String(error && error.stack || error).slice(0, 400))).then(() => { busy = false; });
+    }
+    const first = setTimeout(() => { if (!stopped) { tick(); timer = setInterval(tick, every); } }, options.firstMs === undefined ? 30000 : options.firstMs);
+    return {
+        tick: tick,
+        stop() { stopped = true; clearTimeout(first); if (timer) clearInterval(timer); if (post && post.abort) post.abort(); }
+    };
+}
+
 module.exports = {SYSTEM, STALE_MS, CONTINUE_MS, TRIES, DAILY_CALLS, TRANSCRIPT_MAX, entries, info, chains, finished, started,
-    transcript, request, result, apply, pass};
+    transcript, request, result, apply, pass, loop};

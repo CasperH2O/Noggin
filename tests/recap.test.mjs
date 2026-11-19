@@ -180,3 +180,29 @@ test('pass: switched off, nothing is sent and switching on again skips what was 
     assert.equal((await recap.pass(deps)).waiting, true);
     assert.equal(calls, 0);
 });
+
+test('loop: one pass at a time, nothing without a config, stop aborts the request in flight', async () => {
+    const dir = setup(), lines = [];
+    const quiet = {info: m => lines.push(m), warn: m => lines.push(m), error: m => lines.push(m)};
+    let release, aborted = 0, posted = 0, cfg = null;
+    const stamped = Date.now();
+    const loop = recap.loop({dataDir: dir, readConfig: () => { if (!cfg) throw Error('no_key'); return cfg; }, local, log: quiet, firstMs: 1e9,
+        poster: () => { const post = () => { posted++; return new Promise(resolve => { release = resolve; }); }; post.abort = () => { aborted++; }; return post; }});
+    loop.tick();
+    assert.equal(fs.existsSync(path.join(dir, 'memory.json')), false);
+    cfg = config;
+    loop.tick();
+    await new Promise(r => setTimeout(r, 20));
+    writeLog(dir, stamped + 2000, [{kind: 'you', text: 'hello'}, {kind: 'session_end'}]);
+    loop.tick();
+    await new Promise(r => setTimeout(r, 20));
+    // A pass waits for the model; another tick meanwhile does nothing.
+    loop.tick();
+    await new Promise(r => setTimeout(r, 20));
+    assert.equal(posted, 1);
+    loop.stop();
+    assert.equal(aborted, 1);
+    release({status: 200, json: answer({summary: 'Someone said hello.', add: [], remove: []})});
+    await new Promise(r => setTimeout(r, 20));
+    assert.match(lines.join('\n'), /recapped 1 log/);
+});

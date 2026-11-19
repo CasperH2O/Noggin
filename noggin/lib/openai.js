@@ -113,6 +113,24 @@ function pageJson(config, route, body) {
         headers: {Authorization: 'Bearer ' + config.apiKey, Accept: 'application/json', 'Content-Type': 'application/json'}})
         .then(response => response.json().catch(() => null).then(json => ({status: response.status, json: json, ms: Date.now() - started})));
 }
+// post(route, body, timeoutMs) -> {status, json, ms}: Node https, and the page's fetch from the
+// first time Node fails (the simulator has no Node TLS). abort() cancels a Node request.
+function poster(config) {
+    let usePage = false, cancel = null;
+    const post = (route, body, timeoutMs) => usePage ? pageJson(config, route, body)
+        : nodeJson(config, route, body, timeoutMs, abort => { cancel = abort; }).then(r => {
+            cancel = null;
+            if (r.json === null) throw Error('unreadable response');
+            return r;
+        }).catch(error => {
+            cancel = null;
+            if (error && error.message === 'stopped') throw error;
+            usePage = true;
+            return pageJson(config, route, body);
+        });
+    post.abort = () => { if (cancel) cancel('stopped'); };
+    return post;
+}
 // classify(personSaid, jiboSays, kind) -> {label, confidence, size, ms, api}. kind 'reaction'
 // (no jiboSays yet) or 'line'. The Decisions API is the default; if the account cannot use
 // it (an HTTP error), the rest of the session uses the Responses API with the fallback model.
@@ -160,4 +178,4 @@ function classifier(config, post) {
     return classify;
 }
 
-module.exports = {connect, classifier, checkKey, post: nodeJson};
+module.exports = {connect, classifier, checkKey, post: nodeJson, poster};
