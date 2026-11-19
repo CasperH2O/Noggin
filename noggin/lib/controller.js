@@ -18,11 +18,12 @@
 // answers, and Noggin comes back the same way.
 //
 // Ends on a goodbye, `silenceSeconds` without speech, swipe down, privacy, a skill
-// switch, a handover, or a lost connection. Session patterns (hotword off, LED colours, thinking
+// switch, a handover, or a lost connection (after one quiet reconnect, D73). When it cannot go on,
+// Jibo says why (lib/trouble.js, D70-D71). Session patterns (hotword off, LED colours, thinking
 // eye, stop phrases) follow BEam's Agent Mode (BSD-3-Clause, @be/be skills/agent).
 // Node 6 / Chrome 53: ES2015 only.
 'use strict';
-const core = require('./core'), actions = require('./actions'), ExpressionPlayer = require('./expression');
+const core = require('./core'), actions = require('./actions'), ExpressionPlayer = require('./expression'), trouble = require('./trouble');
 
 // Ring: blue while Jibo listens, orange (blue's opposite on the colour wheel) while he
 // thinks and speaks. The LED takes whatever was set last, with nothing restoring it: some
@@ -83,10 +84,11 @@ class Conversation {
     // deps: {jibo, config, instructions, persona: {edited, chars, facts} (for the log), connect(), mic, classify(personSaid, jiboSays), log, now(),
     //        actions: {redirect(pkg, options), cloud(phrase), handover(state), handoverFailed(), readClock(), setVolume(args), installed(pkg), localTime(), facts()} or null,
     //        resume: {pairs, tool, args, said} when coming back after a handover,
-    //        openedAt: when the skill's open() began (Date.now()), startup: facts for the startup log}
+    //        openedAt: when the skill's open() began (Date.now()), startup: facts for the startup log,
+    //        diagnose() -> {cause, detail} after an OpenAI failure (lib/trouble.js), notice: {text, emoji, said()} after the greeting}
     constructor(deps) {
         this.jibo = deps.jibo; this.config = deps.config; this.instructions = deps.instructions; this.persona = deps.persona;
-        this.connectFn = deps.connect; this.mic = deps.mic; this.classify = deps.classify; this.log = deps.log || {write() {}};
+        this.connectFn = deps.connect; this.diagnoseFn = deps.diagnose || null; this.notice = deps.notice || null; this.mic = deps.mic; this.classify = deps.classify; this.log = deps.log || {write() {}};
         this.now = deps.now || (() => Date.now()); this.random = deps.random || Math.random;
         this.active = false; this.state = 'idle'; this.gate = false; this.turn = null; this.turns = 0;
         this.audio = {blocks: 0, sent: 0, levels: []}; this.lastClassify = 0;
@@ -187,17 +189,17 @@ class Conversation {
         // That is the greeting, or, back from the clock, the comeback line ("Anything else?").
         const first = this.resume ? config.comebackLine || '' : config.greeting || '';
         this.firstLine = first;
-        const greeted = !first ? Promise.resolve() : eye.then(() => {
+        const greeted = (!first ? eye : eye.then(() => {
             if (!this.active) return;
             this.mark('first_speech_queued');
             const label = this.resume ? null : config.greetingExpression;
             const expression = (core.EXTRA[label] || core.MOODS[label]) && label !== 'dance' ? label : null;
             if (core.MOODS[expression]) this.policy.used(expression, this.now());
             return this.speak(first, expression);
-        });
+        })).then(() => this.sayNotice());
         // A failure waits for the greeting, so Jibo finishes his "Hi!" before he apologises.
         const afterGreeting = promise => promise.catch(error => greeted.then(() => { throw error; }));
-        const connected = afterGreeting(this.connect());
+        const connected = afterGreeting(this.connect().catch(error => { throw openaiError(error); }));
         const micReady = afterGreeting(Promise.resolve().then(() => {
             this.mark('mic_start');
             return this.startMic();
@@ -229,7 +231,8 @@ class Conversation {
             const timing = rt.timing || {};
             if (timing.open) this.mark('socket_open', timing.open);
             this.mark('session_created', timing.created || undefined);
-            rt.listen(event => this.onEvent(event));
+            // Only the current connection's events: a dropped one is replaced (D73).
+            rt.listen(event => { if (this.rt === rt) this.onEvent(event); });
             const updated = this.waitFor(['session.updated'], 10000);
             rt.send(core.sessionUpdate(config, this.instructions, this.acts ? actions.tools(config) : null));
             return updated.then(() => { this.mark('session_updated'); this.log.write({kind: 'connected', ms: this.now() - started}); this.warm(); });
@@ -248,6 +251,49 @@ class Conversation {
                 }
             });
         });
+    }
+    // Something to say once after the greeting (the budget heads-up, D74); never on a comeback.
+    sayNotice() {
+        const notice = this.notice;
+        if (!notice || this.resume || !this.active) return;
+        this.notice = null;
+        this.log.write({kind: 'notice', text: notice.text});
+        return this.speak(notice.text, null, notice.emoji ? {anim: notice.emoji, emoji: 'notice', via: 'notice'} : null)
+            .then(() => { try { if (notice.said) notice.said(); } catch (_) {} });
+    }
+    // The connection dropped after the session was set up: once per conversation, a new session
+    // with the conversation so far (D73). A reply that was on its way is lost: Jibo says so.
+    dropped() {
+        if (this.failing) return;
+        if (this.reconnects || this.marks.session_updated === undefined || !this.active) return this.fail(openaiError(Error('connection_lost')));
+        this.reconnects = 1;
+        // A reply whose end is already queued is still spoken; any other is lost.
+        const turn = this.turn, lost = !!turn && !turn.ending;
+        this.reconnecting = true;
+        this.gate = false; clearTimeout(this.silence); this.silence = null;
+        if (lost) this.dropTurn(turn);
+        this.thinking.stop();
+        const old = this.rt; this.rt = null;
+        if (old) old.close();
+        this.log.write({kind: 'reconnect', state: this.state, turn: turn ? turn.n : null, pairs: this.pairs.length});
+        this.state = 'reconnecting'; this.led(BUSY);
+        return this.connect().then(() => {
+            if (!this.active || !this.rt) return;
+            this.log.write({kind: 'reconnected'});
+            // After what is still being said, so a complete reply is in the note.
+            this.speechChain = this.speechChain.then(() => {
+                this.reconnecting = false;
+                if (!this.active || !this.rt) return;
+                this.rt.send({type: 'conversation.item.create', item: {type: 'message', role: 'system', content: [{type: 'input_text', text: core.reconnectNote(this.pairs.slice(-KEEP_PAIRS))}]}});
+                return lost ? this.speak(trouble.LINES.lostThread, null) : null;
+            }).then(() => Promise.all([delay(this.config.echoTailMs), this.settle()])).then(() => { if (this.active && !this.turn) this.listen(); });
+            return this.speechChain;
+        }).catch(error => this.fail(openaiError(error)));
+    }
+    // A turn whose reply will never be spoken: its timers stop and its lines are not said.
+    dropTurn(turn) {
+        turn.skipped = true; clearTimeout(turn.waitTimer); clearTimeout(turn.guard);
+        if (this.turn === turn) this.turn = null;
     }
     warm() {
         this.lastClassify = this.now();
@@ -335,7 +381,8 @@ class Conversation {
         this.audio = {blocks: 0, sent: 0, levels: []};
     }
     listen() {
-        if (!this.active) return;
+        // No connection while reconnecting: the reconnect listens once it is back (D73).
+        if (!this.active || !this.rt) return;
         const now = this.now();
         this.log.write({kind: 'listen', at: this.since(now), after_speech: this.spokenAt === null ? null : now - this.spokenAt, anim_playing: this.player.busy()});
         this.state = 'listening'; this.led(LISTENING); this.zeroMs = 0; this.listenStart = true;
@@ -389,6 +436,8 @@ class Conversation {
             this.pump();
         } else if (type === 'response.done') {
             const response = event.response || {};
+            const failure = response.status === 'failed' && response.status_details && response.status_details.error || null;
+            if (failure && isFatal(failure.code)) return this.fail(Error('OpenAI: ' + failure.code));
             if (!turn || turn.skipped || !this.ours(turn, response.id)) return;
             turn.done = true; turn.status = response.status; turn.usage = response.usage || null;
             // Function calls come as their own output items, next to (or instead of) the text.
@@ -398,8 +447,9 @@ class Conversation {
         } else if (type === 'error') {
             const error = event.error || {};
             if (error.code !== 'response_cancel_not_active') this.log.write({kind: 'error', code: error.code || null, message: error.message || null});
+            if (isFatal(error.code)) this.fail(Error('OpenAI: ' + error.code));
         } else if (type === 'transport.closed') {
-            this.fail(Error('connection_lost'));
+            this.dropped();
         }
     }
     ours(turn, responseId) { return !turn.responseId || !responseId || turn.responseId === responseId; }
@@ -601,13 +651,16 @@ class Conversation {
     endTurn(turn) {
         if (this.turn === turn) this.turn = null;
         clearTimeout(turn.guard);
-        if (!this.active) return;
+        if (!this.active || turn.skipped) return;
         const at = t => t === undefined ? null : t - turn.stoppedAt;
         const calls = this.acts && turn.calls && turn.calls.length ? turn.calls : null;
         this.log.write({kind: 'jibo', turn: turn.n, text: turn.text, status: turn.status || null, reaction: turn.reaction || null, expressions: turn.expressions,
             ms: {transcript: at(turn.transcriptAt), first_text: at(turn.firstTextAt), first_speech: at(turn.firstSpeechAt), end: this.now() - turn.stoppedAt},
             usage: turn.usage || null, followUp: turn.followUp || undefined, calls: turn.calls && turn.calls.length ? turn.calls.map(c => c.name) : undefined});
         this.remember(turn);
+        // The reply was complete but the connection dropped: its actions cannot answer the old
+        // session, and the reconnect listens when it is back (D73).
+        if (this.reconnecting) { if (calls) this.log.write({kind: 'calls_dropped', turn: turn.n, reason: 'reconnect'}); return; }
         if (calls) return this.act(turn, calls);
         if (turn.goodbye) return this.finishAndLeave('goodbye');
         if (!turn.lines) this.thinking.stop();
@@ -795,6 +848,7 @@ class Conversation {
             ? Promise.resolve().then(() => acts.readClock()).catch(() => null) : Promise.resolve(null);
         return check.then(clock => {
             if (!this.active) return true;
+            if (!this.rt) return false;
             this.mark('resume_timer_read');
             this.log.write({kind: 'resume', tool: resume.tool || null, pairs: this.pairs.length, said: String(resume.said || '').slice(0, 300), clock: clock});
             this.rt.send({type: 'conversation.item.create', item: {type: 'message', role: 'system', content: [{type: 'input_text', text: core.resumeNote(resume, clock, said)}]}});
@@ -896,15 +950,40 @@ class Conversation {
             if (this.active) return this.speak('Lab done.', null);
         });
     }
+    // Jibo says what went wrong as Jibo, no tech talk (D70): the cause from OpenAI's own error
+    // code, else asked (D71); a failure that is not OpenAI's (the microphone) keeps the general
+    // line. Ends with reason 'trouble_<cause>' (index.js shows the setup screen for some), or 'error'.
     fail(error) {
-        if (!this.active) return;
+        if (!this.active || this.failing) return;
+        this.failing = true; this.gate = false;
+        clearTimeout(this.silence); this.silence = null;
         const message = String(error && error.message || error);
         if (!this.startupLogged) { this.mark('failed'); this.logStartup({failed: message.slice(0, 200)}); }
         this.log.write({kind: 'failed', error: message});
-        // Speak only if the speech system is free; Jibo explains it as Jibo (no tech talk).
-        const said = this.speaking ? Promise.resolve() : this.speak("Sorry, I can't think straight right now. Let's talk again a bit later.", null);
-        this.gate = false;
-        said.then(() => this.leave('error'), () => this.leave('error'));
+        const known = trouble.fromMessage(message);
+        const found = known ? Promise.resolve({cause: known, detail: message.slice(0, 80)})
+            : error && error.openai && this.diagnoseFn ? Promise.resolve().then(() => this.diagnoseFn()).catch(() => ({cause: 'unknown', detail: 'check failed'}))
+            : Promise.resolve({cause: 'unknown', detail: null});
+        // No more of the current reply, and no turn timer reopening the microphone meanwhile.
+        if (this.turn) this.dropTurn(this.turn);
+        this.thinking.stop();
+        let cause = 'unknown';
+        found.then(result => {
+            if (!this.active) return;
+            const t = trouble.cause(result && result.cause);
+            cause = t.cause;
+            this.log.write({kind: 'trouble', cause: cause, detail: result && result.detail || null});
+            // A line already playing (the greeting) ends first, so the reason is never cut off.
+            return this.untilQuiet(QUIET_MS).then(() => this.active ? this.speak(t.line, null, t.emoji ? {anim: t.emoji, emoji: cause, via: 'trouble'} : null) : null);
+        }).then(() => this.leave(cause === 'unknown' ? 'error' : 'trouble_' + cause), () => this.leave('error'));
+    }
+    // Resolves once Jibo is not speaking, or after `ms`.
+    untilQuiet(ms) {
+        const until = this.now() + ms;
+        return new Promise(resolve => {
+            const look = () => (!this.speaking || this.now() >= until ? resolve() : setTimeout(look, 50));
+            look();
+        });
     }
     leave(reason) { return this.close(reason); }
     // An ending Jibo chose (goodbye, silence): let the last expression end in its pose first, so
@@ -941,6 +1020,15 @@ class Conversation {
         return this.closing;
     }
 }
+// An OpenAI error that ends the conversation at once: no credit, a refused key, rate limited, wrong model.
+function isFatal(code) { return !!trouble.fromCode(code); }
+// Marks a failure as OpenAI's, so fail() asks what went wrong (D71).
+function openaiError(error) {
+    if (!(error instanceof Error)) error = Error(String(error));
+    error.openai = true;
+    return error;
+}
+const QUIET_MS = 6000;   // the longest fail() waits for a line already playing
 Conversation.LAB_PAUSE_MS = 1200;   // between lab steps, so one step's movement never runs into the next
 Conversation.MIC_START_MS = 8000;   // a microphone that never starts ends the conversation (D16)
 Conversation.FINISH_MS = 2000;      // the longest a goodbye waits for the last expression

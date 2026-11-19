@@ -412,7 +412,8 @@ function create(options) {
         return new Promise(resolve => { try { s.close(() => resolve()); } catch (_) { resolve(); } });
     }
 
-    return {listen: listen, close: close, handle: handle, state: state, connections: () => sockets.size};
+    // usage(): the Usage tab's view (cached, D64), also for the budget heads-up (D74).
+    return {listen: listen, close: close, handle: handle, state: state, usage: () => usageView(false), connections: () => sockets.size};
 }
 
 module.exports = {create, BODY_MAX, BUDGET};

@@ -38,6 +38,9 @@
     let errors = {values: {}, persona: {}};
     let active = 'brain';
     try { active = localStorage.getItem('noggin-tab') || 'brain'; } catch (_) {}
+    // A tab named in the address wins (the QR code on Jibo's screen opens #brain, D75).
+    const wanted = String(location.hash || '').slice(1);
+    if (TABS.some(tab => tab.id === wanted)) active = wanted;
     if (!TABS.some(t => t.id === active)) active = 'brain';
 
     const $ = id => document.getElementById(id);
@@ -342,7 +345,8 @@
         return groups;
     }
     function settingsPanel(tab) {
-        const fields = state.schema.filter(f => f.tab === tab);
+        // The admin key has its own row (adminKeyRow).
+        const fields = state.schema.filter(f => f.tab === tab && f.key !== 'adminKey');
         const out = [];
         groupsOf(fields.filter(f => !f.advanced)).forEach(group => {
             out.push(el('h2', {class: 'section-header', text: group.name}));
@@ -758,7 +762,7 @@
         refresh.addEventListener('click', () => load(true));
         showStatus(false);
         if (usageWanted || !usage) { usageWanted = false; load(false); }
-        return [el('h2', {class: 'section-header', text: 'OpenAI'}), el('div', {class: 'setting-block'}, [adminKeyRow()]), bar, body];
+        return [el('h2', {class: 'section-header', text: 'OpenAI'}), el('div', {class: 'setting-block'}, [adminKeyRow()])].concat(settingsPanel('usage'), [bar, body]);
     }
 
     // ---- page ----

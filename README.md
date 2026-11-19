@@ -52,6 +52,21 @@ On the robot: BEacon, Store, Upload ZIP, and choose `Noggin.zip` from a release.
   15 minutes (Refresh: at most once a minute) and never written to disk; names and emails in
   OpenAI's answers never reach the page.
 
+- **Trouble** (`noggin/lib/trouble.js`, `noggin/lib/setup-screen.js`). When a conversation cannot
+  start or go on, Jibo says why with an eye emoji: no key, key refused, settings wrong, no credit,
+  no internet, OpenAI down, rate limited. OpenAI's own error code is used when there is one; the
+  page's WebSocket only reports "closed" when OpenAI refuses it, so Noggin then asks over HTTPS:
+  `GET /models/<conversation model>` (free), and only when that passes one `POST /responses` with
+  16 output tokens, all within 6 s. No key, a refused key or wrong settings show a setup screen: a
+  QR code to `http://<Jibo's address>:8131/#brain` (qrcode-generator, vendored), the address as
+  text and the cause. It ends on swipe, tap, after 3 minutes, or when `settings.json` changes and
+  now works; then the conversation starts. A connection that drops mid-conversation reconnects
+  once with the conversation so far.
+- **Budget heads-up** (`noggin/lib/budget.js`). With an admin key and a spend limit,
+  `background.js` reads the Usage tab's numbers 2 minutes after start and then every 12 hours,
+  and keeps the answer in memory on the shared `global` object. When at most `budgetWarnPercent`
+  (10%) of the limit is left, the next conversation says so after the greeting, once a day.
+
 ## Data on the robot
 
 `/opt/jibo/Knowledge/beacon/custom-skills/noggin/` (in a development checkout,
@@ -114,6 +129,10 @@ The tests and tools run on a current Node.
 | `noggin/lib/server.js` | the settings page's HTTP server and API |
 | `noggin/lib/actions.js` | the tools the model may call and how each one runs |
 | `noggin/lib/usage.js` | the Usage tab: the read-only check, Jibo's key, costs, usage and limits from OpenAI |
+| `noggin/lib/trouble.js` | what went wrong when Noggin cannot talk, and how Jibo says it |
+| `noggin/lib/setup-screen.js` | the QR code screen to the settings page |
+| `noggin/lib/budget.js` | the budget check in the background and the heads-up |
+| `noggin/vendor/qrcode.js` | qrcode-generator 1.4.4 (MIT), with its licence |
 | `noggin/web/` | the settings page: plain HTML, CSS and JavaScript |
 | `noggin/persona/` | the default persona: SOUL, IDENTITY and FACTS |
 | `tests/` | unit tests (Node's test runner) |
@@ -121,4 +140,5 @@ The tests and tools run on a current Node.
 
 ## Licence
 
-[MIT](LICENSE). Parts follow or adapt BEam (BSD-3-Clause); see [THIRD_PARTY.md](THIRD_PARTY.md).
+[MIT](LICENSE). Parts follow or adapt BEam (BSD-3-Clause), and the QR code generator is MIT; see
+[THIRD_PARTY.md](THIRD_PARTY.md).

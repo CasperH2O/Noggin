@@ -12,11 +12,15 @@ Noggin needs BEam 3.1.9 or newer, an internet connection and your own OpenAI API
 2. On the **Brain** tab, paste your OpenAI API key and tap **Save**. **Test key** checks it with OpenAI first.
 3. Tap **Noggin** in Jibo's menu and say hello.
 
+No key yet? Open Noggin anyway: Jibo shows a QR code on his screen that takes your phone straight to the Brain tab. Once you save the key, he starts talking.
+
 ## Talking with Jibo
 
 - Jibo says hi as soon as Noggin opens. His ring is **blue** while he listens and **orange** while he thinks and talks.
 - Talk normally and wait for his answer. He does not hear you while he speaks.
 - Say **goodbye** to end, swipe down, or stay quiet for a minute.
+- When something is wrong, Jibo tells you in his own words: no internet, OpenAI not answering, no credit left on your OpenAI account, or a key or setting that needs a look (then he shows the QR code to his settings page). If the connection drops for a moment, he reconnects once and carries on.
+- With an admin key saved, Jibo gives you a heads-up after his greeting, once a day, when only 10% of your OpenAI spend limit is left (change or switch it off on the Usage tab).
 
 During a conversation Jibo can tell you the time and date on his clock, set and cancel timers and alarms, change his volume, dance, play music and the radio, take a photo, open his apps, and ask his cloud for the weather, the news, your calendar, your commute, a personal report, a surprise or a picture of something. When another skill or app takes over, Noggin comes back afterwards with "Anything else?" (within 5 minutes; you can change that). Music and the radio end the conversation.
 
@@ -42,4 +46,4 @@ What you say goes to OpenAI to be answered, with your key. Noggin keeps conversa
 
 With **Learn from conversations** on (the default), each finished conversation's text and the facts Jibo keeps go to OpenAI once more, so a small model can write the note and pick out facts. The notes and facts stay on Jibo. With conversation logs off, Jibo keeps only what was said until that note is written. Turn learning off on the Memory tab and Jibo only remembers what you ask him to; turn memory off and he remembers nothing.
 
-With an admin key saved, Jibo reads your account's costs, usage and spend limits from OpenAI when you open the Usage tab, and keeps them in memory for 15 minutes. He never keeps or shows the account's users, and never sees other keys' secrets.
+With an admin key saved, Jibo reads your account's costs, usage and spend limits from OpenAI when you open the Usage tab, and twice a day for the budget heads-up, and keeps them in memory for 15 minutes. He never keeps or shows the account's users, and never sees other keys' secrets.

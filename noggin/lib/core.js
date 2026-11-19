@@ -433,6 +433,13 @@ function resumeNote(resume, clock, said) {
               'do not repeat what ' + who + ' already said, and do not claim anything the facts above do not show.');
 }
 
+// After a dropped connection (D73): the new session hears the conversation so far, once.
+function reconnectNote(pairs) {
+    const lines = (pairs || []).map(p => (p.you ? 'Person: ' + p.you + '\n' : '') + (p.jibo ? 'Jibo: ' + p.jibo : '')).join('\n').slice(-6000);
+    return 'The connection dropped for a moment and is back. This is the conversation so far, in which you are Jibo:\n' + (lines || '(nothing yet)') +
+        '\n\nCarry on from there: do not greet again and do not mention the connection unless asked.';
+}
+
 // Stop phrases, as BEam's Agent Mode recognises them (BSD-3, @be/be skills/agent/runtime.js).
 const STOP = ['stop', 'stop chatting', 'stop talking', 'end conversation', 'cancel', 'goodbye', 'good bye', 'bye', 'bye bye', 'that is all', 'thats all'];
 function isStop(text) {
@@ -444,4 +451,4 @@ function isStop(text) {
 }
 
 module.exports = {RATE, MOODS, DANCE, EXTRA, CATALOG, EMOJI, DANCES, animFor, pickAnimation, danceChoice, danceStyles, pickDance, danceName, danceLine, danceAnnounce, moodDescription, emojiFor, toPcm24, base64, levelDb, sessionUpdate, textDelta, firstSentenceEnd, speechText, chunks, esml, animEsml,
-    choices, decisionsRequest, decisionLabel, classifierRequest, classifierLabel, classifierSize, ExpressionPolicy, personaText, voiceSetup, instructions, resumeNote, isStop};
+    choices, decisionsRequest, decisionLabel, classifierRequest, classifierLabel, classifierSize, ExpressionPolicy, personaText, voiceSetup, instructions, resumeNote, reconnectNote, isStop};

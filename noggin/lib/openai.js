@@ -56,16 +56,19 @@ function connect(config, WebSocketClass) {
 // ---- HTTPS for the classifier ----
 const agents = {};
 // track(abort), when given, receives a function that cancels the request.
-function nodeJson(config, route, body, timeoutMs, track) {
-    try { return nodeRequest(config, route, body, timeoutMs, track); }
+function nodeJson(config, route, body, timeoutMs, track, method) {
+    try { return nodeRequest(config, route, body, timeoutMs, track, method); }
     catch (error) { return Promise.reject(error); }
 }
-function nodeRequest(config, route, body, timeoutMs, track) {
-    const target = url.parse(config.apiBase + route), started = Date.now(), data = JSON.stringify(body);
+// method: POST (default, with the JSON body) or GET (no body).
+function nodeRequest(config, route, body, timeoutMs, track, method) {
+    method = method || 'POST';
+    const target = url.parse(config.apiBase + route), started = Date.now(), data = method === 'GET' ? null : JSON.stringify(body);
     const module_ = target.protocol === 'https:' ? https : http;
     const agent = agents[target.protocol] || (agents[target.protocol] = new module_.Agent({keepAlive: true, maxSockets: 2}));
-    const options = {method: 'POST', protocol: target.protocol, hostname: target.hostname, port: target.port, path: target.path, agent: agent,
-        headers: {Authorization: 'Bearer ' + config.apiKey, Accept: 'application/json', 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data)}};
+    const headers = {Authorization: 'Bearer ' + config.apiKey, Accept: 'application/json'};
+    if (data !== null) { headers['Content-Type'] = 'application/json'; headers['Content-Length'] = Buffer.byteLength(data); }
+    const options = {method: method, protocol: target.protocol, hostname: target.hostname, port: target.port, path: target.path, agent: agent, headers: headers};
     return new Promise((resolve, reject) => {
         const request = module_.request(options, response => {
             const parts = [];
@@ -79,7 +82,7 @@ function nodeRequest(config, route, body, timeoutMs, track) {
         request.on('error', reject);
         request.setTimeout(timeoutMs || 10000, () => { request.abort(); reject(Error('timeout')); });
         if (track) track(reason => { request.abort(); reject(Error(reason || 'stopped')); });
-        request.end(data);
+        if (data === null) request.end(); else request.end(data);
     });
 }
 // Does this key work? GET /models, for the settings page: {ok, status, ms, error}.
@@ -106,11 +109,12 @@ function checkKey(config, timeoutMs) {
         request.end();
     });
 }
-function pageJson(config, route, body) {
-    const started = Date.now();
+function pageJson(config, route, body, method) {
+    const started = Date.now(), get = method === 'GET';
     if (typeof fetch !== 'function') return Promise.reject(Error('no fetch'));
-    return fetch(config.apiBase + route, {method: 'POST', body: JSON.stringify(body),
-        headers: {Authorization: 'Bearer ' + config.apiKey, Accept: 'application/json', 'Content-Type': 'application/json'}})
+    const headers = {Authorization: 'Bearer ' + config.apiKey, Accept: 'application/json'};
+    if (!get) headers['Content-Type'] = 'application/json';
+    return fetch(config.apiBase + route, get ? {method: 'GET', headers: headers} : {method: 'POST', body: JSON.stringify(body), headers: headers})
         .then(response => response.json().catch(() => null).then(json => ({status: response.status, json: json, ms: Date.now() - started})));
 }
 // post(route, body, timeoutMs) -> {status, json, ms}: Node https, and the page's fetch from the
@@ -149,6 +153,17 @@ function poster(config) {
     };
     post.abort = () => { if (cancel) cancel('stopped'); };
     return post;
+}
+// ask(method, route, body, timeoutMs, track) -> {status, json}, for the trouble check (lib/trouble.js):
+// Node https, or the page's fetch when Node's TLS fails (the simulator). An offline error is
+// the answer itself, never a reason to switch.
+function asker(config) {
+    return (method, route, body, timeoutMs, track) => nodeJson(config, route, body, timeoutMs, track, method).catch(error => {
+        if (OFFLINE.indexOf(error && error.code) >= 0 || /^(timeout|stopped|done)$/.test(error && error.message) || typeof fetch !== 'function') throw error;
+        let timer = null;
+        const late = new Promise((resolve, reject) => { timer = setTimeout(() => reject(Error('timeout')), timeoutMs || 10000); });
+        return Promise.race([pageJson(config, route, body, method), late]).then(r => { clearTimeout(timer); return r; }, e => { clearTimeout(timer); throw e; });
+    });
 }
 // classify(personSaid, jiboSays, kind) -> {label, confidence, size, ms, api}. kind 'reaction'
 // (no jiboSays yet) or 'line'. The Decisions API is the default; if the account cannot use
@@ -197,4 +212,4 @@ function classifier(config, post) {
     return classify;
 }
 
-module.exports = {connect, classifier, checkKey, post: nodeJson, poster};
+module.exports = {connect, classifier, checkKey, post: nodeJson, poster, asker};

@@ -16,4 +16,10 @@ promote products derived from this software without prior written permission. TH
 PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES
 ARE DISCLAIMED.
 
+**qrcode-generator** 1.4.4 (https://github.com/kazuhikoarase/qrcode-generator), MIT, Copyright (c)
+2009 Kazuhiko Arase: `noggin/vendor/qrcode.js` is the npm release's `qrcode.js` (SHA-256
+`18ae399f81182bc9de916e9c77b195df20cc58d6f2d55a62b085a299f1bf1780`), licence in
+`noggin/vendor/qrcode-generator-LICENSE.txt`. It draws the setup screen's QR code. "QR Code" is a registered
+trademark of DENSO WAVE INCORPORATED.
+
 No firmware, SDK, animations, models, fonts or credentials ship with Noggin.

@@ -117,6 +117,9 @@ const SCHEMA = [
     {key: 'log', type: 'bool', default: true, tab: 'history', group: 'History', label: 'Keep conversation logs',
         help: 'What was said, expressions and timings; never audio or the key.'},
 
+    // The budget heads-up (lib/budget.js, D74).
+    {key: 'budgetWarnPercent', type: 'number', min: 0, max: 50, unit: '%', default: 10, tab: 'usage', group: 'Heads-up', label: 'Warn when this much is left',
+        help: 'Once a day, after his greeting, Jibo says when only this share of the spend limit is left. 0: never. Needs the admin key and a spend limit.'},
     // Saved only after the read-only check (lib/usage.js, D61, D62).
     {key: 'adminKey', type: 'secret', prefix: 'sk-admin-', default: '', tab: 'usage', group: 'OpenAI', label: 'Admin key',
         help: 'A read-only admin key from the same OpenAI organization as Jibo\'s API key. It stays on Jibo and is never shown again.'}

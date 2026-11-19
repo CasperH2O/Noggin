@@ -3,6 +3,8 @@
 // down, say goodbye or stay quiet to end. When the conversation hands an action to another
 // skill (a timer on @be/clock, or Jibo's cloud through @be/nimbus), Noggin watches for that
 // skill to finish and opens again with the conversation so far (lib/comeback.js).
+// When Noggin cannot talk, Jibo says why; without a working key or with broken settings he
+// shows a QR code to his settings page and starts talking once it is saved (lib/setup-screen.js).
 // The settings page runs separately, in background.js.
 'use strict';
 const BeSkill = require('@be/be-framework').BeSkill;
@@ -10,7 +12,9 @@ const jibo = require('jibo');
 const settings = require('./lib/settings'), Conversation = require('./lib/controller'), Microphone = require('./lib/mic');
 const openai = require('./lib/openai'), core = require('./lib/core'), ConversationLog = require('./lib/conversation-log');
 const actions = require('./lib/actions'), comeback = require('./lib/comeback'), createLog = require('./lib/log');
-const memory = require('./lib/memory'), recap = require('./lib/recap');
+const memory = require('./lib/memory'), recap = require('./lib/recap'), trouble = require('./lib/trouble'), budget = require('./lib/budget');
+const SetupScreen = require('./lib/setup-screen');
+const fs = require('fs');
 const OWN = require('./package.json').name;
 const RESUME_MS = 15000;
 // After any handover the other skill (or @be/nimbus for the cloud) takes over within seconds; if
@@ -42,18 +46,27 @@ class Noggin extends BeSkill {
             if (current()) this.exit({noElementsOfSurprise: true});
         });
     }
-    say(text) {
+    // Opened from the menu, the menu view would stay; the emoji needs Jibo's eye (at most 1.5 s).
+    eye() {
+        const views = jibo.face && jibo.face.views;
+        if (!views || typeof views.forceEyeView !== 'function') return Promise.resolve();
+        return Promise.race([new Promise(resolve => { try { views.forceEyeView(() => resolve()); } catch (_) { resolve(); } }),
+            new Promise(resolve => setTimeout(resolve, 1500))]);
+    }
+    // anim: an eye emoji played with the words (D70).
+    say(text, anim) {
         const speech = jibo.embodied && jibo.embodied.speech;
-        return speech && speech.speak ? Promise.resolve(speech.speak(core.speechText(text))).catch(() => {}) : Promise.resolve();
+        return speech && speech.speak ? Promise.resolve(speech.speak((anim ? core.animEsml(anim) : '') + core.speechText(text))).catch(() => {}) : Promise.resolve();
     }
     talk(dataDir, back, openedAt, startup) {
+        const generation = this.generation;
         let config;
         try { config = settings.read(dataDir); }
         catch (error) {
             this.tagged.error(error.message);
-            return this.say(error.message === 'no_key'
-                ? 'I need an OpenAI key before we can talk. Please add one on my settings page.'
-                : 'My settings look broken. Please check them on my settings page.').then(() => error.message);
+            const t = trouble.cause(error.message === 'no_key' ? 'no_key' : 'settings');
+            // Closed while Jibo spoke (a swipe, "Hey Jibo"): no screen for a skill that is gone.
+            return this.eye().then(() => this.say(t.line, t.emoji)).then(() => generation === this.generation ? this.setup(t, dataDir, generation) : 'closed');
         }
         const persona = settings.persona(dataDir), log = new ConversationLog(dataDir, config.log !== false, {recap: !!(config.memory && config.memoryLearn)});
         // On the robot the microphone runs as a separate arecord process: an ALSA failure
@@ -87,9 +100,39 @@ class Noggin extends BeSkill {
             } : null,
             resume: back,
             openedAt: openedAt,
-            startup: startup
+            startup: startup,
+            diagnose: () => trouble.diagnose(config, openai.asker(config), {stopped: () => this.session !== session}),
+            notice: back ? null : budget.notice(memory.dayOf(actions.localTime(jibo)), config.budgetWarnPercent)
         });
-        return session.open().then(reason => { if (this.session === session) this.session = null; return reason; });
+        return session.open().then(reason => {
+            if (this.session === session) this.session = null;
+            // The conversation already said why; some causes also need the settings page.
+            const t = /^trouble_/.test(reason) ? trouble.cause(reason.slice('trouble_'.length)) : null;
+            return t && t.screen && generation === this.generation ? this.setup(t, dataDir, generation) : reason;
+        });
+    }
+    // The QR code to the settings page (D72). Ends on swipe, tap or 3 minutes; once the settings
+    // change and now work, Jibo says so and the conversation starts.
+    // generation: the open() this belongs to; a later close() or open() makes it stale.
+    setup(t, dataDir, generation) {
+        const file = settings.file(dataDir), before = stamp(file);
+        const screen = this.screen = new SetupScreen(jibo, {
+            log: this.tagged,
+            ready: () => {
+                if (stamp(file) === before) return false;
+                try { settings.read(dataDir); return true; } catch (_) { return false; }
+            }
+        });
+        const address = trouble.lanAddress(trouble.interfaces());
+        this.tagged.info('setup screen: ' + t.cause + (address ? '' : ' (no address)'));
+        return screen.show(t, address).then(how => {
+            if (this.screen === screen) this.screen = null;
+            this.tagged.info('setup screen ended: ' + how);
+            if (generation !== this.generation) return 'setup_' + how;
+            if (how === 'timeout') return this.eye().then(() => this.say(trouble.LINES.later)).then(() => 'setup_timeout');
+            if (how !== 'saved') return 'setup_' + how;
+            return this.eye().then(() => this.say(trouble.LINES.ready, 'Emoji_Checkmark')).then(() => generation === this.generation ? this.talk(dataDir, null, Date.now(), {after_setup: true}) : 'setup_saved');
+        });
     }
     // What Jibo remembers, for the end of the instructions (D44): null when memory is off or
     // cannot be read. After a handover the comeback carries the conversation, so no tail (D52).
@@ -127,8 +170,13 @@ class Noggin extends BeSkill {
     close(done) {
         this.generation = (this.generation || 0) + 1;
         const session = this.session; this.session = null;
-        Promise.resolve(session && session.close('closed')).then(() => done && done(), () => done && done());
+        const screen = this.screen; this.screen = null;
+        Promise.all([session && session.close('closed'), screen && screen.close()]).then(() => done && done(), () => done && done());
     }
     destroy(done) { this.close(done); }
+}
+// settings.json's size and time: a save changes it ('' when there is none yet).
+function stamp(file) {
+    try { const st = fs.statSync(file); return st.size + ':' + st.mtime.getTime(); } catch (_) { return ''; }
 }
 module.exports = Noggin;

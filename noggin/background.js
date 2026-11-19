@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Noggin's background part, started by BEam when Jibo boots and after every install or update
 // (package.json jibo.background), inside Be's process with no screen: the settings page on
-// http://<jibo>:8131, and the memory recap after each conversation (lib/recap.js).
-// stop() runs before an update or removal: it frees the port and stops the recap.
+// http://<jibo>:8131, the memory recap after each conversation (lib/recap.js), and the budget
+// check for Jibo's heads-up (lib/budget.js, D74).
+// stop() runs before an update or removal: it frees the port and stops the recap and the check.
 'use strict';
 const path = require('path');
 const createLog = require('./lib/log');
@@ -13,7 +14,7 @@ const HOST = '0.0.0.0';
 const RETRY_MS = 2000;
 const RETRIES = 5;
 
-let server = null, retryTimer = null, stopped = false, recapLoop = null;
+let server = null, retryTimer = null, stopped = false, recapLoop = null, budgetWatch = null;
 
 // Jibo's own logger reaches /var/log/messages; BEam's api.log only reaches the console.
 function logger(api) {
@@ -57,7 +58,25 @@ function start(api) {
         server = null;
         return;
     }
+    startBudget(log, server);
     listen(log, 0);
+}
+
+function startBudget(log, owner) {
+    try {
+        const settings = require('./lib/settings');
+        budgetWatch = require('./lib/budget').watch({
+            readConfig: () => {
+                const dir = settings.dataDir();
+                return {budgetWarnPercent: settings.publicView(dir).values.budgetWarnPercent, adminKey: !!settings.secrets(dir).adminKey};
+            },
+            report: () => owner.usage(),
+            log: log
+        });
+    } catch (error) {
+        log.error('budget check off: ' + error.message);
+        budgetWatch = null;
+    }
 }
 
 function startRecap(log) {
@@ -94,6 +113,7 @@ function listen(log, attempt) {
 function stop() {
     stopped = true;
     if (recapLoop) { recapLoop.stop(); recapLoop = null; }
+    if (budgetWatch) { budgetWatch.stop(); budgetWatch = null; }
     if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
     const current = server;
     server = null;

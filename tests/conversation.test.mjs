@@ -127,13 +127,25 @@ function emitter() {
 const TEST_ANIM = {happy: 'excited_01', sad: 'sad_01', surprised: 'surprised_02', thinking: 'Thinking_00', heart: 'Emoji_HeartRed', hello: 'greetings_01', giggle: 'laughter_01'};
 function harness(over = {}) {
     const said = [], leds = [], logs = [], sent = [], options = [];
-    let listeners = [], onBlock = null, released = 0;
-    const rt = {
-        listen(fn) { listeners.push(fn); return () => { listeners = listeners.filter(l => l !== fn); }; },
-        send(e) { sent.push(e); if (e.type === 'session.update') setTimeout(() => emit({type: 'session.updated'}), 1); },
-        close() { rt.closed = true; }, buffered: () => 0
+    let onBlock = null, released = 0, connects = 0;
+    // Each connect is a new connection; emit() reaches the newest one.
+    const makeRt = () => {
+        let listeners = [];
+        const rt = {
+            listen(fn) { listeners.push(fn); return () => { listeners = listeners.filter(l => l !== fn); }; },
+            send(e) { sent.push(e); if (e.type === 'session.update') setTimeout(() => rt.emit({type: 'session.updated'}), 1); },
+            close() { rt.closed = true; }, buffered: () => 0,
+            emit: e => listeners.slice().forEach(f => f(e))
+        };
+        return rt;
     };
-    const emit = e => listeners.slice().forEach(f => f(e));
+    let rt = makeRt();
+    const emit = e => rt.emit(e);
+    const connect = () => {
+        connects++;
+        if (connects > 1) rt = makeRt();
+        return over.connect ? over.connect(connects, rt) : Promise.resolve(rt);
+    };
     const jibo = {
         embodied: {speech: Object.assign({speak: (esml, opts) => { said.push(esml); options.push(opts); return sleep(over.speakMs || 20); }, stop: () => { jibo.stopped = true; }}, over.speech || {})},
         jetstream: {setHotwordMode: () => ({activated: Promise.resolve(), release: () => { released++; }}), types: {HotwordListenMode: {Disabled: 2}},
@@ -148,7 +160,7 @@ function harness(over = {}) {
     const config = Object.assign({}, settings.DEFAULTS, {apiKey: 'sk-test', silenceSeconds: 0.6, transcriptWaitMs: 120, echoTailMs: 10, expressionWaitMs: 60, greeting: 'Hi!', greetingExpression: 'none',
         expressionPlay: 'esml-tts', emoji: false}, over.config || {});
     const classify = over.classify || ((person, line) => Promise.resolve({label: /dog|puppy/i.test(line) ? 'happy' : 'none', ms: 5}));
-    const talk = new Conversation({jibo, config, instructions: 'be Jibo', connect: () => Promise.resolve(rt), classify,
+    const talk = new Conversation({jibo, config, instructions: 'be Jibo', connect, classify, diagnose: over.diagnose, notice: over.notice,
         mic: over.mic || {start: f => { onBlock = f; starts++; return Promise.resolve(); }, stop: () => { onBlock = null; }, label: 'arecord default', rate: 48000, kind: 'arecord'},
         log: {write: e => logs.push(e)}, actions: over.actions || null, resume: over.resume || null, openedAt: over.openedAt, startup: over.startup,
         random: over.random || (() => 0.5)});
@@ -158,7 +170,7 @@ function harness(over = {}) {
     const audio = (level = -40, samples = 2048) => onBlock && onBlock(new Int16Array(samples), level);
     let starts = 0;
     const appends = () => sent.filter(e => e.type === 'input_audio_buffer.append').length;
-    return {talk, rt, emit, jibo, said, options, leds, logs, sent, audio, appends, released: () => released, starts: () => starts};
+    return {talk, get rt() { return rt; }, emit, jibo, said, options, leds, logs, sent, audio, appends, released: () => released, starts: () => starts, connects: () => connects};
 }
 async function untilListening(h) { for (let i = 0; i < 400 && h.talk.state !== 'listening'; i++) await sleep(5); assert.equal(h.talk.state, 'listening'); }
 function reply(h, id, text, done = true) {
@@ -247,13 +259,166 @@ test('silence ends the session; speech start holds it open', async () => {
     assert.equal(await ended, 'silence');
 });
 
-test('lost connection: Jibo apologises and the session ends', async () => {
+test('lost connection while listening: one quiet reconnect with the conversation so far, then the second drop ends it with the cause (D73)', async () => {
+    let asked = 0;
+    const h = harness({diagnose: () => { asked++; return Promise.resolve({cause: 'no_internet', detail: 'ENOTFOUND'}); }});
+    const ended = h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'I like dogs'});
+    reply(h, 'r1', 'Dogs are great.');
+    while (h.said.length < 2) await sleep(5);
+    await untilListening(h);
+    const first = h.rt;
+    h.emit({type: 'transport.closed', code: 1006});
+    await untilListening(h);
+    assert.equal(h.connects(), 2);
+    assert.ok(first.closed, 'the old connection is closed');
+    assert.equal(h.said.length, 2, 'nothing said: Jibo was only listening');
+    const note = h.sent.filter(e => e.type === 'conversation.item.create').at(-1);
+    assert.match(note.item.content[0].text, /connection dropped[\s\S]*Person: I like dogs\nJibo: Dogs are great\.[\s\S]*do not greet again/);
+    assert.ok(h.logs.some(e => e.kind === 'reconnect') && h.logs.some(e => e.kind === 'reconnected'));
+    // The old connection's late events are ignored.
+    first.emit({type: 'input_audio_buffer.speech_stopped'});
+    assert.equal(h.talk.state, 'listening');
+    h.emit({type: 'transport.closed', code: 1006});
+    assert.equal(await ended, 'trouble_no_internet');
+    assert.equal(asked, 1);
+    assert.match(h.said.at(-1), /can't reach the internet/);
+    assert.ok(h.logs.some(e => e.kind === 'trouble' && e.cause === 'no_internet' && e.detail === 'ENOTFOUND'));
+});
+
+test('lost connection while thinking: the reply is dropped and Jibo asks again after the reconnect (D73)', async () => {
     const h = harness();
     const ended = h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'tell me a story'});
     h.emit({type: 'transport.closed', code: 1006});
-    assert.equal(await ended, 'error');
-    assert.match(h.said.at(-1), /can't think straight/);
-    assert.ok(h.logs.some(e => e.kind === 'failed' && /connection_lost/.test(e.error)));
+    await untilListening(h);
+    assert.match(h.said.at(-1), /lost my train of thought/);
+    reply(h, 'late', 'This never plays.');
+    await sleep(30);
+    assert.doesNotMatch(h.said.join(' '), /never plays/);
+    h.talk.leave('test'); await ended;
+});
+
+test('a failed reconnect ends the conversation with the diagnosed cause', async () => {
+    const h = harness({connect: (n, rt) => n === 1 ? Promise.resolve(rt) : Promise.reject(Error('connection closed (1006)')),
+        diagnose: () => Promise.resolve({cause: 'openai_down', detail: 'models 503'})});
+    const ended = h.talk.open(); await untilListening(h);
+    h.emit({type: 'transport.closed', code: 1006});
+    assert.equal(await ended, 'trouble_openai_down');
+    assert.match(h.said.at(-1), /out of reach/);
+});
+
+test('trouble at the start: the cause from OpenAI\'s own code, a diagnosis for a refused socket, the old line otherwise (D70, D71)', async () => {
+    // A realtime error with a code: no diagnosis needed.
+    let asked = 0;
+    const quota = harness({connect: () => Promise.reject(Error('OpenAI: insufficient_quota')), diagnose: () => { asked++; return Promise.resolve({cause: 'unknown'}); }});
+    assert.equal(await quota.talk.open(), 'trouble_no_credit');
+    assert.equal(asked, 0);
+    assert.match(quota.said.at(-1), /run out of thinking money/);
+    // The page's WebSocket only says "closed": asked.
+    const refused = harness({connect: () => Promise.reject(Error('connection closed (1006)')), diagnose: () => Promise.resolve({cause: 'key_refused', detail: 'models 401'})});
+    assert.equal(await refused.talk.open(), 'trouble_key_refused');
+    assert.match(refused.said.at(-1), /key to OpenAI doesn't work/);
+    // A diagnosis that throws: the old line.
+    const broken = harness({connect: () => Promise.reject(Error('connection closed (1006)')), diagnose: () => Promise.reject(Error('boom'))});
+    assert.equal(await broken.talk.open(), 'error');
+    assert.match(broken.said.at(-1), /can't think straight/);
+    // The microphone is not OpenAI's: never diagnosed.
+    let micAsked = 0;
+    const mic = harness({mic: {start: () => Promise.reject(Error('no microphone')), stop() {}}, diagnose: () => { micAsked++; return Promise.resolve({cause: 'no_internet'}); }});
+    assert.equal(await mic.talk.open(), 'error');
+    assert.equal(micAsked, 0);
+});
+
+test('review: a fatal error during the greeting waits for it, then always says the cause (D76)', async () => {
+    const h = harness({speakMs: 150});
+    const ended = h.talk.open();
+    while (h.said.length < 1) await sleep(2);
+    h.emit({type: 'error', error: {code: 'insufficient_quota'}});
+    assert.equal(await ended, 'trouble_no_credit');
+    assert.equal(h.said[0], 'Hi!');
+    assert.match(h.said.at(-1), /thinking money/);
+    assert.ok(!h.jibo.stopped, 'the greeting was not cut off');
+});
+
+test('review: no reconnect while fail() runs (D76)', async () => {
+    let release;
+    const h = harness({diagnose: () => new Promise(r => { release = r; })});
+    const ended = h.talk.open(); await untilListening(h);
+    h.talk.fail(Object.assign(Error('connection closed (1006)'), {openai: true}));
+    h.emit({type: 'transport.closed', code: 1006});
+    await sleep(20);
+    assert.equal(h.connects(), 1);
+    release({cause: 'openai_down'});
+    assert.equal(await ended, 'trouble_openai_down');
+    assert.ok(!h.said.some(t => /train of thought/.test(t)));
+});
+
+test('review: a drop while a complete reply is spoken keeps the reply and listens after the reconnect (D76)', async () => {
+    const h = harness({speakMs: 80});
+    const ended = h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'tell me about cats'});
+    reply(h, 'r1', 'Cats purr. They nap a lot. They like boxes.');
+    while (h.said.length < 2) await sleep(2);
+    h.emit({type: 'transport.closed', code: 1006});
+    await untilListening(h);
+    assert.deepEqual(h.said.slice(1), ['Cats purr.', 'They nap a lot. They like boxes.']);
+    assert.ok(!h.said.some(t => /train of thought/.test(t)));
+    const note = h.sent.filter(e => e.type === 'conversation.item.create').at(-1).item.content[0].text;
+    assert.match(note, /Person: tell me about cats\nJibo: Cats purr\. They nap a lot\. They like boxes\./);
+    h.talk.leave('test'); await ended;
+});
+
+test('review: a drop while a done reply still waits for its transcript loses it and still listens again (D76)', async () => {
+    const h = harness({config: {transcriptWaitMs: 400}});
+    const ended = h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    reply(h, 'r1', 'A reply without a transcript yet.');
+    h.emit({type: 'transport.closed', code: 1006});
+    await untilListening(h);
+    assert.match(h.said.at(-1), /train of thought/);
+    await sleep(450);
+    assert.equal(h.talk.state, 'listening', 'the old turn\'s wait timer does not take over');
+    assert.ok(!h.said.some(t => /without a transcript/.test(t)));
+    h.talk.leave('test'); await ended;
+});
+
+test('trouble mid-conversation: a failed response or error event with a known code ends it with the cause', async () => {
+    const h = harness();
+    const ended = h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'response.done', response: {id: 'r1', status: 'failed', status_details: {error: {code: 'insufficient_quota'}}}});
+    assert.equal(await ended, 'trouble_no_credit');
+    const h2 = harness();
+    const ended2 = h2.talk.open(); await untilListening(h2);
+    h2.emit({type: 'error', error: {code: 'rate_limit_exceeded', message: 'slow down'}});
+    assert.equal(await ended2, 'trouble_rate_limited');
+    assert.match(h2.said.at(-1), /catch my breath/);
+    // An ordinary error event goes on.
+    const h3 = harness();
+    const ended3 = h3.talk.open(); await untilListening(h3);
+    h3.emit({type: 'error', error: {code: 'response_cancel_not_active'}});
+    await sleep(20);
+    assert.equal(h3.talk.state, 'listening');
+    h3.talk.leave('test'); await ended3;
+});
+
+test('a notice after the greeting, once, with its emoji; none on a comeback (D74)', async () => {
+    let said = 0;
+    const notice = {text: 'Heads up: money.', emoji: 'Emoji_Money', said: () => { said++; }};
+    const h = harness({notice, config: {expressionPlay: 'esml', emoji: true}});
+    const ended = h.talk.open(); await untilListening(h);
+    assert.equal(h.said[0], 'Hi!');
+    assert.match(h.said[1], /Emoji_Money[\s\S]*Heads up: money\./);
+    assert.equal(said, 1);
+    h.talk.leave('test'); await ended;
+    const back = harness({notice, resume: {pairs: [], tool: 'get_time', said: ''}, config: {comebackLine: 'Anything else?'}});
+    const ended2 = back.talk.open(); await untilListening(back);
+    assert.ok(!back.said.some(t => /money/.test(t)));
+    back.talk.leave('test'); await ended2;
 });
 
 test('privacy, swipe-like leave and skill switch end the session quietly', async () => {
