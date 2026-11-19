@@ -242,6 +242,7 @@ const VOICES = {
         you: 'say a short goodbye first; the conversation ends there.'}
 };
 const CLOCK_ABILITY = 'use your timer and alarm';
+const MEMORY_ABILITY = 'keep, forget and look up memories';
 const enumOf = list => ({type: 'object', additionalProperties: false, required: ['name'], properties: {name: {type: 'string', enum: list}}});
 // The tools, each with who speaks (`voice`) and the ability it gives (for the instructions).
 const TOOLS = [
@@ -314,13 +315,31 @@ const TOOLS = [
         description: 'Plays internet radio in a genre; without a genre, Jibo\'s last station or his station list.',
         parameters: {type: 'object', additionalProperties: false, properties: {genre: {type: 'string', enum: Object.keys(RADIO)}}}},
     {name: 'open_app', voice: 'skill', ability: 'open your apps', apps: true,
-        description: 'Opens one of Jibo\'s apps on his screen; when the person is done with it, the conversation continues.'}
+        description: 'Opens one of Jibo\'s apps on his screen; when the person is done with it, the conversation continues.'},
+    // Memory (lib/memory.js), offered when the `memory` setting is on. Several people talk to Jibo
+    // and he cannot tell them apart, so facts are about the household, in the third person (D53).
+    {name: 'remember', memory: true, voice: 'talk', ability: MEMORY_ABILITY,
+        description: 'Saves a fact for later conversations, when a person asks Jibo to remember something. Write it as one short sentence ' +
+            'in the third person, never "I" or "you": with the name if the person gave one ("Sam\'s birthday is March 3."), ' +
+            'otherwise "someone in the house". For a fact tied to a day, set expires to the last day it matters.',
+        parameters: {type: 'object', additionalProperties: false, required: ['text'], properties: {
+            text: {type: 'string', description: 'The fact, at most 160 characters.'},
+            expires: {type: 'string', description: 'Optional: the last day it matters, as YYYY-MM-DD.'}}}},
+    {name: 'forget', memory: true, voice: 'talk', ability: MEMORY_ABILITY,
+        description: 'Removes a saved fact when a person asks Jibo to forget it. Give the fact in a few words. If several facts match, ' +
+            'the result lists them: ask which one, then call again with its words.',
+        parameters: {type: 'object', additionalProperties: false, required: ['about'], properties: {about: {type: 'string'}}}},
+    {name: 'recall', memory: true, voice: 'talk', ability: MEMORY_ABILITY,
+        description: 'Looks through the notes of conversations from the last two weeks and the saved facts, when a person asks about ' +
+            'an earlier conversation that the notes in your instructions do not cover. Give a few keywords.',
+        parameters: {type: 'object', additionalProperties: false, required: ['query'], properties: {query: {type: 'string'}}}}
 ];
 
-// The tools on offer: all of TOOLS, except the cloud ones the `cloudSkills` setting does not name.
+// The tools on offer: all of TOOLS, except the cloud ones the `cloudSkills` setting does not name,
+// and the memory tools unless the `memory` setting is on.
 function offered(config) {
-    const cloud = cloudSkills(config);
-    return TOOLS.filter(t => !t.cloud || cloud.indexOf(t.name) >= 0);
+    const cloud = cloudSkills(config), memory = !!config && config.memory === true;
+    return TOOLS.filter(t => (!t.cloud || cloud.indexOf(t.name) >= 0) && (!t.memory || memory));
 }
 // What the extra apps do, for open_app's description (D39).
 function appNotes(config) {
@@ -442,6 +461,16 @@ function plan(name, argsText, config) {
         // The weekday is on the calendar page too: anything but "date" is the time.
         const show = args.show === 'date' ? 'date' : 'time';
         return handover(name, CLOCK, launch(show === 'date' ? 'askForDate' : 'askForTime', 'clock'), {show: show});
+    }
+    if (name === 'remember' || name === 'forget' || name === 'recall') {
+        if (!config || config.memory !== true) return {kind: 'error', error: 'memory is switched off for Jibo'};
+        const field = name === 'remember' ? 'text' : name === 'forget' ? 'about' : 'query';
+        const text = String(args[field] || '').trim().slice(0, 300);
+        if (!text) return {kind: 'error', error: 'no ' + field + ' given'};
+        const out = {op: name};
+        out[field] = text;
+        if (name === 'remember' && typeof args.expires === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(args.expires)) out.expires = args.expires;
+        return {kind: 'local', run: 'memory', args: out};
     }
     if (name === 'dance') return {kind: 'local', run: 'dance'};
     if (name === 'about_jibo') return {kind: 'local', run: 'facts'};

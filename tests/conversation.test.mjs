@@ -645,7 +645,8 @@ function fakeActions(over = {}) {
         setVolume: over.setVolume || (args => { a.volume = args; return {ok: true, volume: args.level || 7, of: 10}; }),
         installed: over.installed || (() => true),
         localTime: () => ({year: 2026, monthNum: 10, date: 13, dayOfWeek: 'Friday', hour: 15, minute: 7, zone: 'Europe/Amsterdam'}),
-        facts: over.facts || (() => '- Movies: Wall-E.')};
+        facts: over.facts || (() => '- Movies: Wall-E.'),
+        memory: over.memory || null};
     return a;
 }
 async function until(fn, ms = 2000) { for (let i = 0; i < ms / 5 && !fn(); i++) await sleep(5); assert.ok(fn(), 'condition not reached'); }
@@ -660,8 +661,8 @@ test('actions: tools go in session.update, open_app with the built-in apps and t
     const session = h.sent.find(e => e.type === 'session.update').session;
     assert.equal(session.tool_choice, 'auto');
     assert.deepEqual(session.tools.map(t => t.name), ['get_time', 'about_jibo', 'dance', 'set_volume', 'check_clock', 'set_timer', 'cancel_timer',
-        'set_alarm', 'cancel_alarm', 'use_skill', 'play_music', 'play_radio', 'open_app']);
-    assert.deepEqual(session.tools.at(-1).parameters.properties.name.enum, ['clock', 'settings', 'menu', 'gallery', 'yoga', 'meet someone new', 'stargazer']);
+        'set_alarm', 'cancel_alarm', 'use_skill', 'play_music', 'play_radio', 'open_app', 'remember', 'forget', 'recall']);
+    assert.deepEqual(session.tools.find(t => t.name === 'open_app').parameters.properties.name.enum, ['clock', 'settings', 'menu', 'gallery', 'yoga', 'meet someone new', 'stargazer']);
     h.talk.close();
     const plain = harness();
     plain.talk.open(); await untilListening(plain);
@@ -688,6 +689,44 @@ test('about_jibo runs in Noggin: FACTS.md goes back as the result, then the foll
     await until(() => empty.sent.some(e => e.type === 'response.create'));
     assert.equal(JSON.parse(empty.sent.find(e => e.item && e.item.type === 'function_call_output').item.output).ok, false);
     empty.talk.close();
+});
+
+test('remember runs in Noggin: the memory runner gets the parsed fact, its result goes back; a thrown error is a plain failure', async () => {
+    const calls = [];
+    const h = harness({actions: fakeActions({memory: args => { calls.push(args); return {ok: true, saved: 'Sam likes jazz.'}; }})});
+    h.talk.open(); await untilListening(h);
+    await youSay(h, 'remember that I am Sam and I like jazz');
+    callReply(h, 'r1', '', [['remember', {text: 'Sam likes jazz', expires: 'soon'}, 'm1']]);
+    await until(() => h.sent.some(e => e.type === 'response.create'));
+    assert.deepEqual(calls, [{op: 'remember', text: 'Sam likes jazz'}]);
+    assert.deepEqual(JSON.parse(h.sent.find(e => e.item && e.item.type === 'function_call_output').item.output), {ok: true, saved: 'Sam likes jazz.'});
+    h.talk.close();
+    const broken = harness({actions: fakeActions({memory: () => { throw Error('EROFS'); }})});
+    broken.talk.open(); await untilListening(broken);
+    await youSay(broken, 'what did we talk about last week');
+    callReply(broken, 'r1', '', [['recall', {query: 'last week'}, 'm1']]);
+    await until(() => broken.sent.some(e => e.type === 'response.create'));
+    const out = JSON.parse(broken.sent.find(e => e.item && e.item.type === 'function_call_output').item.output);
+    assert.equal(out.ok, false);
+    assert.doesNotMatch(out.error, /EROFS/);
+    broken.talk.close();
+});
+
+test('instructions with memory: the notes come last, the "no saved memory" line goes, tools named only when offered', () => {
+    const now = new Date(2026, 10, 19, 19, 30), block = 'What you remember ... Facts:\n- Sam likes jazz.';
+    const off = core.instructions('S', 'I', now, {apps: [], config: {memory: false}});
+    assert.match(off, /no tools, files or saved memory/);
+    const on = core.instructions('S', 'I', now, {apps: [], config: {memory: true}}, {learn: true, block});
+    assert.ok(on.endsWith(block));
+    assert.doesNotMatch(on, /saved memory/);
+    assert.match(on, /never claim to remember something that is not in them/);
+    assert.match(on, /After each conversation you keep a short note/);
+    assert.match(on, /use remember or forget; for an earlier conversation your notes do not cover, use recall/);
+    const noTools = core.instructions('S', 'I', now, null, {learn: false, block});
+    assert.match(noTools, /You cannot keep anything new yourself/);
+    assert.doesNotMatch(noTools, /use recall/);
+    // The block is the same text however long the session: nothing in it depends on the turn.
+    assert.equal(core.instructions('S', 'I', now, null, {learn: true, block}), core.instructions('S', 'I', now, null, {learn: true, block}));
 });
 
 test('get_time hands over to Jibo\'s clock: no words first, the clock face for the time, the calendar for the date; Noggin comes back', async () => {

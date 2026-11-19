@@ -10,6 +10,7 @@ const jibo = require('jibo');
 const settings = require('./lib/settings'), Conversation = require('./lib/controller'), Microphone = require('./lib/mic');
 const openai = require('./lib/openai'), core = require('./lib/core'), ConversationLog = require('./lib/conversation-log');
 const actions = require('./lib/actions'), comeback = require('./lib/comeback'), createLog = require('./lib/log');
+const memory = require('./lib/memory'), recap = require('./lib/recap');
 const OWN = require('./package.json').name;
 const RESUME_MS = 15000;
 // After any handover the other skill (or @be/nimbus for the cloud) takes over within seconds; if
@@ -59,11 +60,13 @@ class Noggin extends BeSkill {
             ? new Microphone.ProcessMicrophone({device: config.micDevice, onExit: report => session && session.onMicExit(report)})
             : new Microphone(jibo, {onTrack: name => log.write({kind: 'microphone_track', event: name})});
         const abilities = config.actions ? {apps: Object.keys(actions.apps(config)), config: config} : null;
-        const instructions = core.instructions(persona.soul, persona.identity, actions.localTime(jibo), abilities);
+        const notes = this.memoryNotes(dataDir, config, back, log);
+        const instructions = core.instructions(persona.soul, persona.identity, actions.localTime(jibo), abilities, notes);
         session = this.session = new Conversation({
             jibo: jibo, config: config, log: log,
             instructions: instructions,
-            persona: {edited: Object.keys(persona.edited).filter(name => persona.edited[name]), chars: instructions.length, facts: persona.facts.length},
+            persona: {edited: Object.keys(persona.edited).filter(name => persona.edited[name]), chars: instructions.length, facts: persona.facts.length,
+                memory: notes ? notes.block.length : null},
             connect: () => openai.connect(config),
             mic: mic,
             classify: config.expressions ? openai.classifier(config) : null,
@@ -76,13 +79,27 @@ class Noggin extends BeSkill {
                 setVolume: args => actions.setVolume(jibo, args),
                 installed: pkg => actions.installed(name => require.resolve(name), pkg),
                 localTime: () => actions.localTime(jibo),
-                facts: () => persona.facts
+                facts: () => persona.facts,
+                memory: config.memory ? args => memory.tool(dataDir, args, memory.dayOf(actions.localTime(jibo))) : null
             } : null,
             resume: back,
             openedAt: openedAt,
             startup: startup
         });
         return session.open().then(reason => { if (this.session === session) this.session = null; return reason; });
+    }
+    // What Jibo remembers, for the end of the instructions (D44): null when memory is off or
+    // cannot be read. After a handover the comeback carries the conversation, so no tail (D52).
+    memoryNotes(dataDir, config, back, log) {
+        if (!config.memory) return null;
+        try {
+            const state = memory.read(dataDir), today = memory.dayOf(actions.localTime(jibo));
+            const tail = back ? '' : recap.tail(dataDir, state, Date.now(), log.file);
+            return {learn: config.memoryLearn !== false, block: memory.block(state, today, tail)};
+        } catch (error) {
+            this.tagged.warn('memory left out: ' + error.message);
+            return null;
+        }
     }
     // The conversation handed an action to another skill: when it is done and Jibo is idle and
     // quiet, open Noggin again (open() above picks up `resume`). Music and radio do not come back.

@@ -244,10 +244,10 @@ test('about_jibo: answered in Noggin from the facts', () => {
 test('who speaks: every tool declares it, and its description, the instructions and the comeback follow from it', () => {
     const voices = Object.keys(actions.VOICES);
     assert.deepEqual(voices.sort(), ['leaves', 'skill', 'talk']);
-    const config = {cloudSkills: Object.keys(actions.CLOUD)};
+    const config = {cloudSkills: Object.keys(actions.CLOUD), memory: true};
     const sent = actions.tools(config);
     const live = actions.TOOLS.filter(t => !(t.cloud && actions.CLOUD[t.name].disabled));
-    assert.equal(sent.length, live.length, 'every tool is offered (with every cloud feature on), except disabled ones');
+    assert.equal(sent.length, live.length, 'every tool is offered (with every cloud feature and memory on), except disabled ones');
     assert.ok(!sent.some(t => t.name === 'joke'), 'joke is disabled');
     for (const tool of live) {
         assert.ok(voices.includes(tool.voice), tool.name + ' says who speaks');

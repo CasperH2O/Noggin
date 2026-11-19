@@ -277,6 +277,39 @@ function block(state, today, tail) {
     return lines.join('\n');
 }
 
+// ---- the tools (remember, forget, recall) ----
+// args from actions.plan: {op, text, expires} | {op, about} | {op, query}. The result goes to the
+// model as it is. The memory block in the instructions stays as it was for the session (D44), so a
+// change says so.
+function tool(dir, args, today) {
+    if (args.op === 'remember') {
+        const r = update(dir, state => {
+            const added = addFact(state, args.text, 'asked', {expires: args.expires || null, today: today});
+            return added.ok ? added : {unchanged: true, ok: false, reason: added.reason};
+        });
+        if (r.ok) return {ok: true, saved: r.fact.text, already: r.duplicate ? 'this was already saved' : undefined};
+        return {ok: false, error: r.reason === 'full' ? 'your memory is full: someone has to forget something first, or remove notes on your settings page'
+            : r.reason === 'expired' ? 'that day has passed' : 'that cannot be saved as a fact (' + r.reason + ')'};
+    }
+    if (args.op === 'forget') {
+        const r = update(dir, state => {
+            const exact = state.facts.filter(f => key(f.text) === key(args.about));
+            const matches = exact.length ? exact : findFacts(state, args.about);
+            if (matches.length !== 1) return {unchanged: true, matches: matches.map(f => f.text)};
+            removeFact(state, matches[0].id);
+            return {forgot: matches[0].text};
+        });
+        if (r.forgot) return {ok: true, forgot: r.forgot, note: 'gone from your memory: do not use it again in this conversation'};
+        if (r.matches.length) return {ok: false, error: 'several facts match: ask which one', matches: r.matches.slice(0, 5)};
+        return {ok: false, error: 'no saved fact matches that'};
+    }
+    if (args.op === 'recall') {
+        const found = search(read(dir), args.query, 3, today);
+        return found.length ? {ok: true, found: found} : {ok: true, found: [], note: 'nothing in your notes about that: say you do not remember'};
+    }
+    return {ok: false, error: 'unknown memory action'};
+}
+
 module.exports = {FILE, FACT_MAX, FACT_CHARS, MAX_FACTS, SUMMARY_MAX, SUMMARY_CHARS, LOADED_SUMMARIES, KEEP_DAYS, MAX_SUMMARIES,
     file, empty, read, write, update, key, words, clean, dayOf, partOf, when, label, addFact, editFact, removeFact, removeSummary,
-    addSummary, prune, search, findFacts, loaded, block};
+    addSummary, prune, search, findFacts, loaded, block, tool};

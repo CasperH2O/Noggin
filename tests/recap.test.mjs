@@ -206,3 +206,16 @@ test('loop: one pass at a time, nothing without a config, stop aborts the reques
     await new Promise(r => setTimeout(r, 20));
     assert.match(lines.join('\n'), /recapped 1 log/);
 });
+
+test('tail: the end of a conversation that ended under 10 minutes ago, unless it has a summary or is this one', () => {
+    const dir = setup(), t0 = new Date(2026, 10, 19, 10, 0, 0).getTime();
+    const name = writeLog(dir, t0, [{kind: 'you', text: 'my cat is called Moos'}, {kind: 'jibo', text: 'Moos! Lovely.'}, {kind: 'session_end'}], t0 + 60000);
+    const state = memory.empty();
+    const text = recap.tail(dir, state, t0 + 4 * 60000, null);
+    assert.match(text, /ended 3 minutes ago, perhaps with someone else/);
+    assert.match(text, /Person: my cat is called Moos\nJibo: Moos! Lovely\.$/);
+    assert.equal(recap.tail(dir, state, t0 + 12 * 60000, null), '');
+    assert.equal(recap.tail(dir, state, t0 + 4 * 60000, path.join(dir, 'logs', name)), '');
+    memory.addSummary(state, {text: 'Talked about the cat.', day: '2026-11-19', at: t0, logs: [name]});
+    assert.equal(recap.tail(dir, state, t0 + 4 * 60000, null), '');
+});

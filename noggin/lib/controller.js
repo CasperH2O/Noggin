@@ -675,9 +675,14 @@ class Conversation {
             .then(() => speech.speak((line ? core.speechText(line) + ' ' : '') + "<anim name='" + name + "' endNeutral='true'/>"))
             .then(() => ({name: name, style: style, from: from, announced: announced}));
     }
-    // dance, about_jibo, set_volume, check_clock, and the first step of cancel_timer/cancel_alarm.
+    // dance, about_jibo, set_volume, check_clock, remember/forget/recall, and the first step of
+    // cancel_timer/cancel_alarm.
     runLocal(run, args, turn) {
         const acts = this.acts;
+        if (run === 'memory') {
+            return Promise.resolve().then(() => acts.memory ? acts.memory(args || {}) : {ok: false, error: 'memory is switched off for Jibo'})
+                .catch(() => ({ok: false, error: 'your memory could not be read or written just now'}));
+        }
         if (run === 'facts') {
             const facts = acts.facts ? String(acts.facts() || '') : '';
             return Promise.resolve(facts ? {ok: true, facts: facts} : {ok: false, error: 'no facts available: say you are not sure about that one'});

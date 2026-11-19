@@ -369,17 +369,25 @@ function personaText(soul, identity) {
 }
 // now: a Date or actions.localTime() (Jibo's home timezone). abilities: null (no tools) or
 // {apps: [names], config} when Noggin offers its tools (lib/actions.js); config's cloudSkills
-// says which cloud tools are named.
-function voiceSetup(now, abilities) {
+// says which cloud tools are named. memory: null (off) or {learn, block}: block (lib/memory.js)
+// goes after everything else and stays the same all session, so the prompt cache keeps it (D44).
+function voiceSetup(now, abilities, memory) {
     const at = actions.describeTime(now);
+    const memoryTools = !!(memory && abilities && abilities.config && abilities.config.memory === true);
+    const notes = !memory ? ''
+        : 'Your memory is the notes after this setup; never claim to remember something that is not in them. ' +
+          (memory.learn ? 'After each conversation you keep a short note of it and the facts worth keeping, so what people tell you stays with you. ' : '') +
+          (memoryTools ? 'When someone asks you to remember or forget something, use remember or forget; for an earlier conversation your notes do not cover, use recall. '
+              : memory.learn ? '' : 'You cannot keep anything new yourself. ');
+    const none = memory ? 'tools or files: never claim to look something up or do something you cannot. '
+        : 'tools, files or saved memory: never claim to look something up, remember something for later, or do something you cannot. ';
     // Which tools, and who speaks for each, come from the tool table (lib/actions.js).
     const tools = abilities
         ? actions.rules(abilities.config) +
           'Never say something is done unless a tool result says so. For the time or date, always use get_time; ' +
-          'for a question about yourself that the facts above do not answer, use about_jibo. ' +
-          'Apart from these you have no tools, files or saved memory: never claim to look something up, remember something for later, or do something you cannot. '
-        : 'You cannot see the room yet, and in this voice mode you have no tools, files or saved memory: never claim to look something up, ' +
-          'remember something for later, or do something you cannot. ';
+          'for a question about yourself that the facts above do not answer, use about_jibo. ' + notes +
+          'Apart from these you have no ' + none
+        : notes + 'You cannot see the room yet, and in this voice mode you have no ' + none;
     return 'Your current setup:\n' +
         'You are in a spoken conversation on your physical Jibo body. You hear your person through your microphone, ' +
         'and every word you write is spoken aloud in your own voice, so write only words meant to be heard: ' +
@@ -390,7 +398,9 @@ function voiceSetup(now, abilities) {
         'When the session started it was ' + at.date + ', ' + at.time + ' local time on the robot (the clock may be off if Jibo was offline). ' +
         'Your person ends the conversation by saying goodbye.';
 }
-function instructions(soul, identity, now, abilities) { return personaText(soul, identity) + '\n\n' + voiceSetup(now, abilities); }
+function instructions(soul, identity, now, abilities, memory) {
+    return personaText(soul, identity) + '\n\n' + voiceSetup(now, abilities, memory) + (memory && memory.block ? '\n\n' + memory.block : '');
+}
 
 // Back in Noggin after another skill did something: one system message with the conversation so
 // far, what happened and, for the clock, what is true now, so the model carries on from there.

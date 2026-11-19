@@ -153,6 +153,26 @@ function apply(state, answer, meta) {
     return report;
 }
 
+// ---- conversation to conversation (D52) ----
+const TAIL_MS = 10 * 60000, TAIL_LINES = 6, TAIL_CHARS = 1200;
+// The end of the previous conversation, when it ended under 10 minutes ago and no summary of it is
+// in memory yet; '' otherwise. current: this conversation's log file, never counted.
+function tail(dir, state, now, current) {
+    const name = ConversationLog.list(dir).map(l => l.name).filter(n => !current || n !== path.basename(current))[0];
+    if (!name || state.summaries.some(s => s.logs.indexOf(name) >= 0)) return '';
+    const file = path.join(dir, 'logs', name);
+    let mtime, text;
+    try { mtime = fs.statSync(file).mtime.getTime(); text = fs.readFileSync(file, 'utf8'); } catch (_) { return ''; }
+    if (now - mtime > TAIL_MS) return '';
+    const lines = info(name, entries(text)).lines.slice(-TAIL_LINES);
+    if (!lines.length) return '';
+    let body = lines.map(l => (l.speaker === 'person' ? 'Person: ' : 'Jibo: ') + l.text).join('\n');
+    if (body.length > TAIL_CHARS) body = '...' + body.slice(-TAIL_CHARS);
+    const minutes = Math.max(1, Math.round((now - mtime) / 60000));
+    return 'Your previous conversation ended ' + minutes + (minutes === 1 ? ' minute' : ' minutes') +
+        ' ago, perhaps with someone else. It ended like this:\n' + body;
+}
+
 // ---- one pass of the loop ----
 // deps: {dataDir, config, post(route, body, timeoutMs) -> Promise<{status, json}>, now(), local(ms) -> local
 // time, log}. Resolves what it did: {skipped} | {waiting} | {recapped, report} | {failed}.
@@ -239,4 +259,4 @@ function loop(options) {
 }
 
 module.exports = {SYSTEM, STALE_MS, CONTINUE_MS, TRIES, DAILY_CALLS, TRANSCRIPT_MAX, entries, info, chains, finished, started,
-    transcript, request, result, apply, pass, loop};
+    transcript, request, result, apply, tail, pass, loop};
