@@ -442,3 +442,11 @@ textarea.about { min-height: 0; resize: vertical; font-family: inherit; font-siz
 .budget-top { padding-top: 14px; }
 .help-bottom { padding-bottom: 14px; }
 .persona-help { margin: -4px 0 10px; }
+
+/* Memory tab */
+.memory-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.memory-edit input { width: 100%; }
+.log-row.is-editing { flex-wrap: wrap; }
+.log-row.is-editing .memory-text { flex-basis: 100%; }
+.log-row.is-editing .log-actions { margin-left: auto; }
+.memory-tools { display: flex; justify-content: space-between; gap: 12px; padding: 16px 0 8px; }

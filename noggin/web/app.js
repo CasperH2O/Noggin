@@ -10,6 +10,7 @@
         {id: 'persona', label: 'Persona', icon: '<circle cx="12" cy="8.5" r="4"/><path d="M4.5 20c.6-3.8 3.8-5.8 7.5-5.8s6.9 2 7.5 5.8"/>'},
         {id: 'behaviour', label: 'Behaviour', icon: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>'},
         {id: 'skills', label: 'Skills', icon: '<rect x="4" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.6"/>'},
+        {id: 'memory', label: 'Memory', icon: '<path d="M6.5 4h10A1.5 1.5 0 0 1 18 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-10Z"/><path d="M6.5 4v16M10 8.5h5M10 12h5M10 15.5h3"/>'},
         {id: 'history', label: 'History', icon: '<path d="M5 5h14a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 19 16h-8l-4.5 3.5V16H5a1.5 1.5 0 0 1-1.5-1.5v-8A1.5 1.5 0 0 1 5 5Z"/><path d="M8 9.5h8M8 12.5h5"/>'}
     ];
     const PERSONA_PARTS = [
@@ -22,6 +23,7 @@
         persona: 'Who Jibo is in a conversation. Noggin adds what is true about this setup (his voice, his skills, the time) after these texts.',
         behaviour: 'How Jibo greets you, moves and listens.',
         skills: 'What Jibo may do for you during a conversation.',
+        memory: 'What Jibo remembers about your household, and short notes of the last two weeks of conversations. Several people talk to Jibo and he cannot tell who is who, so everything here is shared by everyone in the house.',
         history: 'What was said in recent conversations. Never audio, never the key.'
     };
 
@@ -454,11 +456,72 @@
         return settingsPanel('history').concat([el('h2', {class: 'section-header', text: 'Recent conversations'}), list]);
     }
 
+    // ---- memory: changes here are saved at once, not with Save ----
+    function memoryPanel() {
+        const facts = el('div', {class: 'setting-block'}, [el('div', {class: 'empty', text: 'Loading…'})]);
+        const notes = el('div', {class: 'setting-block'}, [el('div', {class: 'empty', text: 'Loading…'})]);
+        const usage = el('div', {class: 'field-help'});
+        const failed = () => { facts.replaceChildren(el('div', {class: 'empty', text: 'Jibo did not answer.'})); notes.replaceChildren(); };
+        function act(url, body) {
+            return request('POST', url, body).then(result => {
+                if (result.status !== 200) { toast(result.json && result.json.error || 'Not saved.', true); return false; }
+                show(result.json);
+                return true;
+            }).catch(() => { toast('Jibo did not answer.', true); return false; });
+        }
+        function factRow(fact) {
+            const sub = (fact.source === 'asked' ? 'Kept on request' : 'Learned from a conversation') + (fact.expires ? ' · until ' + fact.expires : '');
+            const row = el('div', {class: 'log-row'});
+            const view = () => { row.classList.remove('is-editing'); row.replaceChildren(
+                el('div', {class: 'memory-text'}, [el('div', {text: fact.text}), el('div', {class: 'log-sub', text: sub})]),
+                el('div', {class: 'log-actions'}, [
+                    el('button', {class: 'btn btn-flat', type: 'button', text: 'Edit', onclick: edit}),
+                    el('button', {class: 'btn btn-flat-danger', type: 'button', text: 'Delete', onclick: () => act('/api/memory/delete', {kind: 'fact', id: fact.id})})
+                ])); };
+            function edit() {
+                row.classList.add('is-editing');
+                const input = el('input', {type: 'text', value: fact.text, maxlength: 160, 'aria-label': 'Fact'});
+                row.replaceChildren(el('div', {class: 'memory-text memory-edit'}, [input]), el('div', {class: 'log-actions'}, [
+                    el('button', {class: 'btn btn-flat', type: 'button', text: 'Save', onclick: () => act('/api/memory/fact', {id: fact.id, text: input.value, expires: fact.expires || ''})}),
+                    el('button', {class: 'btn btn-flat', type: 'button', text: 'Cancel', onclick: view})
+                ]));
+                input.focus();
+            }
+            view();
+            return row;
+        }
+        function show(m) {
+            usage.textContent = m.facts.length + (m.facts.length === 1 ? ' fact, ' : ' facts, ') + Math.round(100 * m.used / m.max) + '% of the space for facts.';
+            const input = el('input', {type: 'text', maxlength: 160, placeholder: 'Sam\'s birthday is March 3', 'aria-label': 'New fact'});
+            const add = () => { if (input.value.trim()) act('/api/memory/fact', {text: input.value}); };
+            input.addEventListener('keydown', event => { if (event.key === 'Enter') add(); });
+            facts.replaceChildren.apply(facts, (m.facts.length ? m.facts.map(factRow) : [el('div', {class: 'empty', text: 'No facts yet.'})]).concat([
+                el('div', {class: 'log-row memory-add'}, [el('div', {class: 'memory-text memory-edit'}, [input]),
+                    el('div', {class: 'log-actions'}, [el('button', {class: 'btn btn-flat', type: 'button', text: 'Add', onclick: add})])])
+            ]));
+            notes.replaceChildren.apply(notes, m.summaries.length ? m.summaries.map(note => el('div', {class: 'log-row'}, [
+                el('div', {class: 'memory-text'}, [el('div', {class: 'log-title', text: note.when}), el('div', {text: note.text})]),
+                el('div', {class: 'log-actions'}, [el('button', {class: 'btn btn-flat-danger', type: 'button', text: 'Delete',
+                    onclick: () => act('/api/memory/delete', {kind: 'summary', id: note.id})})])
+            ])) : [el('div', {class: 'empty', text: 'No notes yet. After a conversation ends, Jibo writes one within a minute.'})]);
+        }
+        request('GET', '/api/memory').then(result => { if (result.status === 200) show(result.json); else failed(); }).catch(failed);
+        const forget = el('button', {class: 'btn btn-flat-danger', type: 'button', text: 'Forget everything', onclick: () => {
+            if (window.confirm('Jibo forgets every fact and every note. This cannot be undone.')) act('/api/memory/clear', {confirm: true});
+        }});
+        return settingsPanel('memory').concat([
+            el('h2', {class: 'section-header', text: 'Facts'}), usage, facts,
+            el('h2', {class: 'section-header', text: 'Recent conversations'}),
+            el('div', {class: 'field-help', text: 'Notes Jibo keeps for two weeks. He has the newest few at hand; he looks up the rest when someone asks.'}), notes,
+            el('div', {class: 'memory-tools'}, [el('a', {class: 'btn btn-flat', href: '/api/memory/export', download: 'noggin-memory.json', text: 'Export'}), forget])
+        ]);
+    }
+
     // ---- page ----
     function render() {
         const main = $('main');
         const scroll = window.scrollY;
-        const panel = active === 'persona' ? personaPanel() : active === 'history' ? historyPanel() : settingsPanel(active);
+        const panel = active === 'persona' ? personaPanel() : active === 'history' ? historyPanel() : active === 'memory' ? memoryPanel() : settingsPanel(active);
         const intro = active === 'persona' ? [] : [el('p', {class: 'hint', text: INTRO[active]})];
         const notices = state.broken ? [el('div', {class: 'banner', text: 'Jibo\'s settings file could not be read (' + state.broken + '). Saving writes a new one.'})] : [];
         main.replaceChildren(el('section', {class: 'panel is-active'}, notices.concat(intro, panel)));

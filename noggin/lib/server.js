@@ -10,6 +10,7 @@
 const fs = require('fs'), path = require('path');
 const settings = require('./settings'), core = require('./core'), actions = require('./actions');
 const openai = require('./openai'), ConversationLog = require('./conversation-log'), describe = require('./describe');
+const memory = require('./memory');
 
 const BODY_MAX = 128 * 1024;
 const REQUEST_TIMEOUT_MS = 15000;
@@ -233,6 +234,59 @@ function create(options) {
             .then(result => { describing = false; return result; }, error => { describing = false; throw error; });
     }
 
+    // ---- memory (the Memory tab, D49) ----
+    function today() { const d = now(); return memory.dayOf({year: d.getFullYear(), monthNum: d.getMonth(), date: d.getDate()}); }
+    // GET /api/memory: the facts and summaries, newest summaries first, and how full the facts are.
+    function memoryView() {
+        const state = memory.read(dataDir()), day = today();
+        return {ok: true,
+            facts: state.facts.map(f => ({id: f.id, text: f.text, source: f.source, expires: f.expires || null, created: f.created})),
+            summaries: state.summaries.slice().reverse().map(s => ({id: s.id, text: s.text, when: memory.label(s, day)})),
+            used: state.facts.reduce((sum, f) => sum + f.text.length + 3, 0), max: memory.FACT_CHARS, maxFacts: memory.MAX_FACTS,
+            keepDays: memory.KEEP_DAYS, learning: state.since !== null};
+    }
+    const MEMORY_ERRORS = {full: 'Jibo\'s memory is full: delete a fact first.', 'too long': 'At most ' + memory.FACT_MAX + ' characters.',
+        empty: 'Write the fact first.', 'not a plain memory': 'That reads like an instruction, a link or code, not a fact.',
+        expired: 'That day has passed.', unknown: 'That fact is gone already.'};
+    // POST /api/memory/fact {id?, text, expires?}: add a fact, or change one. A fact written or
+    // changed here counts as asked: the automatic recap never removes it.
+    function saveFact(body) {
+        const text = typeof body.text === 'string' ? body.text : '', expires = typeof body.expires === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.expires) ? body.expires : null;
+        const r = memory.update(dataDir(), state => {
+            const done = typeof body.id === 'string' && body.id
+                ? memory.editFact(state, body.id, text, {source: 'asked'})
+                : memory.addFact(state, text, 'asked', {expires: expires, today: today()});
+            if (done.ok && body.id) { if (expires) done.fact.expires = expires; else delete done.fact.expires; }
+            return done.ok ? done : {unchanged: true, ok: false, reason: done.reason};
+        });
+        if (!r.ok) return {httpStatus: 400, body: {ok: false, error: MEMORY_ERRORS[r.reason] || 'Not saved.'}};
+        log.info('memory: fact ' + (body.id ? 'changed' : r.duplicate ? 'already kept' : 'added') + ' on the settings page');
+        return memoryView();
+    }
+    // POST /api/memory/delete {kind: 'fact'|'summary', id}
+    function deleteMemory(body) {
+        const id = typeof body.id === 'string' ? body.id : '';
+        const r = memory.update(dataDir(), state => {
+            const done = body.kind === 'summary' ? memory.removeSummary(state, id) : memory.removeFact(state, id);
+            return done.ok ? done : {unchanged: true, ok: false};
+        });
+        if (!r.ok) return {httpStatus: 404, body: {ok: false, error: MEMORY_ERRORS.unknown}};
+        return memoryView();
+    }
+    // POST /api/memory/clear {confirm: true}: every fact and note goes. Which logs were already
+    // recapped is kept, so nothing old is recapped again.
+    function clearMemory(body) {
+        if (body.confirm !== true) return {httpStatus: 400, body: {ok: false, error: 'not confirmed'}};
+        memory.update(dataDir(), state => { state.facts = []; state.summaries = []; });
+        log.info('memory: everything forgotten on the settings page');
+        return memoryView();
+    }
+    function exportMemory(res) {
+        const state = memory.read(dataDir());
+        send(res, 200, 'application/json; charset=utf-8', JSON.stringify({facts: state.facts, summaries: state.summaries}, null, 2),
+            {'Content-Disposition': 'attachment; filename="noggin-memory-' + today() + '.json"'});
+    }
+
     function serveStatic(res, entry) {
         fs.readFile(path.join(webDir, entry.file), (error, data) => {
             if (error) return send(res, 404, 'text/plain; charset=utf-8', 'not found');
@@ -255,7 +309,10 @@ function create(options) {
         if (method === 'GET' && pathname === '/api/logs') return json(res, 200, {logs: ConversationLog.list(dataDir()), keep: ConversationLog.KEEP});
         if (method === 'GET' && pathname.indexOf('/api/logs/') === 0) return serveLog(res, pathname.slice('/api/logs/'.length));
         if (method === 'GET' && pathname === '/api/skills/found') return found().then(result => json(res, result.httpStatus, result.body));
-        const writes = {'/api/settings': save, '/api/test-key': testKey, '/api/apps/describe': describeApp};
+        if (method === 'GET' && pathname === '/api/memory') return json(res, 200, memoryView());
+        if (method === 'GET' && pathname === '/api/memory/export') return exportMemory(res);
+        const writes = {'/api/settings': save, '/api/test-key': testKey, '/api/apps/describe': describeApp,
+            '/api/memory/fact': saveFact, '/api/memory/delete': deleteMemory, '/api/memory/clear': clearMemory};
         if (!writes[pathname]) return json(res, 404, {ok: false, error: 'not found'});
         if (method !== 'POST') return json(res, 405, {ok: false, error: 'POST only'});
         if (!sameOrigin(req)) return json(res, 403, {ok: false, error: 'only from this settings page'});
