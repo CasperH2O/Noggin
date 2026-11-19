@@ -347,4 +347,4 @@ function updatePersona(dir, patch, options, packagedDir) {
 }
 
 module.exports = {SCHEMA, DEFAULTS, PERSONA, dataDir, file, read, update, publicView, schemaView, check,
-    persona, updatePersona, packaged};
+    persona, updatePersona, packaged, atomic};
