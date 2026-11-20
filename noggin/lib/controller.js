@@ -96,6 +96,7 @@ class ThinkingEye {
 const LAG_MS = 50, LAG_SPIKE_MS = 80, LAG_SPIKES = 12;
 // A hold on the microphone (a reaction that moves the body) never lasts longer than this (D90).
 const HOLD_MAX_MS = 3000;
+const QUIET_WARM_MS = 180000;  // warm the classifier again when speech starts after this long without a request (D93)
 let loadavg = () => null;
 try { const os = require('os'); loadavg = () => Math.round(os.loadavg()[0] * 100) / 100; } catch (_) {}
 
@@ -230,6 +231,9 @@ class Conversation {
         })).then(() => this.sayNotice());
         // A failure waits for the greeting, so Jibo finishes his "Hi!" before he apologises.
         const afterGreeting = promise => promise.catch(error => greeted.then(() => { throw error; }));
+        // The classifier does not need the realtime session: its slow first answers (D93) happen
+        // while Jibo greets. After the greeting is queued, so its start is not held up.
+        eye.then(() => { if (this.active) this.warm('start'); });
         const connected = afterGreeting(this.connect().catch(error => { throw openaiError(error); }));
         const micReady = afterGreeting(Promise.resolve().then(() => {
             this.mark('mic_start');
@@ -268,7 +272,7 @@ class Conversation {
             rt.listen(event => { if (this.rt === rt) this.onEvent(event); });
             const updated = this.waitFor(['session.updated'], 10000);
             rt.send(core.sessionUpdate(config, this.instructions, this.acts ? actions.tools(config) : null));
-            return updated.then(() => { this.mark('session_updated'); this.log.write({kind: 'connected', ms: this.now() - started}); this.warm('connected'); });
+            return updated.then(() => { this.mark('session_updated'); this.log.write({kind: 'connected', ms: this.now() - started}); });
         });
     }
     // Resolves on the first of `types`; rejects on an error event, a closed connection or the timeout.
@@ -328,12 +332,17 @@ class Conversation {
         turn.skipped = true; clearTimeout(turn.waitTimer); clearTimeout(turn.guard);
         if (this.turn === turn) this.turn = null;
     }
-    // why: 'connected' or 'quiet' (the person starts speaking after a quiet spell).
+    // why: 'start' or 'quiet' (the person starts speaking after a quiet spell).
     warm(why) {
         this.lastClassify = this.now();
         if (!(this.config.expressions && this.classify && this.classify.warm)) return;
         const at = this.since();
-        Promise.resolve(this.classify.warm()).then(r => { if (r && this.active) this.log.write(Object.assign({kind: 'classifier_warm', why: why, at: at}, r)); }, () => {});
+        Promise.resolve(this.classify.warm()).then(r => {
+            if (!r || !this.active) return;
+            this.log.write(Object.assign({kind: 'classifier_warm', why: why, at: at}, r));
+            const switched = (r.requests || []).filter(x => x && x.switched)[0];
+            if (switched) this.log.write({kind: 'classifier_switch', detail: switched.switched});
+        }, () => {});
     }
     // A microphone that never answers must not hold the conversation open with the hotword off.
     startMic() {
@@ -455,7 +464,7 @@ class Conversation {
             this.log.write(Object.assign({kind: 'rt', type: type, state: this.state, status: event.response && event.response.status || undefined,
                 details: event.response && event.response.status_details || undefined}, this.vadTiming(event)));
         if (type === 'input_audio_buffer.speech_started') {
-            if (this.state === 'listening') { clearTimeout(this.silence); this.silence = null; if (this.now() - this.lastClassify > 20000) this.warm('quiet'); }
+            if (this.state === 'listening') { clearTimeout(this.silence); this.silence = null; if (this.now() - this.lastClassify > QUIET_WARM_MS) this.warm('quiet'); }
             // Only a pause, not the end: the person goes on before Jibo says anything (lines may
             // be queued, none started). Drop the reply; keep listening, without clearing what the
             // server already heard. Not for a follow-up after a tool, which is Jibo's own turn.

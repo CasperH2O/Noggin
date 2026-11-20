@@ -778,7 +778,7 @@ test('microphone choice: arecord on the robot, Web Audio elsewhere, or as set', 
     assert.equal(Microphone.choose({micSource: 'arecord'}, sim), 'arecord');
 });
 
-test('the classifier connection is warmed at the start and after a quiet spell', async () => {
+test('the classifier is warmed at the start and after a quiet spell', async () => {
     let warmed = 0;
     const classify = () => Promise.resolve({label: 'none'});
     classify.warm = () => { warmed++; return Promise.resolve(); };
@@ -789,8 +789,102 @@ test('the classifier connection is warmed at the start and after a quiet spell',
     assert.equal(warmed, 1, 'not again right away');
     h.talk.lastClassify -= 30000;
     h.emit({type: 'input_audio_buffer.speech_started'});
+    assert.equal(warmed, 1, 'half a minute of quiet is not enough: OpenAI stays quick for minutes (D93)');
+    h.talk.lastClassify -= 200000;
+    h.emit({type: 'input_audio_buffer.speech_started'});
     assert.equal(warmed, 2);
     h.talk.close();
+});
+
+test('the classifier warm starts while the realtime session is still connecting, once (D93)', async () => {
+    let warmed = 0, release;
+    const classify = () => Promise.resolve({label: 'none'});
+    classify.warm = () => { warmed++; return Promise.resolve(); };
+    const h = harness({classify, connect: (n, rt) => new Promise(resolve => { release = () => resolve(rt); })});
+    h.talk.open();
+    await sleep(60);
+    assert.equal(warmed, 1, 'asked before the session exists');
+    assert.notEqual(h.talk.state, 'listening');
+    assert.deepEqual(h.said, ['Hi!'], 'the greeting does not wait for it');
+    release(); await untilListening(h);
+    assert.equal(warmed, 1, 'not again when the session is ready');
+    h.talk.close();
+});
+
+test('the warm asks the reaction and two line questions at once with the real choices; a refused API switches then (D93)', async () => {
+    const config = Object.assign({}, settings.DEFAULTS, {apiKey: 'sk'});
+    const sent = [];
+    const answer = {answers: [{type: 'choice', name: 'expression', choice: 'none', confidence: 0.9}, {type: 'choice', name: 'size', choice: 'small', confidence: 0.7}]};
+    const classify = openai.classifier(config, (route, body) => { sent.push({route, body}); return Promise.resolve({status: 200, ms: 40, json: answer, conn: {socket: sent.length}}); });
+    const warming = classify.warm();
+    assert.equal(sent.length, 3, 'all three go out before any answer');
+    const result = await warming;
+    assert.deepEqual(result.requests.map(r => r.kind), ['reaction', 'line', 'line']);
+    assert.ok(sent.every(s => s.route === '/decisions'));
+    const choicesOf = body => body.questions[0].choices.map(c => c.value);
+    assert.deepEqual(choicesOf(sent[0].body), core.choices('reaction').map(c => c.value));
+    assert.deepEqual(choicesOf(sent[1].body), core.choices('line').map(c => c.value));
+    assert.notEqual(sent[1].body.input, sent[2].body.input, 'two different lines');
+    assert.equal(sent[0].body.questions.length, 2, 'with the size question, as a real turn');
+    assert.deepEqual(result.requests.map(r => r.conn.socket), [1, 2, 3]);
+    // The account cannot use Decisions: the fallback takes over during the warm, not in turn 1.
+    const routes = [];
+    const refused = openai.classifier(Object.assign({}, config, {fallbackModel: 'gpt-4o-mini'}), (route, body) => {
+        routes.push(route);
+        return Promise.resolve(route === '/decisions' ? {status: 403, ms: 30, json: {error: {code: 'not_enabled'}}}
+            : {status: 200, ms: 50, json: {output_text: '{"expression":"none","size":"small"}'}});
+    });
+    const warmed = await refused.warm();
+    assert.ok(warmed.requests.every(r => r.label === 'none' && /decisions failed/.test(r.switched)), JSON.stringify(warmed));
+    routes.length = 0;
+    await refused('x', 'y', 'line');
+    assert.deepEqual(routes, ['/responses'], 'the first real question goes straight to the fallback');
+    // No warm when Responses is chosen.
+    const plain = openai.classifier(Object.assign({}, config, {classifierApi: 'responses'}), () => { throw Error('nothing should be sent'); });
+    assert.equal(await plain.warm(), null);
+    // A failing request is reported, not thrown.
+    const broken = openai.classifier(config, () => Promise.reject(Error('boom')));
+    assert.ok((await broken.warm()).requests.every(r => r.error === 'boom'));
+});
+
+test('a switch during the warm is logged once, however many requests switched (D93)', async () => {
+    const classify = () => Promise.resolve({label: 'none'});
+    const switched = 'decisions failed (not_enabled), now gpt-4o-mini';
+    classify.warm = () => Promise.resolve({ms: 900, requests: [{kind: 'reaction', ms: 400, switched}, {kind: 'line', ms: 300, switched}, {kind: 'line', ms: 310, switched}]});
+    const h = harness({classify});
+    h.talk.open(); await untilListening(h); await sleep(5);
+    assert.equal(h.logs.filter(e => e.kind === 'classifier_warm').length, 1);
+    const entries = h.logs.filter(e => e.kind === 'classifier_switch');
+    assert.equal(entries.length, 1);
+    assert.match(entries[0].detail, /now gpt-4o-mini/);
+    h.talk.close();
+});
+
+test('a warm that ends after the conversation closed writes nothing and throws nothing (D93)', async () => {
+    let finish;
+    const classify = () => Promise.resolve({label: 'none'});
+    classify.warm = () => new Promise(resolve => { finish = resolve; });
+    const h = harness({classify});
+    h.talk.open(); await untilListening(h);
+    assert.equal(typeof finish, 'function', 'the warm was asked');
+    h.talk.close();
+    finish({ms: 900, requests: [{kind: 'reaction', ms: 400, switched: 'decisions failed (x), now y'}]});
+    await sleep(10);
+    assert.equal(h.logs.filter(e => e.kind === 'classifier_warm' || e.kind === 'classifier_switch' || e.kind === 'exception').length, 0);
+});
+
+test('a conversation that closes before the eye view shows never starts the warm (D93)', async () => {
+    let warmed = 0, showEye;
+    const classify = () => Promise.resolve({label: 'none'});
+    classify.warm = () => { warmed++; return Promise.resolve(); };
+    const h = harness({classify});
+    h.jibo.face.views.forceEyeView = cb => { showEye = cb; };
+    h.talk.open();
+    await sleep(20);
+    h.talk.close();
+    showEye();
+    await sleep(20);
+    assert.equal(warmed, 0);
 });
 
 // ---- actions (0.6.0) ----
@@ -2263,7 +2357,7 @@ test('timing log (D89): warm and label connections, and where the server placed 
     h.talk.open(); await untilListening(h);
     await sleep(5);
     const warm = h.logs.find(e => e.kind === 'classifier_warm');
-    assert.equal(warm.why, 'connected'); assert.equal(warm.conn.tls_ms, 120);
+    assert.equal(warm.why, 'start'); assert.equal(warm.conn.tls_ms, 120);
     assert.equal(h.logs.find(e => e.kind === 'listen').sent_ms, 0);
     h.audio(); h.audio(); h.audio();
     h.emit({type: 'input_audio_buffer.speech_started', audio_start_ms: 100});

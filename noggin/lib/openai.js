@@ -207,6 +207,12 @@ function withConn(response, result) {
     if (response && response.conn) result.conn = response.conn;
     return result;
 }
+// What the warm asks: made-up words shaped like a first turn.
+const WARM = [
+    {kind: 'reaction', person: 'Hello Jibo, how are you today?', jibo: ''},
+    {kind: 'line', person: 'Hello Jibo, how are you today?', jibo: 'I am doing great, thank you for asking!'},
+    {kind: 'line', person: 'Hello Jibo, how are you today?', jibo: 'It is lovely to hear from you.'}
+];
 // classify(personSaid, jiboSays, kind) -> {label, confidence, size, ms, api}. kind 'reaction'
 // (no jiboSays yet) or 'line'. The Decisions API is the default; if the account cannot use
 // it (an HTTP error), the rest of the session uses the Responses API with the fallback model.
@@ -246,12 +252,20 @@ function classifier(config, post) {
             return withConn(r, {label: null, ms: r.ms, status: r.status, api: 'decisions', error: error});
         });
     };
-    // Open a connection ahead of time, so the first reaction does not wait for one. A one-word
-    // decision costs nothing. (The first real answers can still be slow on OpenAI's side, D89.)
-    // Resolves {ms, status, conn} for the log, or null when nothing was sent.
-    classify.warm = () => api !== 'decisions' ? Promise.resolve(null) : post('/decisions', {model: config.classifierModel, input: 'hi',
-        questions: [{type: 'choice', name: 'warm', instructions: 'Reply hello.', choices: [{value: 'hello', description: 'hello'}, {value: 'other', description: 'other'}]}]})
-        .then(r => withConn(r, {ms: r.ms, status: r.status}), error => ({error: String(error && error.message || error).slice(0, 200)}));
+    // Before the first real question: ask what a first sentence will ask, the reaction and two line
+    // labels at once with the real choices. OpenAI answers the first requests after a quiet spell
+    // slowly (about 1.5 s), whatever the words or the connection; this takes that wait while Jibo
+    // greets, and opens the three connections (D93). Goes through classify(), so a refused API or
+    // size question switches to the fallback now, not during the first turn. Resolves {ms, requests}
+    // for the log, or null when nothing was sent (the Responses API is not slow this way).
+    classify.warm = () => {
+        if (api !== 'decisions') return Promise.resolve(null);
+        const started = Date.now();
+        return Promise.all(WARM.map(w => classify(w.person, w.jibo, w.kind).then(
+            r => ({kind: w.kind, ms: r.ms, label: r.label, status: r.status, error: r.error, switched: r.switched, conn: r.conn}),
+            error => ({kind: w.kind, error: String(error && error.message || error).slice(0, 200)})
+        ))).then(requests => ({ms: Date.now() - started, requests: requests}));
+    };
     classify.watch = watchConnections;
     return classify;
 }
