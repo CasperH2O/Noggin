@@ -15,7 +15,7 @@ const actions = require('./lib/actions'), comeback = require('./lib/comeback'), 
 const memory = require('./lib/memory'), recap = require('./lib/recap'), trouble = require('./lib/trouble'), budget = require('./lib/budget');
 const SetupScreen = require('./lib/setup-screen');
 const fs = require('fs');
-const OWN = require('./package.json').name;
+const OWN = require('./package.json').name, VERSION = require('./package.json').version;
 const RESUME_MS = 15000;
 // After any handover the other skill (or @be/nimbus for the cloud) takes over within seconds; if
 // none has by then, the comeback gives up, so a later unrelated skill never brings Noggin back.
@@ -79,7 +79,7 @@ class Noggin extends BeSkill {
         const notes = this.memoryNotes(dataDir, config, back, log, openedAt);
         const instructions = core.instructions(persona.soul, persona.identity, actions.localTime(jibo), abilities, notes);
         session = this.session = new Conversation({
-            jibo: jibo, config: config, log: log,
+            jibo: jibo, config: config, log: log, version: VERSION,
             instructions: instructions,
             persona: {edited: Object.keys(persona.edited).filter(name => persona.edited[name]), chars: instructions.length, facts: persona.facts.length,
                 memory: notes ? notes.block.length : null},

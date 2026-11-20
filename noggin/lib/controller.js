@@ -105,9 +105,10 @@ class Conversation {
     //        actions: {redirect(pkg, options), cloud(phrase), handover(state), handoverFailed(), readClock(), setVolume(args), installed(pkg), localTime(), facts()} or null,
     //        resume: {pairs, tool, args, said} when coming back after a handover,
     //        openedAt: when the skill's open() began (Date.now()), startup: facts for the startup log,
-    //        diagnose() -> {cause, detail} after an OpenAI failure (lib/trouble.js), notice: {text, emoji, said()} after the greeting}
+    //        diagnose() -> {cause, detail} after an OpenAI failure (lib/trouble.js), notice: {text, emoji, said()} after the greeting,
+    //        version: the skill's version for the session log entry (optional)}
     constructor(deps) {
-        this.jibo = deps.jibo; this.config = deps.config; this.instructions = deps.instructions; this.persona = deps.persona;
+        this.jibo = deps.jibo; this.config = deps.config; this.instructions = deps.instructions; this.persona = deps.persona; this.version = deps.version || null;
         this.connectFn = deps.connect; this.diagnoseFn = deps.diagnose || null; this.notice = deps.notice || null; this.mic = deps.mic; this.classify = deps.classify; this.log = deps.log || {write() {}};
         this.now = deps.now || (() => Date.now()); this.random = deps.random || Math.random;
         this.active = false; this.state = 'idle'; this.gate = false; this.turn = null; this.turns = 0;
@@ -170,7 +171,7 @@ class Conversation {
         this.done = new Promise(resolve => { this.finish = resolve; });
         this.active = true; this.state = 'starting'; this.mark('talk_open');
         const jibo = this.jibo, config = this.config;
-        this.log.write({kind: 'session', realtimeModel: config.realtimeModel, transcribeModel: config.transcribeModel, turnDetection: config.turnDetection,
+        this.log.write({kind: 'session', version: this.version || undefined, realtimeModel: config.realtimeModel, transcribeModel: config.transcribeModel, turnDetection: config.turnDetection,
             classifierModel: config.expressions ? config.classifierModel : null, actions: !!this.acts, resumed: this.resume ? this.resume.tool || true : undefined,
             expressionPlay: this.mode(), lab: config.lab || undefined, persona: this.persona || undefined,
             timing: {thinkingEye: config.thinkingEye !== false, expressionWaitMs: config.expressionWaitMs, expressionLeadMs: config.expressionLeadMs, echoTailMs: config.echoTailMs}});
@@ -484,7 +485,8 @@ class Conversation {
             turn.own = said; turn.transcript = joinWords(before, said); turn.transcriptAt = this.now(); this.heard = turn.transcript;
             this.log.write({kind: 'you', turn: turn.n, text: said, before: before ? true : undefined});
             if (!turn.transcript) return this.skip(turn, 'empty_transcript');
-            if (core.isStop(turn.transcript)) turn.goodbye = true;
+            // The turn's own words too: carried words in front of a goodbye would hide it.
+            if (core.isStop(said) || core.isStop(turn.transcript)) turn.goodbye = true;
             if (this.config.expressions && this.config.reaction && this.classify) this.react(turn);
             this.pump();
         } else if (type === 'conversation.item.input_audio_transcription.failed') {

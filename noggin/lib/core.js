@@ -241,10 +241,14 @@ function firstSentenceEnd(text) {
     return match ? match.index + match[0].length - 1 : -1;
 }
 // Plain words for Jibo's TTS: drop markdown, symbols that read badly and any
-// bracketed markers, escape what the speech engine reads as markup.
+// bracketed markers, escape what the speech engine reads as markup. A dash becomes a
+// comma and quote marks go: the TTS has no symbol for a dash, and quotes upset its
+// word timings, which speech's gestures and emoji follow.
 function speechText(text) {
     return String(text).replace(/```[\s\S]*?```/g, ' ').replace(/\[[a-z]{2,12}\]/gi, ' ').replace(/[*`#_~|\\{}]/g, '')
-        .replace(/\s+/g, ' ').trim()
+        .replace(/(\d)\s*[–—]\s*(\d)/g, '$1 to $2').replace(/\s*[–—]+\s*/g, ', ')
+        .replace(/[“”„«»"]/g, '').replace(/[‘’]/g, "'")
+        .replace(/\s+/g, ' ').replace(/,\s*(?=[,.!?;:…]|$)/g, '').replace(/^[\s,]+/, '').trim()
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 // Text -> pieces of at most `max` characters, split after sentences, then words.

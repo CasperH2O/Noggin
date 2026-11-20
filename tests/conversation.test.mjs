@@ -41,6 +41,13 @@ test('sentences, chunks and speech text', () => {
     const parts = core.chunks(long, 450);
     assert.equal(parts.length, 2); assert.ok(parts.every(p => p.length <= 450));
     assert.equal(core.speechText('[happy] **Hi** <3 & `x`'), 'Hi &lt;3 &amp; x');
+    // Dashes become a pause, quote marks go (the TTS has no symbol for a dash, quotes upset its timings).
+    assert.equal(core.speechText('What next—chat, a fact or a dance?'), 'What next, chat, a fact or a dance?');
+    assert.equal(core.speechText('Wait — what? Ages 3–5.'), 'Wait, what? Ages 3 to 5.');
+    assert.equal(core.speechText('She said, “Found you!” and smiled.'), 'She said, Found you! and smiled.');
+    assert.equal(core.speechText('I’m ‘fine’, "really".'), "I'm 'fine', really.");
+    assert.equal(core.speechText('—and so—'), 'and so');
+    assert.equal(core.speechText('Hmm—. Well— , okay'), 'Hmm. Well, okay');
     assert.equal(core.esml('Yay!', 'smile'), "<anim name='eye_happy_00' nonBlocking='true' endNeutral='true'/>Yay!");
     assert.equal(core.esml('Yay!', 'happy'), 'Yay!', 'a mood\'s animation is chosen by the controller');
     assert.equal(core.esml('Hm.', 'bogus'), 'Hm.');
@@ -163,7 +170,7 @@ function harness(over = {}) {
     const talk = new Conversation({jibo, config, instructions: 'be Jibo', connect, classify, diagnose: over.diagnose, notice: over.notice,
         mic: over.mic || {start: f => { onBlock = f; starts++; return Promise.resolve(); }, stop: () => { onBlock = null; }, label: 'arecord default', rate: 48000, kind: 'arecord'},
         log: {write: e => logs.push(e)}, actions: over.actions || null, resume: over.resume || null, openedAt: over.openedAt, startup: over.startup,
-        random: over.random || (() => 0.5)});
+        random: over.random || (() => 0.5), version: over.version});
     // One known animation per mood (the catalogue's random pick has its own tests).
     if (!over.realChoose) talk.choose = label => !label || label === 'none' ? null : TEST_ANIM[label] || core.animFor(label);
     // A block of `samples` at 24 kHz (2048 ≈ 85 ms, one 48 kHz block of 4096 from the microphone).
@@ -2110,6 +2117,17 @@ test('an emoji on a line asks for a hold of about the line\'s length, between 3 
     h.talk.close();
 });
 
+test('the session entry names the skill version that wrote the log', async () => {
+    const h = harness({version: '9.8.7'});
+    h.talk.open(); await untilListening(h);
+    assert.equal(h.logs.find(e => e.kind === 'session').version, '9.8.7');
+    h.talk.close();
+    const bare = harness();
+    bare.talk.open(); await untilListening(bare);
+    assert.ok(!('version' in JSON.parse(JSON.stringify(bare.logs.find(e => e.kind === 'session')))), 'left out when unknown');
+    bare.talk.close();
+});
+
 // ---- timing log (where a turn's time goes) ----
 test('timing log: each line says what it waited for and whose expression it got', async () => {
     const h = harness({config: {expressionWaitMs: 300}, classify: (person, line, kind) => kind === 'reaction'
@@ -2510,6 +2528,36 @@ test('going on with only noise: the carried words keep the turn, and its reply i
     await untilListening(h);
     assert.deepEqual(h.said.slice(1), ['Why did the robot cross the road?']);
     assert.equal(h.logs.find(e => e.kind === 'jibo').turn, 2);
+    h.talk.close();
+});
+
+test('going on, then goodbye: the carried words in front do not hide the goodbye', async () => {
+    const h = harness({config: {silenceSeconds: 5}});
+    const ended = h.talk.open(); await untilListening(h);
+    heardTurn(h, 'i1');
+    words(h, 'i1', 'That topic is not for me');
+    h.emit({type: 'input_audio_buffer.speech_started'});
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'input_audio_buffer.committed', item_id: 'i2'});
+    words(h, 'i2', 'Goodbye.');
+    assert.equal(h.talk.turn.transcript, 'That topic is not for me Goodbye.');
+    reply(h, 'r2', 'Goodbye! Talk soon.');
+    assert.equal(await ended, 'goodbye');
+    assert.deepEqual(h.said.slice(1), ['Goodbye!', 'Talk soon.']);
+});
+
+test('going on after a goodbye: the person is not done, so the session stays open', async () => {
+    const h = harness({config: {silenceSeconds: 5}});
+    h.talk.open(); await untilListening(h);
+    heardTurn(h, 'i1');
+    words(h, 'i1', 'Goodbye.');
+    h.emit({type: 'input_audio_buffer.speech_started'});
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'input_audio_buffer.committed', item_id: 'i2'});
+    words(h, 'i2', 'Oh wait, one more thing');
+    reply(h, 'r2', 'Sure, what is it?');
+    await untilListening(h);
+    assert.ok(!h.logs.some(e => e.kind === 'session_end'));
     h.talk.close();
 });
 
