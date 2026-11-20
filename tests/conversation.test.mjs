@@ -2014,3 +2014,115 @@ test('an emoji on a line asks for a hold of about the line\'s length, between 3 
     assert.equal(asked.config.duration, 90, 'a short line: the 3 s minimum');
     h.talk.close();
 });
+
+// ---- timing log (where a turn's time goes) ----
+test('timing log: each line says what it waited for and whose expression it got', async () => {
+    const h = harness({config: {expressionWaitMs: 300}, classify: (person, line, kind) => kind === 'reaction'
+        ? sleep(10).then(() => ({label: 'thinking', confidence: 0.4})) : sleep(40).then(() => ({label: 'none'}))});
+    h.talk.open(); await untilListening(h);
+    assert.equal(h.logs.find(e => e.kind === 'session').timing.expressionWaitMs, 300);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'Do you have a favourite bird?'});
+    reply(h, 'r1', 'Yes, the penguin. It is black and white.');
+    await untilListening(h);
+    const waits = h.logs.filter(e => e.kind === 'line_wait');
+    assert.equal(waits.length, 2);
+    assert.equal(waits[0].by, 'answers'); assert.equal(waits[0].label, 'none'); assert.equal(waits[0].used, 'thinking', 'the reaction took the first line');
+    assert.equal(waits[0].reaction, 'thinking');
+    assert.ok(waits[0].label_ms >= 30, 'waited for the line classifier');
+    assert.ok(waits[0].reaction_at <= waits[0].released && waits[0].queued <= waits[0].reached && waits[0].reached <= waits[0].released);
+    assert.equal(waits[1].reaction, undefined);
+    assert.equal(typeof h.logs.find(e => e.kind === 'jibo').reaction.at, 'number');
+    h.talk.close();
+});
+
+test('timing log: a line label that comes after the wait is logged as late', async () => {
+    const h = harness({config: {expressionWaitMs: 20}, classify: (person, line, kind) => kind === 'reaction'
+        ? Promise.resolve({label: 'none'}) : sleep(120).then(() => ({label: 'happy'}))});
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'Hello'});
+    reply(h, 'r1', 'Hello there.');
+    await until(() => h.logs.some(e => e.kind === 'label_late'));
+    const wait = h.logs.find(e => e.kind === 'line_wait'), late = h.logs.find(e => e.kind === 'label_late');
+    assert.equal(wait.by, 'timeout'); assert.equal(wait.label_ms, null); assert.equal(wait.label, null);
+    assert.equal(late.label, 'happy'); assert.equal(late.line, 0); assert.ok(late.ms >= 100);
+    h.talk.close();
+});
+
+test('timing log: the speak entry says whether the animation started or the lead ran out', async () => {
+    // started: the fake fires `started` 3 ms after play
+    const db = fakeAnimDB();
+    const h = harness({config: {expressionPlay: 'animdb', greetingExpression: 'hello', expressionLeadMs: 200}, animDB: db.animDB, expression: db.expression});
+    h.talk.open(); await untilListening(h);
+    const first = h.logs.find(e => e.kind === 'speak');
+    assert.equal(first.lead, 'started'); assert.ok(first.lead_ms < 200);
+    h.talk.close();
+    // failed: rejected before it started
+    const rejected = fakeAnimDB({greetings_01: 'REJECTED'});
+    const r = harness({config: {expressionPlay: 'animdb', greetingExpression: 'hello', expressionLeadMs: 200}, animDB: rejected.animDB, expression: rejected.expression});
+    r.talk.open(); await untilListening(r);
+    assert.equal(r.logs.find(e => e.kind === 'speak').lead, 'failed');
+    r.talk.close();
+    // timeout: no `started` within the lead
+    const slow = {getAnimByName: () => ({meta: {endsNeutral: true}, createFromConfig: () => Promise.resolve({instance: {events: {}},
+        play: () => sleep(150).then(() => 'STOPPED'), stop: () => Promise.resolve()})})};
+    const s = harness({config: {expressionPlay: 'animdb', greetingExpression: 'hello', expressionLeadMs: 20}, animDB: slow, expression: db.expression});
+    s.talk.open(); await untilListening(s);
+    const late = s.logs.find(e => e.kind === 'speak');
+    assert.equal(late.lead, 'timeout'); assert.ok(late.lead_ms >= 15);
+    s.talk.close();
+});
+
+test('timing log: the thinking eye logs when it loaded, played, stopped and was centred', async () => {
+    const db = fakeAnimDB();
+    const h = harness({config: {thinkingEye: true}, animDB: db.animDB, expression: db.expression});
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    await sleep(30);
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'Hello'});
+    reply(h, 'r1', 'Hello there.');
+    await untilListening(h);
+    const eye = h.logs.find(e => e.kind === 'thinking_eye');
+    assert.ok(eye, 'logged');
+    assert.equal(eye.turn, 1);
+    assert.ok(eye.asked <= eye.loaded && eye.loaded <= eye.stop && eye.stop <= eye.stopped && eye.stopped <= eye.centred, JSON.stringify(eye));
+    h.talk.close();
+});
+
+test('timing log: a blocked thread shows as lag in the turn and the 10 s report; the probe stops on close', async () => {
+    const h = harness();
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    await sleep(60);
+    const until = Date.now() + 150; while (Date.now() < until) { /* block the thread */ }
+    await sleep(60);
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'Hello'});
+    reply(h, 'r1', 'Hello there.');
+    await untilListening(h);
+    const lag = h.logs.find(e => e.kind === 'jibo').lag;
+    assert.ok(Array.isArray(lag) && lag.some(spike => spike[1] >= 80), JSON.stringify(lag));
+    h.talk.audioReport();
+    const audio = h.logs.filter(e => e.kind === 'audio').pop();
+    assert.equal(typeof audio.lagMax, 'number');
+    assert.ok(audio.load === null || typeof audio.load === 'number');
+    await h.talk.close();
+    const last = h.talk.lag.last;
+    await sleep(3 * 50);
+    assert.equal(h.talk.lag.last, last, 'the lag probe stopped');
+});
+
+test('timing log: no lag probe when the full log is off; lines without a classifier say so', async () => {
+    const h = harness({config: {expressions: false}});
+    h.talk.log.enabled = false;
+    h.talk.open(); await untilListening(h);
+    assert.equal(h.talk.lagTimer, undefined, 'nothing measured that nobody keeps');
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'Hello'});
+    reply(h, 'r1', 'Hello there.');
+    await untilListening(h);
+    const wait = h.logs.find(e => e.kind === 'line_wait');
+    assert.equal(wait.by, 'no_classifier'); assert.equal(wait.label, null); assert.equal(wait.used, null);
+    assert.equal(h.logs.find(e => e.kind === 'jibo').lag, undefined);
+    h.talk.close();
+});

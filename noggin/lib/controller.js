@@ -52,17 +52,20 @@ const RECENT_ANIMS = 5;   // a mood's animation is not repeated within this many
 const RECENT_DANCES = 3;  // no dance again within this many dances (unless asked for "again")
 
 // Jibo's native thinking loop on the eye (as BEam's Agent Mode, AnimDB two-stage API).
+// Each start/stop is logged as one `thinking_eye` entry (ms since open), to see whether it
+// holds the body when an expression should start.
 class ThinkingEye {
-    constructor(jibo, allowed) { this.jibo = jibo; this.allowed = allowed; }
-    start() {
+    constructor(jibo, allowed, since, write) { this.jibo = jibo; this.allowed = allowed; this.since = since; this.write = write; }
+    start(turn) {
         if (!this.allowed() || !this.jibo.animDB || this.token) return;
-        const token = this.token = {};
+        const token = this.token = {}, cycle = this.cycle = {turn: turn === undefined ? null : turn, asked: this.since()};
         Promise.resolve().then(() => {
             if (this.token !== token || !this.allowed()) return null;
             const asset = this.jibo.animDB.getAnimByName('Thinking_Eye_Loop_01');
             return asset ? asset.createFromConfig({loops: 0, cache: 'global'}) : null;
         }).then(playback => {
             if (!playback) return;
+            cycle.loaded = this.since();
             if (this.token !== token || !this.allowed()) return playback.stop();
             this.playback = playback;
             return playback.play({disableSetFaceAnim: false, screenCenterOverride: true, ownerInformation: 'Behavior'});
@@ -70,15 +73,22 @@ class ThinkingEye {
     }
     stop() {
         this.token = null;
-        const playback = this.playback; this.playback = null;
-        if (!playback) return Promise.resolve();
+        const playback = this.playback, cycle = this.cycle; this.playback = null; this.cycle = null;
+        if (cycle) cycle.stop = this.since();
+        if (!playback) { if (cycle) this.write(cycle); return Promise.resolve(); }
         return Promise.resolve().then(() => playback.stop()).catch(() => {}).then(() => {
+            cycle.stopped = this.since();
             const jibo = this.jibo, expression = jibo.expression;
             if ((jibo.privacyController && jibo.privacyController.enabled) || !expression || !expression.centerRobot) return;
-            return expression.centerRobot({requestor: 'Behavior', centerGlobally: false, dofs: expression.dofs.EYE});
-        }).catch(() => {});
+            return Promise.resolve(expression.centerRobot({requestor: 'Behavior', centerGlobally: false, dofs: expression.dofs.EYE})).then(() => { cycle.centred = this.since(); });
+        }).catch(() => {}).then(() => this.write(cycle));
     }
 }
+// The JavaScript thread's lag (a timer firing late), sampled every LAG_MS while a conversation
+// runs: a blocked thread would also hold up an animation's first frame.
+const LAG_MS = 50, LAG_SPIKE_MS = 80, LAG_SPIKES = 12;
+let loadavg = () => null;
+try { const os = require('os'); loadavg = () => Math.round(os.loadavg()[0] * 100) / 100; } catch (_) {}
 
 class Conversation {
     // deps: {jibo, config, instructions, persona: {edited, chars, facts} (for the log), connect(), mic, classify(personSaid, jiboSays), log, now(),
@@ -99,7 +109,8 @@ class Conversation {
         // when Jibo first listens (or with the failure, if he never gets there).
         this.t0 = typeof deps.openedAt === 'number' ? deps.openedAt : this.now();
         this.boot = Object.assign({}, deps.startup || {}); this.marks = {}; this.mark('talk_created');
-        this.thinking = new ThinkingEye(this.jibo, () => this.config.thinkingEye !== false && this.active && !this.isPrivate() && this.state === 'thinking');
+        this.thinking = new ThinkingEye(this.jibo, () => this.config.thinkingEye !== false && this.active && !this.isPrivate() && this.state === 'thinking',
+            () => this.since(), cycle => this.log.write(Object.assign({kind: 'thinking_eye'}, cycle)));
         this.player = new ExpressionPlayer(this.jibo, this.log, this.now, t => t - this.t0, () => this.active && !this.isPrivate());
         this.speechAnims = null; this.spokenAt = null; this.recentAnims = []; this.recentEmoji = []; this.lastEmojiAt = -Infinity;
         this.heard = ''; this.recentDances = []; this.danceCount = 0; this.announcedAt = -Infinity;
@@ -150,9 +161,15 @@ class Conversation {
         const jibo = this.jibo, config = this.config;
         this.log.write({kind: 'session', realtimeModel: config.realtimeModel, transcribeModel: config.transcribeModel, turnDetection: config.turnDetection,
             classifierModel: config.expressions ? config.classifierModel : null, actions: !!this.acts, resumed: this.resume ? this.resume.tool || true : undefined,
-            expressionPlay: this.mode(), lab: config.lab || undefined, persona: this.persona || undefined});
+            expressionPlay: this.mode(), lab: config.lab || undefined, persona: this.persona || undefined,
+            timing: {thinkingEye: config.thinkingEye !== false, expressionWaitMs: config.expressionWaitMs, expressionLeadMs: config.expressionLeadMs, echoTailMs: config.echoTailMs}});
         if (this.isPrivate()) { this.leave('privacy'); return this.done; }
         this.monitor = setInterval(() => { if (this.isPrivate()) this.leave('privacy'); }, 250);
+        // Only measured when the full log keeps it (D78).
+        if (this.log.enabled !== false && !this.log.recapOnly) {
+            this.lag = {last: this.now(), max: 0};
+            this.lagTimer = setInterval(() => this.sampleLag(), LAG_MS);
+        }
         this.led(BUSY);
         if (config.ringRefreshMs > 0) this.ringTimer = setInterval(() => { if (this.active && this.ring) this.led(this.ring); }, Math.max(20, config.ringRefreshMs));
         const js = jibo.jetstream;
@@ -377,8 +394,18 @@ class Conversation {
         let mem = null;
         try { const m = process.memoryUsage(); if (m.rss) mem = {rss: Math.round(m.rss / 1048576), heap: Math.round(m.heapUsed / 1048576)}; } catch (_) {}
         this.log.write({kind: 'audio', state: this.state, source: this.mic.kind || null, blocks: stats.blocks, sent: stats.sent,
-            db: {min: at(0), median: at(0.5), p90: at(0.9), max: at(1)}, mem: mem, micStarts: this.micStarts || 0});
+            db: {min: at(0), median: at(0.5), p90: at(0.9), max: at(1)}, mem: mem, micStarts: this.micStarts || 0,
+            lagMax: this.lag ? this.lag.max : null, load: loadavg()});
         this.audio = {blocks: 0, sent: 0, levels: []};
+        if (this.lag) this.lag.max = 0;
+    }
+    // A late timer means the thread was busy: kept per 10 s report, and per turn as spikes
+    // [ms after the person stopped, ms late].
+    sampleLag() {
+        const now = this.now(), late = Math.max(0, now - this.lag.last - LAG_MS), turn = this.turn;
+        this.lag.last = now;
+        if (late > this.lag.max) this.lag.max = late;
+        if (turn && turn.lag && late >= LAG_SPIKE_MS && turn.lag.length < LAG_SPIKES) turn.lag.push([now - turn.stoppedAt - late, late]);
     }
     listen() {
         // No connection while reconnecting: the reconnect listens once it is back (D73).
@@ -456,12 +483,12 @@ class Conversation {
     startTurn() {
         this.gate = false; this.state = 'thinking'; this.led(BUSY);
         clearTimeout(this.silence); this.silence = null;
-        const turn = this.turn = {n: ++this.turns, stoppedAt: this.now(), text: '', sent: 0, lines: 0, transcript: undefined, expressions: []};
+        const turn = this.turn = {n: ++this.turns, stoppedAt: this.now(), text: '', sent: 0, lines: 0, transcript: undefined, expressions: [], lag: []};
         this.heard = '';   // the dance reads this turn's words, never an earlier turn's
         // If the transcript never comes, speak anyway after a while.
         turn.waitTimer = setTimeout(() => this.pump(), this.config.transcriptWaitMs);
         this.guardReply(turn);
-        this.thinking.start();
+        this.thinking.start(turn.n);
     }
     // A reply that never comes (a half-open connection, an error instead of a response) must not
     // leave Jibo thinking with the hotword off: drop the turn and listen again.
@@ -486,7 +513,7 @@ class Conversation {
             result = result || {};
             this.noteClassifier(result);
             turn.reaction = {label: result.label === undefined ? null : result.label, confidence: result.confidence === undefined ? null : result.confidence,
-                size: result.size || null, ms: this.now() - started};
+                size: result.size || null, ms: this.now() - started, at: this.since()};
             if (turn.firstSpeechAt !== undefined && turn.reaction.label && turn.reaction.label !== 'none') turn.reaction.played = 'late';
             // Nothing queued to say yet: react now, while Jibo works out his answer.
             if (this.active && !turn.skipped && this.turn === turn && !turn.lines) {
@@ -545,13 +572,17 @@ class Conversation {
         core.chunks(text).forEach(piece => {
             if (!core.speechText(piece)) return;
             const index = turn.lines++, config = this.config;
-            let ready = null, readySize = null;
+            let ready = null, readySize = null, labelAt = null, released = false;
+            const queuedAt = this.now();
             // A classifier problem only costs the expression, never the words.
-            if (config.expressions && this.classify) this.lastClassify = this.now();
-            const label = config.expressions && this.classify ? Promise.resolve().then(() => this.classify(turn.transcript || '', piece, 'line')).then(result => {
+            const asked = !!(config.expressions && this.classify);
+            if (asked) this.lastClassify = this.now();
+            const label = asked ? Promise.resolve().then(() => this.classify(turn.transcript || '', piece, 'line')).then(result => {
                 if (result) this.noteClassifier(result);
                 ready = result && result.label !== undefined ? result.label : null;
                 readySize = result && result.size || null;
+                labelAt = this.now();
+                if (released && this.active) this.log.write({kind: 'label_late', turn: turn.n, line: index, label: ready, ms: labelAt - queuedAt, at: this.since(labelAt)});
                 // Too late for the first line: offer it to the next one instead.
                 if (index === 0 && turn.firstLate && ready && ready !== 'none') turn.carried = {label: ready, size: readySize};
                 return ready;
@@ -559,9 +590,13 @@ class Conversation {
             const wait = index === 0 ? config.expressionWaitMs : 0;
             this.speechChain = this.speechChain.then(() => {
                 if (!this.active || turn.skipped) return;
+                const reached = this.now();
+                let by = null;
                 // The first line also waits (within the same budget) for the reaction.
                 const both = index === 0 && turn.reacting ? Promise.all([label, turn.reacting]).then(() => ready) : label;
-                return Promise.race([both, delay(wait).then(() => ready)]).then(found => {
+                if (!asked && !(index === 0 && turn.reacting)) by = 'no_classifier';
+                return Promise.race([both.then(found => { by = by || 'answers'; return found; }), delay(wait).then(() => { by = by || 'timeout'; return ready; })]).then(found => {
+                    released = true;
                     if (!this.active) return;
                     if (index === 0 && found === null) turn.firstLate = true;
                     let size = readySize;
@@ -576,6 +611,10 @@ class Conversation {
                     }
                     // With actions on, dancing is the dance tool's job, never a line's expression.
                     if (!use && !(found === 'dance' && this.acts) && this.policy.allow(found, this.now(), turn.transcript)) { use = found; this.policy.used(found, this.now()); }
+                    // What this line waited for, and whose expression it got (ms since open).
+                    this.log.write({kind: 'line_wait', turn: turn.n, line: index, queued: this.since(queuedAt), reached: this.since(reached), released: this.since(), by: by,
+                        label: labelAt === null ? null : ready, label_ms: labelAt === null ? null : labelAt - queuedAt,
+                        reaction: index === 0 && reaction ? reaction.label : undefined, reaction_at: index === 0 && reaction ? reaction.at : undefined, used: use || null});
                     turn.expressions.push(found === null ? (index === 0 && wait ? 'late' : null) : found + (use || found === 'none' ? '' : ' (held back)'));
                     if (index === 0) turn.firstSpeechAt = this.now();
                     // No expression on this line: an eye emoji for something Jibo names (pizza, rain, a dog).
@@ -605,7 +644,8 @@ class Conversation {
         const anim = at && at.anim ? at.anim : this.choose(expression, at && at.size), mode = this.mode();
         return chain.then(() => {
             if (!this.active) return;
-            let words = core.esml(text, null), lead = Promise.resolve();
+            let words = core.esml(text, null), lead = Promise.resolve(), leadBy = null;
+            const leadFrom = this.now();
             // animdb: start the animation first, so it holds Jibo's body before speech's own
             // gestures ask for it; the words follow once it started (at most expressionLeadMs).
             // An emoji while the previous expression still plays: it follows once that one ends,
@@ -617,13 +657,15 @@ class Conversation {
                 this.player.idle().then(() => { if (this.active && this.lineToken === token) this.player.play(anim, {via: 'emoji', turn: turn, line: line, holdMs: holdMs}); });
             } else if (anim && mode === 'animdb') {
                 const played = this.player.play(anim, {via: at && at.via || 'line', turn: turn, line: line, holdMs: holdMs});
-                lead = Promise.race([played.started, delay(this.config.expressionLeadMs || 0)]);
+                lead = Promise.race([played.started.then(ok => { leadBy = leadBy || (ok ? 'started' : 'failed'); }),
+                    delay(this.config.expressionLeadMs || 0).then(() => { leadBy = leadBy || 'timeout'; })]);
             } else if (anim) words = core.animEsml(anim) + words;
             return lead.then(() => {
                 if (!this.active) return;
                 const started = this.now(), options = this.speakOptions();
                 this.log.write({kind: 'speak', turn: turn, line: line, expression: expression || null, size: at && at.size || undefined, emoji: at && at.emoji || undefined, after: later || undefined,
-                    play: anim || undefined, mode: mode, at: this.since(started), text: String(text).slice(0, 300)});
+                    play: anim || undefined, mode: mode, at: this.since(started), lead: leadBy || undefined, lead_ms: leadBy ? started - leadFrom : undefined,
+                    text: String(text).slice(0, 300)});
                 this.mark('first_speech');
                 return Promise.resolve(options ? speech.speak(words, options) : speech.speak(words)).then(() => this.spoken(speech, started, turn, line, mode));
             });
@@ -656,7 +698,8 @@ class Conversation {
         const calls = this.acts && turn.calls && turn.calls.length ? turn.calls : null;
         this.log.write({kind: 'jibo', turn: turn.n, text: turn.text, status: turn.status || null, reaction: turn.reaction || null, expressions: turn.expressions,
             ms: {transcript: at(turn.transcriptAt), first_text: at(turn.firstTextAt), first_speech: at(turn.firstSpeechAt), end: this.now() - turn.stoppedAt},
-            usage: turn.usage || null, followUp: turn.followUp || undefined, calls: turn.calls && turn.calls.length ? turn.calls.map(c => c.name) : undefined});
+            usage: turn.usage || null, followUp: turn.followUp || undefined, calls: turn.calls && turn.calls.length ? turn.calls.map(c => c.name) : undefined,
+            lag: turn.lag && turn.lag.length ? turn.lag : undefined});
         this.remember(turn);
         // The reply was complete but the connection dropped: its actions cannot answer the old
         // session, and the reconnect listens when it is back (D73).
@@ -775,7 +818,7 @@ class Conversation {
     followUp(previous, round) {
         const now = this.now();
         const turn = this.turn = {n: previous ? previous.n : ++this.turns, round: round, followUp: true, stoppedAt: now, text: '', sent: 0, lines: 0,
-            transcript: previous ? previous.transcript : '', transcriptAt: now, expressions: [], reactionDone: true, goodbye: previous ? previous.goodbye : false};
+            transcript: previous ? previous.transcript : '', transcriptAt: now, expressions: [], lag: [], reactionDone: true, goodbye: previous ? previous.goodbye : false};
         this.state = 'thinking'; this.gate = false; this.led(BUSY);
         this.guardReply(turn);
         this.rt.send({type: 'response.create'});
@@ -1002,7 +1045,7 @@ class Conversation {
         clearTimeout(this.handoverTimer);
         const wasActive = this.active, jibo = this.jibo, cleanup = [];
         this.active = false; this.gate = false; this.state = 'closed';
-        clearInterval(this.monitor); clearInterval(this.ringTimer); clearTimeout(this.silence);
+        clearInterval(this.monitor); clearInterval(this.ringTimer); clearInterval(this.lagTimer); clearTimeout(this.silence);
         if (this.audioTimer) { clearInterval(this.audioTimer); if (wasActive) this.audioReport(); }
         if (this.turn) { clearTimeout(this.turn.waitTimer); clearTimeout(this.turn.guard); }
         this.unwatch.splice(0).forEach(off => off());
