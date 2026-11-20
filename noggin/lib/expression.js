@@ -146,7 +146,7 @@ class ExpressionPlayer {
             line: info.line === undefined ? null : info.line, name: entry.name, result: result,
             asked: at(entry.asked), loaded: at(entry.loadedAt), start: at(entry.startAt), end: at(this.now()),
             ledStripped: entry.ledStripped === undefined ? null : entry.ledStripped, held: entry.heldFrames || undefined,
-            body: entry.body === undefined ? null : entry.body, eye: info.eye || undefined}, extra || {}));
+            body: entry.body === undefined ? null : entry.body, eye: info.eye || undefined, tries: info.tries || undefined}, extra || {}));
     }
     // Whether `name` moves the body: true, false, or null when unknown (no such animation, no layers).
     moves(name) {

@@ -1557,7 +1557,7 @@ const DOFS = {ALL: dofSet(['BODY', 'EYE', 'OVERLAY', 'LED', 'BASE', 'EYE_TRANSLA
 // animDB with a few animations: each plays for `ms` and ends as `results[name]` (default STOPPED).
 // layers: {name: {Body: true|false}} for clips whose body layer is known (else unknown).
 function fakeAnimDB(results = {}, ms = 60, layers = {}) {
-    const played = [], centred = [];
+    const played = [], centred = [], attempts = {};
     const animDB = {getAnimByName: name => name === 'missing_01' ? null : {
         meta: {endsNeutral: name !== 'Confused_01', layers: layers[name]},
         createFromConfig: config => {
@@ -1565,8 +1565,10 @@ function fakeAnimDB(results = {}, ms = 60, layers = {}) {
             const playback = {instance: {events: {started}}, stopped: false,
                 play: opts => {
                     played.push({name, config, opts});
-                    if (results[name] === 'REJECTED') return sleep(2).then(() => 'REJECTED');
-                    setTimeout(() => started.fire(), 3);
+                    attempts[name] = (attempts[name] || 0) + 1;
+                    // {reject: n}: refused the first n times (speech's own animation holds the parts), then plays.
+                    if (results[name] === 'REJECTED' || results[name] && attempts[name] <= results[name].reject) return sleep(2).then(() => 'REJECTED');
+                    if (results[name] !== 'NOSTART') setTimeout(() => started.fire(), 3);
                     return new Promise(resolve => { playback.end = resolve; setTimeout(() => resolve('STOPPED'), ms); });
                 },
                 stop: () => { playback.stopped = true; if (playback.end) playback.end('STOPPED'); return Promise.resolve(); }};
@@ -2470,8 +2472,8 @@ test('late first-line expression (D99): the eye wait ends after 1 s at most; a b
     eye.emit('addAnimation');
     const t = Date.now(); assert.equal(await w2.free(40), 'timeout'); assert.ok(Date.now() - t >= 35);
     const pending = w2.free(1000); w2.stop(); assert.equal(await pending, 'stopped');
-    // A body move that comes late: offered to line 2, as before.
-    const db = fakeAnimDB({}, 30);
+    // A body move that comes late and is refused until the line is over: dropped, and offered to line 2 (D102).
+    const db = fakeAnimDB({excited_01: 'REJECTED'}, 30);
     let answer;
     const h = harness({speakMs: 100, animDB: db.animDB, expression: db.expression, config: {expressionPlay: 'animdb', expressionWaitMs: 0},
         classify: (person, line, kind) => kind === 'reaction' ? Promise.resolve({label: 'none'}) : /Wow/.test(line) ? new Promise(r => { answer = r; }) : Promise.resolve({label: 'none'})});
@@ -2486,7 +2488,187 @@ test('late first-line expression (D99): the eye wait ends after 1 s at most; a b
     answer({label: 'surprised'});
     await untilListening(h);
     assert.equal(h.logs.filter(e => e.kind === 'line_wait')[1].used, 'surprised', 'went to line 2');
-    assert.ok(!h.logs.some(e => e.kind === 'anim' && e.via === 'late'));
+    assert.ok(h.logs.some(e => e.kind === 'late_dropped' && e.line === 0 && e.name === 'excited_01'), 'dropped on line 1');
+    h.talk.close();
+});
+
+// A late body clip (D102): speech's opening pose refuses it, so it is asked again until the parts are free.
+test('late first-line body clip (D102): refused while speech holds the body, asked again every 150 ms, played on that line', async () => {
+    const db = fakeAnimDB({excited_01: {reject: 2}}, 30);
+    let answer;
+    const h = harness({speakMs: 900, animDB: db.animDB, expression: db.expression, config: {expressionPlay: 'animdb', expressionWaitMs: 0},
+        classify: (person, line, kind) => kind === 'reaction' ? Promise.resolve({label: 'none'}) : /Wow/.test(line) ? new Promise(r => { answer = r; }) : Promise.resolve({label: 'none'})});
+    h.jibo.face.eye = fakeEye();
+    h.talk.choose = label => label === 'surprised' ? 'excited_01' : null;
+    h.talk.player.moves = name => name === 'excited_01';
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'I won'});
+    reply(h, 'r1', 'Wow!');
+    await until(() => h.said.includes('Wow!'));
+    answer({label: 'surprised'});
+    await until(() => h.logs.filter(e => e.kind === 'anim' && e.name === 'excited_01').length === 3);
+    const anims = h.logs.filter(e => e.kind === 'anim' && e.name === 'excited_01');
+    assert.deepEqual(anims.map(e => e.result), ['REJECTED', 'REJECTED', 'STOPPED']);
+    assert.deepEqual(anims.map(e => e.tries), [undefined, 2, 3]);
+    assert.ok(anims[1].asked - anims[0].end >= 140, 'a pause between tries');
+    assert.ok(anims.every(e => e.via === 'late' && e.line === 0));
+    await untilListening(h);
+    assert.equal(h.logs.find(e => e.kind === 'jibo').expressions[0], 'surprised (late)');
+    assert.ok(!h.logs.some(e => e.kind === 'late_dropped'));
+    h.talk.close();
+});
+
+test('late first-line body clip (D102): it stops asking when another clip took over', async () => {
+    const db = fakeAnimDB({excited_01: 'REJECTED'}, 400);
+    const h = harness({speakMs: 1500, animDB: db.animDB, expression: db.expression, config: {expressionPlay: 'animdb', expressionWaitMs: 0, silenceSeconds: 60}, classify: () => Promise.resolve({label: 'none'})});
+    h.talk.open(); await untilListening(h);
+    h.talk.player.moves = () => true;
+    // Another clip starts while the first try waits to be asked again.
+    setTimeout(() => h.talk.player.play('happy_01', {via: 'lab'}), 60);
+    const result = await h.talk.playBesideLine('excited_01', {via: 'line', turn: 1, line: 1}, () => true);
+    assert.equal(result.played, false); assert.equal(result.result, 'REJECTED');
+    assert.equal(db.played.filter(p => p.name === 'excited_01').length, 1, 'asked once, then another clip was playing');
+    h.talk.close();
+});
+
+test('late clips (D102): at most 8 tries, and none once the line is over', async () => {
+    const db = fakeAnimDB({excited_01: 'REJECTED'}, 30);
+    const h = harness({animDB: db.animDB, expression: db.expression, config: {expressionPlay: 'animdb', silenceSeconds: 60}, classify: () => Promise.resolve({label: 'none'})});
+    h.talk.open(); await untilListening(h);
+    const all = await h.talk.playBesideLine('excited_01', {via: 'line', turn: 1, line: 1}, () => true);
+    assert.deepEqual([all.played, all.tries], [false, 8]);
+    assert.equal(db.played.filter(p => p.name === 'excited_01').length, 8);
+    let live = true;
+    const over = h.talk.playBesideLine('excited_01', {via: 'line', turn: 1, line: 1}, () => live);
+    await sleep(30); live = false;
+    const result = await over;
+    assert.equal(result.played, false); assert.ok(result.tries >= 1 && result.tries < 8, JSON.stringify(result));
+    h.talk.close();
+});
+
+test('line 2 clip (D102): the words never wait for it, it is asked once they are on their way and again while refused', async () => {
+    const db = fakeAnimDB({excited_01: {reject: 2}}, 30);
+    const h = harness({speakMs: 700, animDB: db.animDB, expression: db.expression, config: {expressionPlay: 'animdb', expressionWaitMs: 0, expressionLeadMs: 500},
+        classify: (person, line, kind) => kind === 'reaction' || !/great/.test(line) ? Promise.resolve({label: 'none'}) : Promise.resolve({label: 'surprised'})});
+    h.talk.choose = label => label === 'surprised' ? 'excited_01' : null;
+    h.talk.player.moves = () => true;
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'I won'});
+    reply(h, 'r1', 'Nice. That is great news.');
+    await until(() => h.said.includes('That is great news.'));
+    const speak = h.logs.find(e => e.kind === 'speak' && e.line === 1);
+    assert.equal(speak.lead, 'beside'); assert.ok(speak.lead_ms < 100, 'no wait for a body clip: ' + speak.lead_ms);
+    assert.equal(speak.play, 'excited_01');
+    await until(() => h.logs.filter(e => e.kind === 'anim' && e.name === 'excited_01').length === 3);
+    const anims = h.logs.filter(e => e.kind === 'anim' && e.name === 'excited_01');
+    assert.deepEqual(anims.map(e => e.result), ['REJECTED', 'REJECTED', 'STOPPED']);
+    assert.ok(anims.every(e => e.via === 'line' && e.line === 1));
+    assert.ok(anims[0].asked >= speak.at - 5, 'asked with the words, not before');
+    await untilListening(h);
+    assert.ok(!h.logs.some(e => e.kind === 'late_dropped'));
+    h.talk.close();
+});
+
+test('line 2 clip (D102): a clip that is refused until the line is over is dropped and logged; the first line keeps its lead', async () => {
+    const db = fakeAnimDB({excited_01: 'REJECTED'}, 30);
+    const h = harness({speakMs: 150, animDB: db.animDB, expression: db.expression, config: {expressionPlay: 'animdb', expressionWaitMs: 0, expressionLeadMs: 80},
+        classify: (person, line, kind) => kind === 'reaction' || !/great/.test(line) ? Promise.resolve({label: 'none'}) : Promise.resolve({label: 'surprised'})});
+    h.talk.choose = label => label === 'surprised' ? 'excited_01' : null;
+    h.talk.player.moves = () => true;
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'I won'});
+    reply(h, 'r1', 'Nice. That is great news.');
+    await untilListening(h);
+    await sleep(200);
+    const speaks = h.logs.filter(e => e.kind === 'speak' && e.turn === 1);
+    assert.notEqual(speaks[0].lead, 'beside', 'line 1 still goes before its words');
+    assert.equal(speaks[1].lead, 'beside');
+    const dropped = h.logs.find(e => e.kind === 'late_dropped' && e.line === 1);
+    assert.ok(dropped && dropped.name === 'excited_01' && dropped.tries >= 1 && dropped.result === 'REJECTED', JSON.stringify(dropped));
+    assert.equal(h.logs.filter(e => e.kind === 'anim' && e.name === 'excited_01').length, dropped.tries, 'one log entry per try, none after');
+    h.talk.close();
+});
+
+const bodyHarness = (db, over = {}) => harness(Object.assign({animDB: db.animDB, expression: db.expression, config: Object.assign({expressionPlay: 'animdb', expressionWaitMs: 0, silenceSeconds: 60}, over.config || {}),
+    classify: (person, line, kind) => kind === 'reaction' ? Promise.resolve({label: 'none'}) : over.classify(line)}, over.harness || {}));
+const sayTwoLines = async (h, text) => {
+    h.talk.choose = label => label === 'surprised' ? 'excited_01' : null;
+    h.talk.player.moves = name => name === 'excited_01';
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'I won'});
+    reply(h, 'r1', text);
+};
+
+test('clips beside a line (D102): closing during the pause before a try ends the asking', async () => {
+    const db = fakeAnimDB({excited_01: 'REJECTED'}, 30);
+    const h = bodyHarness(db, {harness: {speakMs: 1500}, classify: line => Promise.resolve({label: /great/.test(line) ? 'surprised' : 'none'})});
+    await sayTwoLines(h, 'Nice. That is great news.');
+    await until(() => h.logs.some(e => e.kind === 'anim' && e.name === 'excited_01'));
+    h.talk.close();
+    const before = db.played.length;
+    await sleep(500);
+    assert.equal(db.played.length, before, 'no try after close');
+    assert.ok(!h.logs.some(e => e.kind === 'anim' && e.name === 'excited_01' && e.tries > 1));
+});
+
+test('late first-line body clip (D102): one that played is not played again on line 2', async () => {
+    const db = fakeAnimDB({}, 30);
+    let answer;
+    const h = bodyHarness(db, {harness: {speakMs: 300}, classify: line => /^Wow/.test(line) ? new Promise(r => { answer = r; }) : Promise.resolve({label: 'none'})});
+    await sayTwoLines(h, 'Wow! That is great news.');
+    await until(() => h.said.includes('Wow!'));
+    answer({label: 'surprised'});
+    await untilListening(h);
+    assert.equal(db.played.filter(p => p.name === 'excited_01').length, 1, 'once');
+    assert.equal(h.logs.filter(e => e.kind === 'line_wait')[1].used, null, 'not offered to line 2');
+    h.talk.close();
+});
+
+test('late first-line body clip (D102): a try still in flight when the line ends is not carried to line 2 as well', async () => {
+    const db = fakeAnimDB({excited_01: 'NOSTART'}, 400);
+    let answer;
+    const h = bodyHarness(db, {harness: {speakMs: 100}, classify: line => /^Wow/.test(line) ? new Promise(r => { answer = r; }) : Promise.resolve({label: 'none'})});
+    await sayTwoLines(h, 'Wow! That is great news.');
+    await until(() => h.said.includes('Wow!'));
+    answer({label: 'surprised'});
+    await untilListening(h);
+    await sleep(500);
+    assert.equal(db.played.filter(p => p.name === 'excited_01').length, 1, 'not played a second time');
+    assert.equal(h.logs.filter(e => e.kind === 'line_wait')[1].used, null);
+    h.talk.close();
+});
+
+test('late first-line clip (D102): it does not replace a clip that is playing; a body clip goes to line 2 instead', async () => {
+    const db = fakeAnimDB({}, 400);
+    let answer;
+    const h = bodyHarness(db, {harness: {speakMs: 150}, classify: line => /^Wow/.test(line) ? new Promise(r => { answer = r; }) : Promise.resolve({label: 'none'})});
+    await sayTwoLines(h, 'Wow! That is great news.');
+    await until(() => h.said.includes('Wow!'));
+    h.talk.player.play('happy_01', {via: 'lab'});
+    answer({label: 'surprised'});
+    await untilListening(h);
+    assert.equal(h.logs.filter(e => e.kind === 'line_wait')[1].used, 'surprised', 'offered to line 2');
+    assert.ok(!h.logs.some(e => e.kind === 'anim' && e.via === 'late'), 'nothing played over the other clip');
+    h.talk.close();
+});
+
+test('clips beside a line (D102): a line whose speak call fails stops asking', async () => {
+    const db = fakeAnimDB({excited_01: 'REJECTED'}, 30);
+    let calls = 0;
+    const h = bodyHarness(db, {harness: {speech: {speak: (esml) => { h.said.push(esml); return ++calls === 3 ? sleep(10).then(() => { throw Error('speech failed'); }) : sleep(40); }}},   // 1 greeting, 2 line 1, 3 line 2
+        classify: line => Promise.resolve({label: /great/.test(line) ? 'surprised' : 'none'})});
+    await sayTwoLines(h, 'Nice. That is great news.');
+    await until(() => calls >= 3);
+    await sleep(60);
+    const tries = db.played.filter(p => p.name === 'excited_01').length;
+    assert.ok(tries >= 1, 'line 2 asked for its clip');
+    await sleep(500);
+    assert.equal(db.played.filter(p => p.name === 'excited_01').length, tries, 'no try after the failure');
+    assert.ok(tries < 8);
     h.talk.close();
 });
 

@@ -48,6 +48,9 @@ function emojiHoldMs(text) {
 }
 // A late first-line expression waits at most this long for the eye (the longest blink is ~0.93 s).
 const EYE_FREE_MS = 1000;
+// A clip played beside a line that is already being said (D102) is asked again this often while
+// speech's own animations refuse it, at most this many times, and only while the line is said.
+const BESIDE_RETRY_MS = 150, BESIDE_TRIES = 8;
 const MAX_ROUNDS = 2, REPLY_WAIT_MS = 15000, KEEP_PAIRS = 10;
 // How Noggin plays an expression (config expressionPlay):
 // - 'esml': inside the line's ESML, and each line waits for its animation.
@@ -661,25 +664,58 @@ class Conversation {
         if (reaction.played === 'before') return this.now() - this.policy.lastAt < this.policy.gapMs;
         return !turn.reactionDone && this.policy.allow(reaction.label, this.now(), turn.transcript);
     }
-    // The first line's expression came after its words started (D99): an eye expression plays
-    // while Jibo still says that line, once speech's own eye animation (the blink on his first
-    // word) has ended, at most EYE_FREE_MS later. Not over Noggin's emoji on that line, not a body
-    // move (speech's opening pose holds the body), and only in animdb. True when it takes it.
+    // The first line's expression came after its words started (D99, D102): it plays on that line
+    // while Jibo still says it. An eye clip first waits for speech's own eye animation (the blink on
+    // his first word) to end, at most EYE_FREE_MS; any clip is then asked again while refused
+    // (playBesideLine). Not over Noggin's emoji on that line, not over a clip that is playing, and
+    // only in animdb. True when it takes it. A body clip that never played is offered to line 2
+    // when line 1 ends.
     playLate(turn, label, size) {
         if (!this.active || turn.skipped || turn.firstSpoken || turn.firstEmoji || this.mode() !== 'animdb' || label === 'dance') return false;
         const anim = this.choose(label, size);
-        if (!anim || this.player.moves(anim) !== false || !this.policy.allow(label, this.now(), turn.transcript)) return false;
-        const from = this.now();
-        this.eyeWatch.free(EYE_FREE_MS).then(how => {
-            const eye = {how: how, ms: this.now() - from};
-            // Counted (expression gap, the turn's expressions) only when it plays.
-            if (this.active && !turn.skipped && !turn.firstSpoken) {
+        if (!anim || this.player.busy() || !this.policy.allow(label, this.now(), turn.transcript)) return false;
+        const eyeOnly = this.player.moves(anim) === false, from = this.now();
+        const late = turn.late = {label: label, size: size, played: false, carry: !eyeOnly, trying: false};
+        const live = () => this.active && !turn.skipped && !turn.firstSpoken;
+        const dropped = (result, eye) => { if (this.active) this.log.write({kind: 'late_dropped', turn: turn.n, line: 0, label: label, name: anim, eye: eye, tries: result.tries, result: result.result}); };
+        (eyeOnly ? this.eyeWatch.free(EYE_FREE_MS) : Promise.resolve(null)).then(how => {
+            const eye = how ? {how: how, ms: this.now() - from} : undefined;
+            // The wait for the eye may have run into another clip: that one keeps the stage.
+            if (live() && this.player.busy()) return dropped({tries: 0, result: 'busy'}, eye);
+            return this.playBesideLine(anim, {via: 'late', turn: turn.n, line: 0, eye: eye}, live, () => {
+                // Counted (expression gap, the turn's expressions) only when it plays.
+                late.played = true;
+                if (!this.active || turn.skipped) return;
                 this.policy.used(label, this.now());
                 if (turn.firstEntry !== undefined) turn.expressions[turn.firstEntry] = label + ' (late)';
-                this.player.play(anim, {via: 'late', turn: turn.n, line: 0, eye: eye});
-            } else if (this.active) this.log.write({kind: 'late_dropped', turn: turn.n, label: label, eye: eye});
+            }, late).then(result => { if (!result.played) dropped(result, eye); });
         });
         return true;
+    }
+    // A clip beside a line that is being said (D102): the words never wait for it. Speech's own
+    // animations (the blink on a word, the opening pose, a gesture, an emoji) hold the same parts at
+    // the same priority, and a clip is all or nothing, so a REJECTED is asked again after
+    // BESIDE_RETRY_MS, while live() says the line is still said, unless another clip took over.
+    // onStart() runs when the clip starts; `state.trying` is true while a try is loading or playing.
+    // Resolves {played, tries, result}.
+    playBesideLine(anim, info, live, onStart, state) {
+        const gaveUp = (n, result) => ({played: false, tries: n, result: result});
+        const attempt = (n, last) => {
+            if (!live()) return Promise.resolve(gaveUp(n - 1, last));
+            if (state) state.trying = true;
+            const handle = this.player.play(anim, n > 1 ? Object.assign({}, info, {tries: n}) : info);
+            // `started` is true when the clip starts; without a platform start event it settles only
+            // when the clip ends, so onStart and the next decision then come late.
+            return handle.started.then(started => {
+                if (state) state.trying = false;
+                if (started) { if (onStart) onStart(); return {played: true, tries: n}; }
+                return handle.done.then(result => {
+                    if (result !== 'REJECTED' || n >= BESIDE_TRIES) return gaveUp(n, result);
+                    return delay(BESIDE_RETRY_MS).then(() => this.player.busy() ? gaveUp(n, result) : attempt(n + 1, result));
+                });
+            });
+        };
+        return attempt(1);
     }
     noteClassifier(result) {
         if (result.switched) this.log.write({kind: 'classifier_switch', detail: result.switched});
@@ -735,8 +771,8 @@ class Conversation {
                 readySize = result && result.size || null;
                 labelAt = this.now(); labelConn = result && result.conn || null;
                 if (released && this.active) this.log.write({kind: 'label_late', turn: turn.n, line: index, label: ready, ms: labelAt - queuedAt, at: this.since(labelAt), conn: labelConn || undefined});
-                // Too late for the first line: an eye expression still plays on it once the eye is free (D99),
-                // anything else is offered to the next line.
+                // Too late for the first line: it still plays on that line while it is said (D99, D102);
+                // when it cannot, it is offered to the next line.
                 if (index === 0 && turn.firstLate && ready && ready !== 'none' && !this.playLate(turn, ready, readySize)) turn.carried = {label: ready, size: readySize};
                 return ready;
             }, () => null) : Promise.resolve(null);
@@ -782,8 +818,13 @@ class Conversation {
                     const emoji = !use && found !== 'dance' ? this.emojiFor(piece) : null;
                     if (emoji) turn.expressions.push('emoji ' + emoji.word);
                     if (index === 0 && emoji) turn.firstEmoji = true;
-                    return this.speak(piece, use, {turn: turn.n, line: index, size: use ? size : null, keyword: emoji || undefined, hotWords: emoji || jiboEmoji ? undefined : false})
-                        .then(() => { if (index === 0) turn.firstSpoken = true; });
+                    return this.speak(piece, use, {turn: turn.n, line: index, size: use ? size : null, keyword: emoji || undefined, hotWords: emoji || jiboEmoji ? undefined : false, beside: index > 0})
+                        .then(() => {
+                            if (index !== 0) return;
+                            turn.firstSpoken = true;
+                            // A late body clip that never played is offered to line 2 (D102).
+                            if (turn.late && turn.late.carry && !turn.late.played && !turn.late.trying && !turn.carried) turn.carried = {label: turn.late.label, size: turn.late.size};
+                        });
                 });
             });
         });
@@ -812,8 +853,9 @@ class Conversation {
             const keyword = at && at.keyword, tagged = keyword ? core.emojiEsml(words, keyword.said, keyword.name, keyword.nth) : null;
             if (tagged) words = tagged;
             const leadFrom = this.now();
-            // animdb: the animation goes first, so it holds Jibo's body before speech's own gestures
-            // ask for it. The words follow once a clip that moves the body was handed over (its start
+            // animdb, first line: the animation goes first, so it holds Jibo's body before speech's own
+            // gestures ask for it. (A later line plays its clip beside its words, D102.) The words
+            // follow once a clip that moves the body was handed over (its start
             // waits for the body to move, D80), or once a clip of unknown kind started; at most
             // expressionLeadMs. Eye clips never hold the words (D99).
             // A notice's or trouble line's emoji while the previous expression still plays: it follows
@@ -822,8 +864,13 @@ class Conversation {
             const later = anim && mode === 'animdb' && at && at.emoji && this.player.busy();
             const token = this.lineToken = {};
             const holdMs = at && at.emoji ? emojiHoldMs(text) : 0;
+            // A line after the first: its clip is played beside it once the words are on their way, and
+            // asked again while the previous line's animations refuse it (D102); the words never wait.
+            const beside = !later && anim && mode === 'animdb' && at && at.beside;
             if (later) {
                 this.player.idle().then(() => { if (this.active && this.lineToken === token) this.player.play(anim, {via: 'emoji', turn: turn, line: line, holdMs: holdMs}); });
+            } else if (beside) {
+                leadBy = 'beside';
             } else if (anim && mode === 'animdb') {
                 const played = this.player.play(anim, {via: at && at.via || 'line', turn: turn, line: line, holdMs: holdMs});
                 // An eye clip starts within the TTS preparation anyway, so it never holds the words (D99).
@@ -845,7 +892,14 @@ class Conversation {
                     text: String(text).slice(0, 300)});
                 this.mark('first_speech');
                 const call = rules ? speech.speak(words, options || undefined, rules) : options ? speech.speak(words, options) : speech.speak(words);
-                return Promise.resolve(call).then(() => this.spoken(speech, started, turn, line, mode));
+                if (beside) this.playBesideLine(anim, {via: at.via || 'line', turn: turn, line: line, holdMs: holdMs}, () => this.active && this.lineToken === token).then(result => {
+                    if (!result.played && this.active) this.log.write({kind: 'late_dropped', turn: turn, line: line, name: anim, tries: result.tries, result: result.result});
+                });
+                return Promise.resolve(call).then(() => this.spoken(speech, started, turn, line, mode), error => {
+                    // The line is over, so a clip beside it stops asking.
+                    if (this.lineToken === token) this.lineToken = null;
+                    throw error;
+                });
             });
         }).catch(() => {}).then(() => { this.speaking = false; if (this.marks.first_speech !== undefined) this.mark('first_speech_done'); });
     }
