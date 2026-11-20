@@ -146,9 +146,44 @@ class ExpressionPlayer {
             line: info.line === undefined ? null : info.line, name: entry.name, result: result,
             asked: at(entry.asked), loaded: at(entry.loadedAt), start: at(entry.startAt), end: at(this.now()),
             ledStripped: entry.ledStripped === undefined ? null : entry.ledStripped, held: entry.heldFrames || undefined,
-            body: entry.body === undefined ? null : entry.body}, extra || {}));
+            body: entry.body === undefined ? null : entry.body, eye: info.eye || undefined}, extra || {}));
     }
+    // Whether `name` moves the body: true, false, or null when unknown (no such animation, no layers).
+    moves(name) {
+        const animDB = this.jibo.animDB;
+        try { return bodyLayer(animDB && typeof animDB.getAnimByName === 'function' && (animDB.getAnimByName(name) || {}).meta); } catch (_) { return null; }
+    }
+}
+// What plays on Jibo's eye, from the eye's own events: any animation that shows on the screen
+// raises addAnimation when it starts and removeAnimation when it ends (no name). free(maxMs)
+// resolves 'free' at once or when the eye is free again, 'timeout' after maxMs, 'unknown'
+// without the events (D99). stop() removes the listeners.
+function watchEye(eye) {
+    let busy = false;
+    const waiting = [];
+    const add = () => { busy = true; };
+    const remove = () => { busy = false; waiting.splice(0).forEach(done => done('free')); };
+    const on = !!(eye && typeof eye.on === 'function');
+    if (on) { eye.on('addAnimation', add); eye.on('removeAnimation', remove); }
+    return {
+        busy: () => busy,
+        free(maxMs) {
+            if (!on) return Promise.resolve('unknown');
+            if (!busy) return Promise.resolve('free');
+            return new Promise(resolve => {
+                let timer = null;
+                const done = how => { clearTimeout(timer); const i = waiting.indexOf(done); if (i >= 0) waiting.splice(i, 1); resolve(how); };
+                timer = setTimeout(() => done('timeout'), maxMs);
+                waiting.push(done);
+            });
+        },
+        stop() {
+            if (on) { try { const off = (eye.off || eye.removeListener).bind(eye); off('addAnimation', add); off('removeAnimation', remove); } catch (_) {} }
+            waiting.splice(0).forEach(done => done('stopped'));
+        }
+    };
 }
 ExpressionPlayer.LOAD_MS = 3000;
 ExpressionPlayer.SLACK_MS = 3000;
+ExpressionPlayer.watchEye = watchEye;
 module.exports = ExpressionPlayer;

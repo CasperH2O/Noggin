@@ -15,6 +15,7 @@ const settings = require(path.join(source, 'noggin/lib/settings.js'));
 const openai = require(path.join(source, 'noggin/lib/openai.js'));
 const ConversationLog = require(path.join(source, 'noggin/lib/conversation-log.js'));
 const Microphone = require(path.join(source, 'noggin/lib/mic.js'));
+const ExpressionPlayer = require(path.join(source, 'noggin/lib/expression.js'));
 import {EventEmitter} from 'node:events';
 import {execFileSync} from 'node:child_process';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -133,7 +134,7 @@ function emitter() {
 // What the conversation tests expect each mood to play (0.6.x's fixed animations).
 const TEST_ANIM = {happy: 'excited_01', sad: 'sad_01', surprised: 'surprised_02', thinking: 'Thinking_00', heart: 'Emoji_HeartRed', hello: 'greetings_01', giggle: 'laughter_01'};
 function harness(over = {}) {
-    const said = [], leds = [], logs = [], sent = [], options = [];
+    const said = [], leds = [], logs = [], sent = [], options = [], rules = [];
     let onBlock = null, released = 0, connects = 0;
     // Each connect is a new connection; emit() reaches the newest one.
     const makeRt = () => {
@@ -154,7 +155,7 @@ function harness(over = {}) {
         return over.connect ? over.connect(connects, rt) : Promise.resolve(rt);
     };
     const jibo = {
-        embodied: {speech: Object.assign({speak: (esml, opts) => { said.push(esml); options.push(opts); return sleep(over.speakMs || 20); }, stop: () => { jibo.stopped = true; }}, over.speech || {})},
+        embodied: {speech: Object.assign({speak: (esml, opts, auto) => { said.push(esml); options.push(opts); rules.push(auto); return sleep(over.speakMs || 20); }, stop: () => { jibo.stopped = true; }}, over.speech || {})},
         jetstream: {setHotwordMode: () => ({activated: Promise.resolve(), release: () => { released++; }}), types: {HotwordListenMode: {Disabled: 2}},
             events: {skillSwitch: emitter(), globalTurnStarted: emitter()}},
         expression: Object.assign({setLEDColor: c => leds.push(c.join(','))}, over.expression || {}),
@@ -177,7 +178,7 @@ function harness(over = {}) {
     const audio = (level = -40, samples = 2048) => onBlock && onBlock(new Int16Array(samples), level);
     let starts = 0;
     const appends = () => sent.filter(e => e.type === 'input_audio_buffer.append').length;
-    return {talk, get rt() { return rt; }, emit, jibo, said, options, leds, logs, sent, audio, appends, released: () => released, starts: () => starts, connects: () => connects};
+    return {talk, get rt() { return rt; }, emit, jibo, said, options, rules, leds, logs, sent, audio, appends, released: () => released, starts: () => starts, connects: () => connects};
 }
 async function untilListening(h) { for (let i = 0; i < 400 && h.talk.state !== 'listening'; i++) await sleep(5); assert.equal(h.talk.state, 'listening'); }
 function reply(h, id, text, done = true) {
@@ -420,6 +421,7 @@ test('a notice after the greeting, once, with its emoji; none on a comeback (D74
     const ended = h.talk.open(); await untilListening(h);
     assert.equal(h.said[0], 'Hi!');
     assert.match(h.said[1], /Emoji_Money[\s\S]*Heads up: money\./);
+    assert.deepEqual(h.rules[1], {hotWords: false}, "no keyword emoji of speech's own over the notice's");
     assert.equal(said, 1);
     h.talk.leave('test'); await ended;
     const back = harness({notice, resume: {pairs: [], tool: 'get_time', said: ''}, config: {comebackLine: 'Anything else?'}});
@@ -1829,7 +1831,8 @@ test('size notes: a mood with one size of animation says which, so the model\'s 
 
 test('emojiFor: the first word or two-word term with a picture, plurals, not a recent word', () => {
     const first = () => 0;
-    assert.deepEqual(core.emojiFor('I love pizza and ice cream!', {random: first}), {word: 'pizza', name: core.EMOJI.pizza[0]});
+    assert.deepEqual(core.emojiFor('I love pizza and ice cream!', {random: first}), {word: 'pizza', name: core.EMOJI.pizza[0], said: ['pizza'], nth: 0});
+    assert.deepEqual(core.emojiFor('Ice creams for everyone.').said, ['ice', 'creams'], 'said: the words as in the line');
     assert.equal(core.emojiFor('Ice cream is the best.').word, 'ice cream', 'two-word terms first');
     assert.equal(core.emojiFor('My dogs are cute.').word, 'dog');
     assert.equal(core.emojiFor('Do you like books?').word, 'book');
@@ -1837,6 +1840,36 @@ test('emojiFor: the first word or two-word term with a picture, plurals, not a r
     assert.equal(core.emojiFor('Grass is green because of chlorophyll.'), null);
     assert.equal(core.emojiFor('Yes, that is good news, hello!'), null, 'common words have no picture');
     assert.equal(core.emojiFor(''), null);
+});
+
+test('emojiFor: words with another meaning or picture have none; a nearby word can cancel one (D98)', () => {
+    for (const line of ['Here is a paper for you.', 'That machine is loud.', 'Let us break the ice.', 'As a rule of thumb, rest.', 'Cheers to that!'])
+        assert.equal(core.emojiFor(line), null, line);
+    assert.equal(core.emojiFor('That was a piece of cake.'), null, 'piece of cake');
+    assert.equal(core.emojiFor('I will take a rain check.'), null);
+    assert.equal(core.emojiFor('My new apple iphone is great.'), null);
+    assert.equal(core.emojiFor('My new apple iphone, then a cake.').word, 'cake', 'the search goes on after a cancelled word');
+    assert.equal(core.emojiFor('An apple a day.').word, 'apple');
+    assert.equal(core.emojiFor('We baked a cake.').word, 'cake');
+    assert.equal(core.emojiFor('Ice cream, please.').word, 'ice cream', 'the two-word term still has one');
+});
+
+test('emojiEsml: the emoji tag goes just before its word in the ESML; null when the word is not there (D98)', () => {
+    const tag = n => "<es name='" + n + "' nonBlocking='true'/>";
+    assert.equal(core.emojiEsml('How about a pizza tonight?', ['pizza'], 'Emoji_Pizza'), 'How about a ' + tag('Emoji_Pizza') + 'pizza tonight?');
+    assert.equal(core.emojiEsml('My Dogs are cute.', ['dogs'], 'Emoji_Dog'), 'My ' + tag('Emoji_Dog') + 'Dogs are cute.');
+    assert.equal(core.emojiEsml("The dog's bone.", ['dog'], 'Emoji_Dog'), 'The ' + tag('Emoji_Dog') + "dog's bone.");
+    assert.equal(core.emojiEsml('Ice  cream &amp; cake.', ['ice', 'cream'], 'Emoji_IceCream'), tag('Emoji_IceCream') + 'Ice  cream &amp; cake.');
+    assert.equal(core.emojiEsml('A hotdog stand.', ['dog'], 'Emoji_Dog'), null, 'whole words only');
+    assert.equal(core.emojiEsml('A cat.', ['cat'], "x' onload='y"), null, 'only plain animation names');
+    for (const [text, word] of [['A pie chart is fine, but I love pie.', 'love '], ['Rain check? No, the rain is coming.', 'the '], ['My apple iphone broke, so I ate an apple.', 'an ']]) {
+        const f = core.emojiFor(text);
+        assert.equal(f.nth, 1, text);
+        assert.ok(core.emojiEsml(core.esml(text, null), f.said, f.name, f.nth).includes(word + tag(f.name)), 'not on the cancelled one: ' + text);
+    }
+    const line = 'Fei Fei found a tiny door hidden in the trunk of an old tree.';
+    const found = core.emojiFor(line), esml = core.emojiEsml(core.esml(line, null), found.said, found.name);
+    assert.ok(esml.endsWith('an old ' + tag(found.name) + 'tree.'), esml);
 });
 
 test('emoji: a line without an expression shows a picture for what Jibo names; at most one per emojiGapMs; the expression on the same line wins', async () => {
@@ -1849,8 +1882,11 @@ test('emoji: a line without an expression shows a picture for what Jibo names; a
     reply(h, 'r1', 'How about a pizza? Or a taco with cheese.');
     await untilListening(h);
     const emoji = h.logs.filter(e => e.kind === 'speak' && e.emoji);
-    assert.equal(emoji.length, 1, 'one emoji within emojiGapMs'); assert.equal(emoji[0].emoji, 'pizza');
-    assert.ok(core.EMOJI.pizza.includes(db.played[0].name));
+    assert.equal(emoji.length, 1, 'one emoji within emojiGapMs'); assert.equal(emoji[0].emoji, 'pizza'); assert.equal(emoji[0].emoji_at, 'pizza');
+    assert.ok(core.EMOJI.pizza.includes(emoji[0].play));
+    assert.equal(h.said[1], "How about a <es name='" + emoji[0].play + "' nonBlocking='true'/>pizza?", 'at its word, in the words (D98)');
+    assert.equal(db.played.length, 0, 'not played next to the line');
+    assert.deepEqual(h.rules.slice(1, 3), [undefined, {hotWords: false}], "speech's own keyword emoji off within emojiGapMs");
     assert.deepEqual(h.logs.find(e => e.kind === 'jibo').expressions, ['none', 'emoji pizza', 'none']);
     await sleep(450);
     h.emit({type: 'input_audio_buffer.speech_stopped'});
@@ -1876,26 +1912,7 @@ test('lab timing: "Watch me." then "Now!" with excited_01, twice quietly and twi
     } finally { Conversation.LAB_PAUSE_MS = pause; }
 });
 
-test('emoji after an expression: line 1 has an expression, line 2 names a cat: the cat follows once the expression ends, while line 2 is still spoken', async () => {
-    const db = fakeAnimDB({}, 400);
-    const h = harness({speakMs: 300, animDB: db.animDB, expression: db.expression, config: {expressionPlay: 'animdb', emoji: true},
-        classify: (person, line) => Promise.resolve(/Nice/.test(line) ? {label: 'thumbsup', size: 'small'} : {label: 'none'})});
-    h.talk.choose = label => label === 'thumbsup' ? 'Emoji_ThumbsUp' : null;
-    h.talk.open(); await untilListening(h);
-    h.emit({type: 'input_audio_buffer.speech_stopped'});
-    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'They have a cat'});
-    reply(h, 'r1', 'Nice! A cat makes a lively audience.');
-    await untilListening(h);
-    const names = db.played.map(p => p.name);
-    assert.equal(names[0], 'Emoji_ThumbsUp'); assert.ok(core.EMOJI.cat.includes(names[1]), names.join());
-    await until(() => h.logs.some(e => e.kind === 'anim' && e.via === 'emoji'));
-    const cat = h.logs.find(e => e.kind === 'anim' && e.via === 'emoji'), thumbs = h.logs.find(e => e.kind === 'anim' && e.name === 'Emoji_ThumbsUp');
-    assert.equal(cat.result, 'STOPPED'); assert.ok(cat.asked >= thumbs.end, 'after the thumbs up');
-    assert.ok(h.logs.find(e => e.kind === 'speak' && e.emoji === 'cat').after);
-    h.talk.close();
-});
-
-test('emoji after an expression is dropped when the line is over before the expression ends', async () => {
+test('emoji after an expression: line 1 has an expression, line 2 names a cat: the cat is in line 2 at its word, nothing waits (D98)', async () => {
     const db = fakeAnimDB({}, 400);
     const h = harness({speakMs: 30, animDB: db.animDB, expression: db.expression, config: {expressionPlay: 'animdb', emoji: true},
         classify: (person, line) => Promise.resolve(/Nice/.test(line) ? {label: 'thumbsup', size: 'small'} : {label: 'none'})});
@@ -1903,9 +1920,33 @@ test('emoji after an expression is dropped when the line is over before the expr
     h.talk.open(); await untilListening(h);
     h.emit({type: 'input_audio_buffer.speech_stopped'});
     h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'They have a cat'});
-    reply(h, 'r1', 'Nice! A cat.');
-    await untilListening(h); await sleep(450);
-    assert.deepEqual(db.played.map(p => p.name), ['Emoji_ThumbsUp'], 'no cat after the line was over');
+    reply(h, 'r1', 'Nice! A cat makes a lively audience.');
+    await untilListening(h);
+    assert.deepEqual(db.played.map(p => p.name), ['Emoji_ThumbsUp']);
+    const cat = h.logs.find(e => e.kind === 'speak' && e.emoji === 'cat');
+    assert.ok(core.EMOJI.cat.includes(cat.play)); assert.equal(cat.after, undefined); assert.equal(cat.lead, undefined);
+    assert.equal(h.said.at(-1), "A <es name='" + cat.play + "' nonBlocking='true'/>cat makes a lively audience.");
+    h.talk.close();
+});
+
+test("emoji: a word the ESML cannot find is logged as missed and the line is said without it; speech's own keyword emoji stay on (D98)", async () => {
+    const h = harness({config: {expressionPlay: 'animdb', emoji: true}, classify: () => Promise.resolve({label: 'none'})});
+    h.talk.open(); await untilListening(h);
+    await h.talk.speak('A pizza.', null, {turn: 1, line: 0, keyword: {word: 'pizza', name: 'Emoji_Pizza', said: ['pasta']}});
+    const speak = h.logs.find(e => e.kind === 'speak' && e.emoji === 'pizza');
+    assert.equal(speak.emoji_at, 'missed'); assert.equal(h.said.at(-1), 'A pizza.'); assert.equal(h.rules.at(-1), undefined);
+    h.talk.close();
+});
+
+test("emoji off: speech's own keyword emoji are off too (D98)", async () => {
+    const h = harness({config: {expressionPlay: 'animdb', emoji: false}, classify: () => Promise.resolve({label: 'none'})});
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'What should I eat?'});
+    reply(h, 'r1', 'How about a pizza?');
+    await untilListening(h);
+    assert.equal(h.said.at(-1), 'How about a pizza?');
+    assert.deepEqual(h.rules.at(-1), {hotWords: false}); assert.equal(h.logs.find(e => e.kind === 'speak' && e.turn === 1).hot_words, false);
     h.talk.close();
 });
 
@@ -2105,7 +2146,7 @@ test('an emoji with a hold frame stays on the eye for holdMs; other animations a
     assert.equal(configs.Emoji_Brain.duration, undefined, 'already longer than asked');
 });
 
-test('an emoji on a line asks for a hold of about the line\'s length, between 3 and 4.5 s', async () => {
+test('a notice or trouble emoji asks for a hold of about the line\'s length, between 3 and 4.5 s', async () => {
     const anim = fakeAnimDB();
     anim.animDB.getAnimByName = (base => name => Object.assign(base(name) || {}, {meta: {duration: 57, holdSafeKF: 32, endsNeutral: true}}))(anim.animDB.getAnimByName);
     const h = harness({config: {expressionPlay: 'animdb'}, animDB: anim.animDB, expression: anim.expression});
@@ -2271,14 +2312,14 @@ test('first line: after a reaction that already played, the line does not wait f
     h.talk.close();
 });
 
-test('lead: the words wait for an eye animation to start, never for one that moves the body', async () => {
+test('lead: the words never wait for an eye animation (D99); for one that moves the body only until it is handed over', async () => {
     const make = body => ({getAnimByName: () => ({meta: {endsNeutral: true, layers: {Eye: true, Body: body}}, createFromConfig: () => Promise.resolve({instance: {events: {}},
         play: () => sleep(150).then(() => 'STOPPED'), stop: () => Promise.resolve()})})});
     const expression = fakeAnimDB().expression;
     const eye = harness({config: {expressionPlay: 'animdb', greetingExpression: 'hello', expressionLeadMs: 40}, animDB: make(false), expression});
     eye.talk.open(); await untilListening(eye);
     const e1 = eye.logs.find(e => e.kind === 'speak');
-    assert.equal(e1.lead, 'timeout'); assert.ok(e1.lead_ms >= 35);
+    assert.equal(e1.lead, 'none'); assert.ok(e1.lead_ms < 30, JSON.stringify(e1));
     eye.talk.close();
     const body = harness({config: {expressionPlay: 'animdb', greetingExpression: 'hello', expressionLeadMs: 40}, animDB: make(true), expression});
     body.talk.open(); await untilListening(body);
@@ -2338,12 +2379,10 @@ test('first line: a label that comes after the reaction decided the line goes to
     h.talk.close();
 });
 
-test('lead: an emoji on a later line does not hold the words; one on the first line still waits for it to start (D82)', async () => {
-    // An eye clip whose `started` never comes: only the lead timeout would release the words.
-    const slow = {getAnimByName: () => ({meta: {endsNeutral: true, layers: {Eye: true, Body: false}}, createFromConfig: () => Promise.resolve({instance: {events: {}},
-        play: () => sleep(150).then(() => 'STOPPED'), stop: () => Promise.resolve()})})};
-    const run = async text => {
-        const h = harness({animDB: slow, expression: fakeAnimDB().expression, config: {expressionPlay: 'animdb', emoji: true, expressionLeadMs: 80},
+test('a keyword emoji never holds the words: no animation next to the line, no lead, first line or later (D98)', async () => {
+    const db = fakeAnimDB({}, 30);
+    for (const text of ['Good question. How about a pizza tonight?', 'Pizza sounds great. Enjoy it.']) {
+        const h = harness({animDB: db.animDB, expression: db.expression, config: {expressionPlay: 'animdb', emoji: true, expressionLeadMs: 80},
             classify: () => Promise.resolve({label: 'none'})});
         h.talk.open(); await untilListening(h);
         h.emit({type: 'input_audio_buffer.speech_stopped'});
@@ -2351,20 +2390,104 @@ test('lead: an emoji on a later line does not hold the words; one on the first l
         reply(h, 'r1', text);
         await untilListening(h);
         const speak = h.logs.find(e => e.kind === 'speak' && e.emoji === 'pizza');
-        await until(() => h.logs.some(e => e.kind === 'anim' && e.via === 'emoji'));
-        const anim = h.logs.find(e => e.kind === 'anim' && e.via === 'emoji');
+        assert.equal(speak.lead, undefined, text); assert.ok(h.said.some(t => /nonBlocking='true'\/>[Pp]izza/.test(t)), text);
         h.talk.close();
-        return Object.assign({}, speak, {anim});
-    };
-    const later = await run('Good question. How about a pizza tonight?');
-    assert.equal(later.line, 1); assert.equal(later.lead, 'none'); assert.ok(later.lead_ms < 30, JSON.stringify(later));
-    assert.equal(later.anim.line, 1); assert.equal(later.anim.result, 'STOPPED', 'the emoji still plays');
-    const first = await run('Pizza sounds great. Enjoy it.');
-    assert.equal(first.line, 0); assert.equal(first.lead, 'timeout'); assert.ok(first.lead_ms >= 70, JSON.stringify(first));
+    }
+    assert.equal(db.played.length, 0);
 });
 
-test('expression wait: the first line waits at most 500 ms for its expression by default', () => {
-    assert.equal(settings.DEFAULTS.expressionWaitMs, 500);
+test('expression wait: the first line does not wait for its expression by default (D99)', () => {
+    assert.equal(settings.DEFAULTS.expressionWaitMs, 0);
+});
+
+// The eye's own events (jibo.face.eye): addAnimation when something starts on the screen,
+// removeAnimation when it ends, as speech's blink on the first word does.
+function fakeEye() {
+    const handlers = {};
+    return {on: (name, f) => { (handlers[name] = handlers[name] || []).push(f); }, off: (name, f) => { handlers[name] = (handlers[name] || []).filter(x => x !== f); },
+        emit: name => (handlers[name] || []).slice().forEach(f => f()), count: () => Object.values(handlers).reduce((n, l) => n + l.length, 0)};
+}
+
+test('late first-line expression (D99): the words go at once; an eye expression that comes later plays once the eye is free, on that line', async () => {
+    const db = fakeAnimDB({}, 30, {eye_happy_01: {Eye: true}}), eye = fakeEye();
+    let answer;
+    const h = harness({speakMs: 400, animDB: db.animDB, expression: db.expression, config: {expressionPlay: 'animdb', expressionWaitMs: 0},
+        classify: (person, line, kind) => kind === 'reaction' ? Promise.resolve({label: 'none'}) : /fun/.test(line) ? new Promise(r => { answer = r; }) : Promise.resolve({label: 'none'})});
+    h.jibo.face.eye = eye;
+    h.talk.choose = label => label === 'happy' ? 'eye_happy_01' : null;
+    h.talk.open(); await untilListening(h);
+    assert.equal(eye.count(), 2, 'watching the eye');
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'Let us play'});
+    reply(h, 'r1', 'That sounds fun! You start.');
+    await until(() => h.said.includes('That sounds fun!'));
+    const wait = h.logs.find(e => e.kind === 'line_wait' && e.turn === 1);
+    assert.equal(wait.by, 'timeout'); assert.equal(wait.used, null);
+    eye.emit('addAnimation');          // speech's blink on the first word
+    answer({label: 'happy'});
+    await sleep(60);
+    assert.equal(db.played.length, 0, 'not while the blink holds the eye');
+    eye.emit('removeAnimation');
+    await until(() => h.logs.some(e => e.kind === 'anim' && e.via === 'late'));
+    const late = h.logs.find(e => e.kind === 'anim' && e.via === 'late');
+    assert.equal(late.name, 'eye_happy_01'); assert.equal(late.line, 0); assert.equal(late.eye.how, 'free'); assert.ok(late.eye.ms >= 50, JSON.stringify(late));
+    await untilListening(h);
+    assert.equal(h.logs.find(e => e.kind === 'jibo').expressions[0], 'happy (late)');
+    assert.equal(h.logs.filter(e => e.kind === 'line_wait')[1].used, null, 'not again on line 2');
+    h.talk.close();
+    assert.equal(eye.count(), 0, 'the eye listeners are removed on close');
+});
+
+test('late first-line expression (D99): a line that ends while the eye is busy drops it, and it is not counted', async () => {
+    const db = fakeAnimDB({}, 30, {eye_happy_01: {Eye: true}}), eye = fakeEye();
+    let answer;
+    const h = harness({speakMs: 60, animDB: db.animDB, expression: db.expression, config: {expressionPlay: 'animdb', expressionWaitMs: 0},
+        classify: (person, line, kind) => kind === 'reaction' ? Promise.resolve({label: 'none'}) : /fun/.test(line) ? new Promise(r => { answer = r; }) : Promise.resolve({label: 'none'})});
+    h.jibo.face.eye = eye;
+    h.talk.choose = label => label === 'happy' ? 'eye_happy_01' : null;
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'Let us play'});
+    reply(h, 'r1', 'That sounds fun!');
+    await until(() => h.said.includes('That sounds fun!'));
+    eye.emit('addAnimation');
+    answer({label: 'happy'});
+    await untilListening(h);
+    eye.emit('removeAnimation');
+    await until(() => h.logs.some(e => e.kind === 'late_dropped'));
+    assert.equal(h.logs.find(e => e.kind === 'late_dropped').eye.how, 'free');
+    assert.equal(h.logs.find(e => e.kind === 'jibo').expressions[0], 'late');
+    assert.ok(h.talk.policy.allow('happy', h.talk.now(), ''), 'the expression gap did not start');
+    assert.equal(db.played.length, 0);
+    h.talk.close();
+});
+
+test('late first-line expression (D99): the eye wait ends after 1 s at most; a body move or a line already over goes to the next line', async () => {
+    const watch = ExpressionPlayer.watchEye(fakeEye());
+    assert.equal(await watch.free(10), 'free');
+    assert.equal(await ExpressionPlayer.watchEye(null).free(10), 'unknown');
+    const eye = fakeEye(), w2 = ExpressionPlayer.watchEye(eye);
+    eye.emit('addAnimation');
+    const t = Date.now(); assert.equal(await w2.free(40), 'timeout'); assert.ok(Date.now() - t >= 35);
+    const pending = w2.free(1000); w2.stop(); assert.equal(await pending, 'stopped');
+    // A body move that comes late: offered to line 2, as before.
+    const db = fakeAnimDB({}, 30);
+    let answer;
+    const h = harness({speakMs: 100, animDB: db.animDB, expression: db.expression, config: {expressionPlay: 'animdb', expressionWaitMs: 0},
+        classify: (person, line, kind) => kind === 'reaction' ? Promise.resolve({label: 'none'}) : /Wow/.test(line) ? new Promise(r => { answer = r; }) : Promise.resolve({label: 'none'})});
+    h.jibo.face.eye = fakeEye();
+    h.talk.choose = label => label === 'surprised' ? 'excited_01' : null;
+    h.talk.player.moves = name => name === 'excited_01';
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'I won'});
+    reply(h, 'r1', 'Wow! That is great news.');
+    await until(() => h.said.includes('Wow!'));
+    answer({label: 'surprised'});
+    await untilListening(h);
+    assert.equal(h.logs.filter(e => e.kind === 'line_wait')[1].used, 'surprised', 'went to line 2');
+    assert.ok(!h.logs.some(e => e.kind === 'anim' && e.via === 'late'));
+    h.talk.close();
 });
 
 test('timing log (D89): warm and label connections, and where the server placed speech in the sent audio', async () => {

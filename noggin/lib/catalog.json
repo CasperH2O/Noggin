@@ -1378,10 +1378,6 @@
   "appliance": [
    "Emoji_Toaster"
   ],
-  "arrow": [
-   "Emoji_HeartArrow",
-   "emoji-arrow-heart-hf-01"
-  ],
   "arrow heart": [
    "emoji-arrow-heart-hf-01"
   ],
@@ -1395,11 +1391,6 @@
   ],
   "bacon": [
    "Emoji_Pig"
-  ],
-  "ball": [
-   "emoji-disco-ball-hf-01",
-   "emoji-nye-ball-down-hf-01",
-   "emoji-nye-ball-up-hf-01"
   ],
   "balloons": [
    "emoji-balloons-hf-01"
@@ -1503,9 +1494,6 @@
   "boiling": [
    "Emoji_ThermometerHot"
   ],
-  "bolt": [
-   "Emoji_LightningBolt"
-  ],
   "boo": [
    "Emoji_ThumbsDown"
   ],
@@ -1519,10 +1507,6 @@
   "bowling": [
    "Emoji_Bowling",
    "emoji-bowling-hf-01"
-  ],
-  "box": [
-   "emoji-chocolate-heart-box-hf-01",
-   "emoji-chocolate-heart-box-open-hf-01"
   ],
   "boxing": [
    "Emoji_Boxing",
@@ -1598,9 +1582,6 @@
   "candy cane": [
    "emoji-candy-cane-hf-01"
   ],
-  "cane": [
-   "emoji-candy-cane-hf-01"
-  ],
   "canvas": [
    "Emoji_Canvas"
   ],
@@ -1630,10 +1611,6 @@
    "Emoji_Chalkboard",
    "emoji-chalkboard-hf-01"
   ],
-  "cheers": [
-   "Emoji_Beer",
-   "Emoji_Wine"
-  ],
   "cheese": [
    "Emoji_Cheese",
    "emoji-cheese-hf-01"
@@ -1657,9 +1634,6 @@
   ],
   "chilly": [
    "Emoji_Ice"
-  ],
-  "chip": [
-   "emoji-computer-chip-hf-01"
   ],
   "chocolate": [
    "Emoji_Valentines",
@@ -1744,14 +1718,8 @@
   "cpu": [
    "Emoji_Microchip"
   ],
-  "cream": [
-   "emoji-ice-cream-hf-01"
-  ],
   "crown": [
    "emoji-crown-hf-01"
-  ],
-  "cube": [
-   "emoji-ice-cube-hf-01"
   ],
   "cupid": [
    "Emoji_HeartArrow",
@@ -1765,9 +1733,6 @@
   "daisy": [
    "Emoji_FlowerWhite",
    "emoji-flower-daisy-hf-01"
-  ],
-  "deal with it": [
-   "Emoji_Sunglasses"
   ],
   "desert": [
    "Emoji_Pyramid"
@@ -1963,9 +1928,6 @@
    "Emoji_Football",
    "emoji-football-hf-01"
   ],
-  "fork": [
-   "Emoji_Meal"
-  ],
   "four leaf clover": [
    "Emoji_Clover"
   ],
@@ -2088,9 +2050,6 @@
    "Emoji_Hockey",
    "emoji-hockey-hf-01"
   ],
-  "holes": [
-   "Emoji_Cheese"
-  ],
   "holiday sweater": [
    "emoji-holiday-sweater-hf-01"
   ],
@@ -2109,29 +2068,6 @@
   "house": [
    "Emoji_House",
    "emoji-house-hf-01"
-  ],
-  "ib idle long time": [
-   "Emoji_EasterEgg",
-   "Emoji_FlowerBlue",
-   "Emoji_FlowerRed",
-   "Emoji_FlowerWhite",
-   "Emoji_Stork",
-   "emoji-america-hf-01",
-   "emoji_medal_01"
-  ],
-  "ib idle short time": [
-   "Emoji_EasterEgg",
-   "Emoji_FlowerBlue",
-   "Emoji_FlowerRed",
-   "Emoji_FlowerWhite",
-   "Emoji_Stork",
-   "emoji-america-hf-01",
-   "emoji_medal_01"
-  ],
-  "ice": [
-   "Emoji_Ice",
-   "emoji-ice-cream-hf-01",
-   "emoji-ice-cube-hf-01"
   ],
   "ice cream": [
    "Emoji_IceCream",
@@ -2243,15 +2179,8 @@
    "Emoji_Lunch",
    "Emoji_Meal"
   ],
-  "mac": [
-   "emoji-old-mac-hf-01"
-  ],
   "macaroni": [
    "emoji-macaroni-hf-01"
-  ],
-  "machine": [
-   "Emoji_Robot",
-   "emoji-washing-machine-hf-01"
   ],
   "magic": [
    "emoji-magic-hf-01"
@@ -2268,12 +2197,6 @@
   ],
   "maracas": [
    "emoji-maracas-left-hf-01",
-   "emoji-maracas-right-hf-01"
-  ],
-  "maracas left": [
-   "emoji-maracas-left-hf-01"
-  ],
-  "maracas right": [
    "emoji-maracas-right-hf-01"
   ],
   "market": [
@@ -2378,12 +2301,6 @@
    "emoji-nye-ball-down-hf-01",
    "emoji-nye-ball-up-hf-01"
   ],
-  "nye ball down": [
-   "emoji-nye-ball-down-hf-01"
-  ],
-  "nye ball up": [
-   "emoji-nye-ball-up-hf-01"
-  ],
   "ocean": [
    "Emoji_Ocean",
    "Emoji_Shark",
@@ -2415,9 +2332,6 @@
   "pants": [
    "Emoji_Pants",
    "emoji-pants-hf-01"
-  ],
-  "paper": [
-   "emoji-toilet-paper-hf-01"
   ],
   "party": [
    "Emoji_Cake",
@@ -2518,9 +2432,6 @@
    "emoji-pie-pumpkin-hf-01",
    "emoji-pumpkin-hf-01",
    "emoji_pumpkin_01"
-  ],
-  "punch": [
-   "Emoji_Boxing"
   ],
   "puppy": [
    "Emoji_Dog",
@@ -2811,9 +2722,6 @@
   "thermometer hot": [
    "Emoji_ThermometerHot"
   ],
-  "thumb": [
-   "Emoji_ThumbsUp"
-  ],
   "thumbs down": [
    "Emoji_ThumbsDown"
   ],
@@ -2831,9 +2739,6 @@
   ],
   "tickets": [
    "emoji-tickets-hf-01"
-  ],
-  "toast": [
-   "Emoji_Toaster"
   ],
   "toaster": [
    "Emoji_Toaster",
@@ -2938,9 +2843,6 @@
   ],
   "washing machine": [
    "emoji-washing-machine-hf-01"
-  ],
-  "water": [
-   "Emoji_Ocean"
   ],
   "watermelon": [
    "Emoji_Watermelon",

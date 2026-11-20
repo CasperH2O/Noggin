@@ -146,8 +146,20 @@ function moodDescription(mood) {
     const note = !entry ? '' : !entry.small.length ? ' (always a whole-body move)' : !entry.big.length ? ' (always small: on his eye or a small nod)' : '';
     return MOODS[mood] + note;
 }
+// Words that, within two words of an emoji word, mean something else ("apple" next to "iphone",
+// "piece of cake", "rain check").
+const EMOJI_CANCEL = {
+    apple: ['computer', 'computers', 'iphone', 'ipad', 'mac', 'macbook', 'watch', 'company'],
+    party: ['political', 'third', 'republican', 'democratic', 'labour', 'labor'],
+    cake: ['piece'], pie: ['chart'], rain: ['check'], tree: ['family'], fire: ['away'],
+    rocket: ['science'], space: ['personal', 'parking', 'storage', 'disk'],
+    mouse: ['computer', 'click', 'keyboard'], bug: ['software', 'code', 'fix', 'computer'],
+    turkey: ['country', 'istanbul', 'ankara']
+};
 // The first word or two-word term of Jibo's line that has an eye emoji, not one of
-// options.recent (words): {word, name} or null. Plurals find their singular ("dogs" -> dog).
+// options.recent (words): {word, name, said, nth} or null; `said` is the term as it is in the line
+// (words) and `nth` how many times it came before (skipped as cancelled), to place the emoji
+// there. Plurals find their singular ("dogs" -> dog).
 function emojiFor(text, options) {
     options = options || {};
     const recent = options.recent || [], random = options.random || Math.random;
@@ -158,11 +170,34 @@ function emojiFor(text, options) {
         const singular = term.replace(/(ies)$/, 'y').replace(/(ches|shes|xes|ses)$/, m => m.slice(0, -2)).replace(/([^s])s$/, '$1');
         return singular !== term && EMOJI[singular] && recent.indexOf(singular) < 0 ? singular : null;
     };
+    const cancelled = (term, from, to) => {
+        const near = words.slice(Math.max(0, from - 2), to + 2);
+        return (EMOJI_CANCEL[term] || []).some(w => near.indexOf(w) >= 0);
+    };
     for (let i = 0; i < words.length; i++) {
-        const found = (i + 1 < words.length && lookup(words[i] + ' ' + words[i + 1])) || lookup(words[i]);
-        if (found) { const names = EMOJI[found]; return {word: found, name: names[Math.min(names.length - 1, Math.floor(random() * names.length))]}; }
+        const pair = i + 1 < words.length ? lookup(words[i] + ' ' + words[i + 1]) : null;
+        const found = pair && !cancelled(pair, i, i + 2) ? pair : lookup(words[i]);
+        if (!found || (found !== pair && cancelled(found, i, i + 1))) continue;
+        const names = EMOJI[found], said = words.slice(i, found === pair ? i + 2 : i + 1), term = said.join(' ');
+        let nth = 0;
+        for (let j = 0; j < i; j++) if (words.slice(j, j + said.length).join(' ') === term) nth++;
+        return {word: found, name: names[Math.min(names.length - 1, Math.floor(random() * names.length))], said: said, nth: nth};
     }
     return null;
+}
+// ESML (from esml()/speechText()) with an emoji tag just before the words `said` (after `nth`
+// earlier ones), so speech starts it at that word (D98); null when the words are not found or
+// the name is not safe.
+function emojiEsml(esmlText, said, name, nth) {
+    if (!/^[A-Za-z0-9_-]+$/.test(name || '') || !said || !said.length) return null;
+    const words = said.map(w => w.replace(/[^a-z]/g, '')).filter(Boolean);
+    if (!words.length) return null;
+    const find = new RegExp('(^|[^A-Za-z])(' + words.join('[^A-Za-z]+') + ')(?![A-Za-z])', 'gi');
+    let match = find.exec(esmlText);
+    for (let skip = nth || 0; match && skip > 0; skip--) match = find.exec(esmlText);
+    if (!match) return null;
+    const at = match.index + match[1].length;
+    return esmlText.slice(0, at) + "<es name='" + name + "' nonBlocking='true'/>" + esmlText.slice(at);
 }
 
 // Float samples at `rate` -> mono Int16 at 24 kHz. Down-sampling averages the input
@@ -454,5 +489,5 @@ function isStop(text) {
     return STOP.indexOf(normalized) >= 0;
 }
 
-module.exports = {RATE, MOODS, DANCE, EXTRA, CATALOG, EMOJI, DANCES, animFor, pickAnimation, danceChoice, danceStyles, pickDance, danceName, danceLine, danceAnnounce, moodDescription, emojiFor, toPcm24, base64, levelDb, sessionUpdate, textDelta, firstSentenceEnd, speechText, chunks, esml, animEsml,
+module.exports = {RATE, MOODS, DANCE, EXTRA, CATALOG, EMOJI, DANCES, animFor, pickAnimation, danceChoice, danceStyles, pickDance, danceName, danceLine, danceAnnounce, moodDescription, emojiFor, emojiEsml, toPcm24, base64, levelDb, sessionUpdate, textDelta, firstSentenceEnd, speechText, chunks, esml, animEsml,
     choices, decisionsRequest, decisionLabel, classifierRequest, classifierLabel, classifierSize, ExpressionPolicy, personaText, voiceSetup, instructions, resumeNote, reconnectNote, isStop};

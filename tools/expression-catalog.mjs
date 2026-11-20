@@ -107,7 +107,11 @@ const EMOJI_STOP = new Set(('eye-only hf hot-frame emoji blink blink-to-reveal q
     'good bad new old time on off up down fun win default loop pop single double big small clear top can jack stand glass years life saver various ' +
     'activity game present show mark question-mark question unknown check checkmark star sparkle shine agree disagree yes sad hello goodbye thinking ' +
     'idea success left right late early open find run running power call ring fix wave slow soft strong smart heavy retro processing delete chill ' +
-    'piece hope fight shock home wipe app cap tee fore bball hog pee poo potty searching treat fuel').split(' '));
+    'piece hope fight shock home wipe app cap tee fore bball hog pee poo potty searching treat fuel ' +
+    // Words with another everyday meaning, or whose picture is something else (paper -> toilet
+    // paper, machine -> robot), and the database's internal tags.
+    'paper ice box chip punch cane thumb fork mac machine arrow cube holes ball bolt cream toast cheers water ' +
+    'deal-with-it ib-idle-long-time ib-idle-short-time nye-ball-down nye-ball-up maracas-left maracas-right').split(' '));
 // Words whose tag points at the wrong picture: word -> emoji (by name) it must not show.
 const EMOJI_NOT = {dog: /hot.?dog/i, apple: /mac/i, computer: /mac128k/i, mouse: /cheese/i};
 // word -> emoji names. Words are lower case; multi-word terms ("ice cream") keep their space.

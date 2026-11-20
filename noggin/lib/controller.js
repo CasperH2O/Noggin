@@ -39,13 +39,15 @@ const LISTENING = [0, 0.45, 1], BUSY = [1, 0.55, 0], OFF = [0, 0, 0];
 function carriedText(carried) { return carried ? joinWords(carried.before, carried.own) : ''; }
 function joinWords(a, b) { return [a, b].filter(Boolean).join(' '); }
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-// An emoji stays on the eye about as long as Jibo says its line (about 75 ms per character),
-// never shorter than EMOJI_MIN_MS and never longer than EMOJI_MAX_MS.
+// A notice's or trouble line's emoji stays on the eye about as long as Jibo says its line
+// (about 75 ms per character), never shorter than EMOJI_MIN_MS and never longer than EMOJI_MAX_MS.
 const EMOJI_MIN_MS = 3000, EMOJI_MAX_MS = 4500, EMOJI_MS_PER_CHAR = 75;
 function emojiHoldMs(text) {
     const spoken = String(text || '').length * EMOJI_MS_PER_CHAR;
     return Math.min(EMOJI_MAX_MS, Math.max(EMOJI_MIN_MS, spoken));
 }
+// A late first-line expression waits at most this long for the eye (the longest blink is ~0.93 s).
+const EYE_FREE_MS = 1000;
 const MAX_ROUNDS = 2, REPLY_WAIT_MS = 15000, KEEP_PAIRS = 10;
 // How Noggin plays an expression (config expressionPlay):
 // - 'esml': inside the line's ESML, and each line waits for its animation.
@@ -124,20 +126,23 @@ class Conversation {
         this.thinking = new ThinkingEye(this.jibo, () => this.config.thinkingEye !== false && this.active && !this.isPrivate() && this.state === 'thinking',
             () => this.since(), cycle => this.log.write(Object.assign({kind: 'thinking_eye'}, cycle)));
         this.player = new ExpressionPlayer(this.jibo, this.log, this.now, t => t - this.t0, () => this.active && !this.isPrivate());
+        this.eyeWatch = null;
         this.speechAnims = null; this.spokenAt = null; this.recentAnims = []; this.recentEmoji = []; this.lastEmojiAt = -Infinity;
         this.heard = ''; this.recentDances = []; this.danceCount = 0; this.announcedAt = -Infinity;
     }
     // An eye emoji for a word in Jibo's line: at most one per emojiGapMs, and not the same word
-    // again within the last ten. (speak() holds it back while another expression still plays.)
+    // again within the last ten. speak() places it at the word (D98).
     emojiFor(text) {
-        const config = this.config, now = this.now();
-        if (config.emoji === false || now - this.lastEmojiAt < config.emojiGapMs) return null;
+        if (!this.emojiAllowed()) return null;
+        const now = this.now();
         const found = core.emojiFor(text, {recent: this.recentEmoji});
         if (!found) return null;
         this.lastEmojiAt = now;
         this.recentEmoji.push(found.word); if (this.recentEmoji.length > 10) this.recentEmoji.shift();
         return found;
     }
+    // Whether a line may get an eye emoji now, Noggin's or speech's own keyword emoji (D98).
+    emojiAllowed() { return this.config.emoji !== false && this.now() - this.lastEmojiAt >= this.config.emojiGapMs; }
     mode() { return PLAY_MODES.indexOf(this.config.expressionPlay) >= 0 ? this.config.expressionPlay : 'animdb'; }
     // The animation for an expression label and size: a random fitting one from the catalogue,
     // not one of the last few. Animations with an LED layer only where their LED channels are
@@ -193,6 +198,8 @@ class Conversation {
             this.watch(js.events.skillSwitch, () => this.leave('skill_switch'));
             this.watch(js.events.globalTurnStarted, () => this.leave('global_turn'));
         }
+        const eyeWatch = this.eyeWatch = ExpressionPlayer.watchEye(jibo.face && jibo.face.eye);
+        this.unwatch.push(() => eyeWatch.stop());
         const gestures = jibo.face && jibo.face.gestures;
         if (gestures && gestures.addStageGesture && gestures.hammer) {
             try {
@@ -296,7 +303,7 @@ class Conversation {
         if (!notice || this.resume || !this.active) return;
         this.notice = null;
         this.log.write({kind: 'notice', text: notice.text});
-        return this.speak(notice.text, null, notice.emoji ? {anim: notice.emoji, emoji: 'notice', via: 'notice'} : null)
+        return this.speak(notice.text, null, notice.emoji ? {anim: notice.emoji, emoji: 'notice', via: 'notice', hotWords: false} : null)
             .then(() => { try { if (notice.said) notice.said(); } catch (_) {} });
     }
     // The connection dropped after the session was set up: once per conversation, a new session
@@ -654,6 +661,26 @@ class Conversation {
         if (reaction.played === 'before') return this.now() - this.policy.lastAt < this.policy.gapMs;
         return !turn.reactionDone && this.policy.allow(reaction.label, this.now(), turn.transcript);
     }
+    // The first line's expression came after its words started (D99): an eye expression plays
+    // while Jibo still says that line, once speech's own eye animation (the blink on his first
+    // word) has ended, at most EYE_FREE_MS later. Not over Noggin's emoji on that line, not a body
+    // move (speech's opening pose holds the body), and only in animdb. True when it takes it.
+    playLate(turn, label, size) {
+        if (!this.active || turn.skipped || turn.firstSpoken || turn.firstEmoji || this.mode() !== 'animdb' || label === 'dance') return false;
+        const anim = this.choose(label, size);
+        if (!anim || this.player.moves(anim) !== false || !this.policy.allow(label, this.now(), turn.transcript)) return false;
+        const from = this.now();
+        this.eyeWatch.free(EYE_FREE_MS).then(how => {
+            const eye = {how: how, ms: this.now() - from};
+            // Counted (expression gap, the turn's expressions) only when it plays.
+            if (this.active && !turn.skipped && !turn.firstSpoken) {
+                this.policy.used(label, this.now());
+                if (turn.firstEntry !== undefined) turn.expressions[turn.firstEntry] = label + ' (late)';
+                this.player.play(anim, {via: 'late', turn: turn.n, line: 0, eye: eye});
+            } else if (this.active) this.log.write({kind: 'late_dropped', turn: turn.n, label: label, eye: eye});
+        });
+        return true;
+    }
     noteClassifier(result) {
         if (result.switched) this.log.write({kind: 'classifier_switch', detail: result.switched});
         else if (result.error) this.log.write({kind: 'classifier_error', api: result.api || null, status: result.status || null, error: result.error});
@@ -708,8 +735,9 @@ class Conversation {
                 readySize = result && result.size || null;
                 labelAt = this.now(); labelConn = result && result.conn || null;
                 if (released && this.active) this.log.write({kind: 'label_late', turn: turn.n, line: index, label: ready, ms: labelAt - queuedAt, at: this.since(labelAt), conn: labelConn || undefined});
-                // Too late for the first line: offer it to the next one instead.
-                if (index === 0 && turn.firstLate && ready && ready !== 'none') turn.carried = {label: ready, size: readySize};
+                // Too late for the first line: an eye expression still plays on it once the eye is free (D99),
+                // anything else is offered to the next line.
+                if (index === 0 && turn.firstLate && ready && ready !== 'none' && !this.playLate(turn, ready, readySize)) turn.carried = {label: ready, size: readySize};
                 return ready;
             }, () => null) : Promise.resolve(null);
             const wait = index === 0 ? config.expressionWaitMs : 0;
@@ -745,12 +773,17 @@ class Conversation {
                         label: labelAt === null ? null : ready, label_ms: labelAt === null ? null : labelAt - queuedAt,
                         reaction: index === 0 && reaction ? reaction.label : undefined, reaction_at: index === 0 && reaction ? reaction.at : undefined, used: use || null,
                         conn: labelConn || undefined});
-                    turn.expressions.push(found === null ? (index === 0 && wait && by !== 'reaction' ? 'late' : null) : found + (use || found === 'none' ? '' : ' (held back)'));
+                    if (index === 0) turn.firstEntry = turn.expressions.length;
+                    turn.expressions.push(found === null ? (index === 0 && by === 'timeout' ? 'late' : null) : found + (use || found === 'none' ? '' : ' (held back)'));
                     if (index === 0) turn.firstSpeechAt = this.now();
-                    // No expression on this line: an eye emoji for something Jibo names (pizza, rain, a dog).
+                    // No expression on this line: an eye emoji for something Jibo names (pizza, rain, a dog),
+                    // at that word. Without one, speech's own keyword emoji may show, unless one was just shown (D98).
+                    const jiboEmoji = this.emojiAllowed();
                     const emoji = !use && found !== 'dance' ? this.emojiFor(piece) : null;
                     if (emoji) turn.expressions.push('emoji ' + emoji.word);
-                    return this.speak(piece, use, emoji ? {turn: turn.n, line: index, anim: emoji.name, emoji: emoji.word, via: 'emoji'} : {turn: turn.n, line: index, size: use ? size : null});
+                    if (index === 0 && emoji) turn.firstEmoji = true;
+                    return this.speak(piece, use, {turn: turn.n, line: index, size: use ? size : null, keyword: emoji || undefined, hotWords: emoji || jiboEmoji ? undefined : false})
+                        .then(() => { if (index === 0) turn.firstSpoken = true; });
                 });
             });
         });
@@ -775,13 +808,17 @@ class Conversation {
         return chain.then(() => {
             if (!this.active) return;
             let words = core.esml(text, null), lead = Promise.resolve(), leadBy = null;
+            // A keyword emoji goes in the words, just before its word: speech starts it there (D98).
+            const keyword = at && at.keyword, tagged = keyword ? core.emojiEsml(words, keyword.said, keyword.name, keyword.nth) : null;
+            if (tagged) words = tagged;
             const leadFrom = this.now();
             // animdb: the animation goes first, so it holds Jibo's body before speech's own gestures
-            // ask for it. The words follow once an eye clip started, or once a clip that moves the
-            // body was handed over (its start waits for the body to move, D80); at most expressionLeadMs.
-            // An emoji after the first line: no wait, it starts within the TTS preparation (D82).
-            // An emoji while the previous expression still plays: it follows once that one ends,
-            // if Jibo is still saying this line (the words don't wait for it).
+            // ask for it. The words follow once a clip that moves the body was handed over (its start
+            // waits for the body to move, D80), or once a clip of unknown kind started; at most
+            // expressionLeadMs. Eye clips never hold the words (D99).
+            // A notice's or trouble line's emoji while the previous expression still plays: it follows
+            // once that one ends, if Jibo is still saying this line (the words don't wait for it).
+            // A keyword emoji is in the words instead (D98).
             const later = anim && mode === 'animdb' && at && at.emoji && this.player.busy();
             const token = this.lineToken = {};
             const holdMs = at && at.emoji ? emojiHoldMs(text) : 0;
@@ -789,8 +826,8 @@ class Conversation {
                 this.player.idle().then(() => { if (this.active && this.lineToken === token) this.player.play(anim, {via: 'emoji', turn: turn, line: line, holdMs: holdMs}); });
             } else if (anim && mode === 'animdb') {
                 const played = this.player.play(anim, {via: at && at.via || 'line', turn: turn, line: line, holdMs: holdMs});
-                const laterEmoji = at && at.emoji && line > 0;
-                if (laterEmoji) leadBy = 'none';
+                // An eye clip starts within the TTS preparation anyway, so it never holds the words (D99).
+                if (played.body === false) leadBy = 'none';
                 else {
                     const ready = played.body === true ? played.playing.then(ok => { leadBy = leadBy || (ok ? 'body' : 'failed'); })
                         : played.started.then(ok => { leadBy = leadBy || (ok ? 'started' : 'failed'); });
@@ -800,11 +837,15 @@ class Conversation {
             return lead.then(() => {
                 if (!this.active) return;
                 const started = this.now(), options = this.speakOptions();
-                this.log.write({kind: 'speak', turn: turn, line: line, expression: expression || null, size: at && at.size || undefined, emoji: at && at.emoji || undefined, after: later || undefined,
-                    play: anim || undefined, mode: mode, at: this.since(started), lead: leadBy || undefined, lead_ms: leadBy ? started - leadFrom : undefined,
+                // Speech's own keyword emoji off for this line (its third argument, auto rules).
+                const rules = at && at.hotWords === false ? {hotWords: false} : null;
+                this.log.write({kind: 'speak', turn: turn, line: line, expression: expression || null, size: at && at.size || undefined, emoji: at && at.emoji || keyword && keyword.word || undefined,
+                    emoji_at: keyword ? (tagged ? keyword.said.join(' ') : 'missed') : undefined, after: later || undefined, hot_words: rules ? false : undefined,
+                    play: anim || keyword && keyword.name || undefined, mode: mode, at: this.since(started), lead: leadBy || undefined, lead_ms: leadBy ? started - leadFrom : undefined,
                     text: String(text).slice(0, 300)});
                 this.mark('first_speech');
-                return Promise.resolve(options ? speech.speak(words, options) : speech.speak(words)).then(() => this.spoken(speech, started, turn, line, mode));
+                const call = rules ? speech.speak(words, options || undefined, rules) : options ? speech.speak(words, options) : speech.speak(words);
+                return Promise.resolve(call).then(() => this.spoken(speech, started, turn, line, mode));
             });
         }).catch(() => {}).then(() => { this.speaking = false; if (this.marks.first_speech !== undefined) this.mark('first_speech_done'); });
     }
@@ -1154,7 +1195,7 @@ class Conversation {
             cause = t.cause;
             this.log.write({kind: 'trouble', cause: cause, detail: result && result.detail || null});
             // A line already playing (the greeting) ends first, so the reason is never cut off.
-            return this.untilQuiet(QUIET_MS).then(() => this.active ? this.speak(t.line, null, t.emoji ? {anim: t.emoji, emoji: cause, via: 'trouble'} : null) : null);
+            return this.untilQuiet(QUIET_MS).then(() => this.active ? this.speak(t.line, null, t.emoji ? {anim: t.emoji, emoji: cause, via: 'trouble', hotWords: false} : null) : null);
         }).then(() => this.leave(cause === 'unknown' ? 'error' : 'trouble_' + cause), () => this.leave('error'));
     }
     // Resolves once Jibo is not speaking, or after `ms`.
