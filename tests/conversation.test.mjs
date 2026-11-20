@@ -2462,7 +2462,7 @@ test('a reply the server cancels after Jibo began speaking: no more of it is sai
     h.talk.close();
 });
 
-test('the microphone hold is the conversation\'s: going on during a body reaction keeps it closed until the clip ends (D90)', async () => {
+test('the microphone hold is the conversation\'s: going on during a body reaction keeps it closed, and the ring orange, until the clip ends (D90, D91)', async () => {
     const db = fakeAnimDB({}, 150, {excited_01: {Body: true}});
     const classify = (person, line, kind) => Promise.resolve({label: kind === 'reaction' ? 'happy' : 'none'});
     const h = harness({classify, config: {expressionPlay: 'animdb', silenceSeconds: 5, transcriptWaitMs: 1000}, animDB: db.animDB, expression: db.expression});
@@ -2476,9 +2476,11 @@ test('the microphone hold is the conversation\'s: going on during a body reactio
     assert.equal(h.talk.state, 'listening');
     h.audio();
     assert.equal(h.appends(), before, 'still closed after the carry-on');
+    assert.equal(h.leds.at(-1), '1,0.55,0', 'the ring stays orange while the microphone is closed (D91)');
     await until(() => h.logs.some(e => e.kind === 'mic_reopened'));
     h.audio();
     assert.equal(h.appends(), before + 1, 'open once the clip ended');
+    assert.equal(h.leds.at(-1), '0,0.45,1', 'blue once it is open');
     assert.equal(h.logs.find(e => e.kind === 'mic_reopened').state, 'listening');
     h.talk.close();
 });
@@ -2495,4 +2497,40 @@ test('animdb: a reaction known to leave the body still keeps the microphone open
     assert.equal(h.appends(), before + 1);
     assert.ok(!h.logs.some(e => e.kind === 'mic_reopened'));
     h.talk.close();
+});
+
+test('listening starts while a reaction still holds the microphone: orange until it opens, then blue (D91)', async () => {
+    const h = harness({config: {silenceSeconds: 5}});
+    h.talk.open(); await untilListening(h);
+    h.talk.state = 'thinking';
+    let end = null;
+    h.talk.holdMic(new Promise(resolve => { end = resolve; }));
+    h.talk.listen();
+    assert.equal(h.talk.state, 'listening'); assert.equal(h.talk.gate, false);
+    assert.equal(h.leds.at(-1), '1,0.55,0');
+    end();
+    await until(() => h.talk.gate === true);
+    assert.equal(h.leds.at(-1), '0,0.45,1');
+    h.talk.close();
+});
+
+test('a hold that ends while Jibo handles a failure leaves the microphone closed and the ring orange (D92)', async () => {
+    let answer = null;
+    const h = harness({config: {silenceSeconds: 5}, diagnose: () => new Promise(resolve => { answer = resolve; })});
+    h.talk.open(); await untilListening(h);
+    h.talk.state = 'thinking';
+    let end = null;
+    h.talk.holdMic(new Promise(resolve => { end = resolve; }));
+    h.talk.listen();
+    try {
+        h.talk.fail(Object.assign(Error('connection_lost'), {openai: true}));
+        end();
+        await sleep(20);
+        assert.equal(h.talk.gate, false);
+        assert.ok(!h.logs.some(e => e.kind === 'mic_reopened'));
+        assert.notEqual(h.leds.at(-1), '0,0.45,1', 'not blue');
+    } finally {
+        if (answer) answer({cause: 'openai_down'});
+        h.talk.close();
+    }
 });

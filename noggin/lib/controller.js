@@ -433,7 +433,7 @@ class Conversation {
         const now = this.now();
         this.log.write({kind: 'listen', at: this.since(now), after_speech: this.spokenAt === null ? null : now - this.spokenAt, anim_playing: this.player.busy(),
             sent_ms: this.clock ? Math.round(this.clock.sentMs) : undefined});
-        this.state = 'listening'; this.led(LISTENING); this.zeroMs = 0; this.listenStart = true;
+        this.state = 'listening'; this.led(this.held ? BUSY : LISTENING); this.zeroMs = 0; this.listenStart = true;
         if (!this.startupLogged) { this.mark('listening'); this.logStartup(); }
         this.rt.send({type: 'input_audio_buffer.clear'});
         this.gate = !this.held;
@@ -625,11 +625,13 @@ class Conversation {
         this.held++; this.gate = false;
         Promise.race([Promise.resolve(until).catch(() => {}), delay(HOLD_MAX_MS)]).then(() => {
             this.held--;
-            if (!this.active || this.held) return;
+            // Failing: Jibo is about to say what went wrong, and the microphone stays closed.
+            if (!this.active || this.failing || this.held) return;
             const turn = this.turn;
             const open = this.state === 'listening' || (this.state === 'thinking' && turn && !turn.skipped && !turn.followUp && this.thinkingGate());
             if (!open) return;
             this.gate = true;
+            if (this.state === 'listening') this.led(LISTENING);
             this.log.write({kind: 'mic_reopened', state: this.state, turn: turn ? turn.n : null, ms: this.now() - closed});
         });
     }
@@ -657,7 +659,8 @@ class Conversation {
         this.carried = {n: turn.n, itemId: turn.itemId, before: carriedText(turn.before), own: turn.own};
         if (this.turn === turn) this.turn = null;
         this.thinking.stop();
-        this.state = 'listening'; this.led(LISTENING);
+        // Blue only once the microphone is open: a hold keeps it orange (D91).
+        this.state = 'listening'; this.led(this.held ? BUSY : LISTENING);
         this.gate = !this.held;
         this.armSilence();
     }
