@@ -28,6 +28,11 @@ function holdFrames(meta, holdMs) {
     return typeof meta.duration === 'number' && wanted > meta.duration ? wanted : 0;
 }
 
+function bodyLayer(meta) {
+    const layers = meta && meta.layers;
+    return layers && typeof layers === 'object' ? !!layers.Body : null;
+}
+
 class ExpressionPlayer {
     // jibo; log {write}; now() in ms; since(t) -> ms since Noggin opened; allowed() -> may play now.
     constructor(jibo, log, now, since, allowed) {
@@ -41,23 +46,28 @@ class ExpressionPlayer {
     play(name, info) {
         info = info || {};
         const jibo = this.jibo, animDB = jibo.animDB, entry = {name: name, info: info, asked: this.now()};
-        let startedResolve, doneResolve;
+        let startedResolve, doneResolve, playingResolve;
         entry.started = new Promise(resolve => { startedResolve = resolve; });
+        // playing: true once handed to the body (its parts are claimed then), false if never.
+        entry.playing = new Promise(resolve => { playingResolve = resolve; });
         entry.done = new Promise(resolve => { doneResolve = resolve; });
         let settled = false, watchdog = null;
         const finish = (result, extra) => {
             if (settled) return;
             settled = true; clearTimeout(watchdog);
             startedResolve(entry.startAt !== undefined);
+            playingResolve(false);
             if (this.current === entry) this.current = null;
             this.write(entry, result, extra);
             doneResolve(result);
         };
-        const handle = {name: name, started: entry.started, done: entry.done};
+        const handle = {name: name, started: entry.started, playing: entry.playing, done: entry.done, body: null};
         if (!this.allowed()) { finish('not_allowed'); return handle; }
         let asset = null;
         try { asset = animDB && typeof animDB.getAnimByName === 'function' ? animDB.getAnimByName(name) : null; } catch (_) {}
         if (!asset || typeof asset.createFromConfig !== 'function') { finish('missing'); return handle; }
+        // Whether the clip moves the body (null: unknown); such clips start late (D80).
+        entry.body = handle.body = bodyLayer(asset.meta);
         // One at a time: the newest replaces the one still playing (that one is not centred).
         this.stopCurrent('replaced');
         this.current = entry;
@@ -97,7 +107,9 @@ class ExpressionPlayer {
                 };
                 started.on(onStart);
             }
-            return Promise.resolve(playback.play({screenCenterOverride: true})).then(result => {
+            const playing = playback.play({screenCenterOverride: true});
+            playingResolve(true);
+            return Promise.resolve(playing).then(result => {
                 // Without a `started` event, a clip that played still counts as started.
                 if (entry.startAt === undefined && result !== 'REJECTED' && result !== 'CANCELLED') entry.startAt = entry.loadedAt;
                 const state = String(result || 'STOPPED');
@@ -133,7 +145,8 @@ class ExpressionPlayer {
         this.log.write(Object.assign({kind: 'anim', via: info.via || null, turn: info.turn === undefined ? null : info.turn,
             line: info.line === undefined ? null : info.line, name: entry.name, result: result,
             asked: at(entry.asked), loaded: at(entry.loadedAt), start: at(entry.startAt), end: at(this.now()),
-            ledStripped: entry.ledStripped === undefined ? null : entry.ledStripped, held: entry.heldFrames || undefined}, extra || {}));
+            ledStripped: entry.ledStripped === undefined ? null : entry.ledStripped, held: entry.heldFrames || undefined,
+            body: entry.body === undefined ? null : entry.body}, extra || {}));
     }
 }
 ExpressionPlayer.LOAD_MS = 3000;

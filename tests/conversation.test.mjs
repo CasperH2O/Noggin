@@ -2027,9 +2027,9 @@ test('timing log: each line says what it waited for and whose expression it got'
     await untilListening(h);
     const waits = h.logs.filter(e => e.kind === 'line_wait');
     assert.equal(waits.length, 2);
-    assert.equal(waits[0].by, 'answers'); assert.equal(waits[0].label, 'none'); assert.equal(waits[0].used, 'thinking', 'the reaction took the first line');
-    assert.equal(waits[0].reaction, 'thinking');
-    assert.ok(waits[0].label_ms >= 30, 'waited for the line classifier');
+    assert.equal(waits[0].by, 'reaction', 'the reaction decided the first line'); assert.equal(waits[0].used, 'thinking');
+    assert.equal(waits[0].reaction, 'thinking'); assert.equal(waits[0].label, null, 'the line classifier was not waited for');
+    assert.ok(waits[0].released - waits[0].reached < 30, 'released when the reaction came, not the label');
     assert.ok(waits[0].reaction_at <= waits[0].released && waits[0].queued <= waits[0].reached && waits[0].reached <= waits[0].released);
     assert.equal(waits[1].reaction, undefined);
     assert.equal(typeof h.logs.find(e => e.kind === 'jibo').reaction.at, 'number');
@@ -2124,5 +2124,103 @@ test('timing log: no lag probe when the full log is off; lines without a classif
     const wait = h.logs.find(e => e.kind === 'line_wait');
     assert.equal(wait.by, 'no_classifier'); assert.equal(wait.label, null); assert.equal(wait.used, null);
     assert.equal(h.logs.find(e => e.kind === 'jibo').lag, undefined);
+    h.talk.close();
+});
+
+test('first line: a "none" reaction still waits for the line\'s own expression', async () => {
+    const h = harness({config: {expressionWaitMs: 300}, classify: (person, line, kind) => kind === 'reaction'
+        ? sleep(5).then(() => ({label: 'none'})) : sleep(40).then(() => ({label: /dog/.test(line) ? 'happy' : 'none'}))});
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'I got a dog'});
+    reply(h, 'r1', 'A dog, how lovely!');
+    await untilListening(h);
+    const wait = h.logs.find(e => e.kind === 'line_wait');
+    assert.equal(wait.by, 'answers'); assert.equal(wait.label, 'happy'); assert.equal(wait.used, 'happy');
+    assert.equal(h.said[1], "<anim name='excited_01' nonBlocking='true' endNeutral='true'/>A dog, how lovely!");
+    h.talk.close();
+});
+
+test('first line: after a reaction that already played, the line does not wait for its label', async () => {
+    const db = fakeAnimDB({}, 300);
+    let replied = null;
+    const h = harness({speakMs: 20, config: {expressionPlay: 'animdb', expressionWaitMs: 500}, animDB: db.animDB, expression: db.expression,
+        classify: (person, line, kind) => kind === 'reaction' ? Promise.resolve({label: 'surprised', confidence: 0.9}) : sleep(250).then(() => ({label: 'none'}))});
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'Guess what happened!'});
+    await until(() => h.logs.some(e => e.kind === 'anim' || (e.kind === 'speak' && e.turn === 1)) || db.played.length > 1);
+    reply(h, 'r1', 'Oh, tell me!');
+    await untilListening(h);
+    const wait = h.logs.find(e => e.kind === 'line_wait');
+    assert.equal(h.logs.find(e => e.kind === 'jibo').reaction.played, 'before');
+    assert.equal(wait.by, 'reaction'); assert.ok(wait.released - wait.reached < 100, JSON.stringify(wait));
+    h.talk.close();
+});
+
+test('lead: the words wait for an eye animation to start, never for one that moves the body', async () => {
+    const make = body => ({getAnimByName: () => ({meta: {endsNeutral: true, layers: {Eye: true, Body: body}}, createFromConfig: () => Promise.resolve({instance: {events: {}},
+        play: () => sleep(150).then(() => 'STOPPED'), stop: () => Promise.resolve()})})});
+    const expression = fakeAnimDB().expression;
+    const eye = harness({config: {expressionPlay: 'animdb', greetingExpression: 'hello', expressionLeadMs: 40}, animDB: make(false), expression});
+    eye.talk.open(); await untilListening(eye);
+    const e1 = eye.logs.find(e => e.kind === 'speak');
+    assert.equal(e1.lead, 'timeout'); assert.ok(e1.lead_ms >= 35);
+    eye.talk.close();
+    const body = harness({config: {expressionPlay: 'animdb', greetingExpression: 'hello', expressionLeadMs: 40}, animDB: make(true), expression});
+    body.talk.open(); await untilListening(body);
+    const b1 = body.logs.find(e => e.kind === 'speak');
+    assert.equal(b1.lead, 'body'); assert.ok(b1.lead_ms < 30, 'spoken once handed over, not after it started');
+    await until(() => body.logs.some(e => e.kind === 'anim'));
+    assert.equal(body.logs.find(e => e.kind === 'anim').body, true);
+    body.talk.close();
+    assert.equal(settings.DEFAULTS.expressionLeadMs, 100);
+});
+
+test('lead: a clip that moves the body is handed to the body before the words, so speech cannot take it first', async () => {
+    const order = [];
+    const animDB = {getAnimByName: () => ({meta: {endsNeutral: true, layers: {Body: true}}, createFromConfig: () => sleep(30).then(() => ({instance: {events: {}},
+        play: () => { order.push('play'); return sleep(200).then(() => 'STOPPED'); }, stop: () => Promise.resolve()}))})};
+    const h = harness({config: {expressionPlay: 'animdb', greetingExpression: 'hello', expressionLeadMs: 100}, animDB, expression: fakeAnimDB().expression,
+        speech: {speak: (esml, opts) => { order.push('speak'); h.said.push(esml); return sleep(20); }}});
+    h.talk.open(); await untilListening(h);
+    assert.deepEqual(order.slice(0, 2), ['play', 'speak']);
+    const speak = h.logs.find(e => e.kind === 'speak');
+    assert.equal(speak.lead, 'body'); assert.ok(speak.lead_ms >= 25 && speak.lead_ms < 100, JSON.stringify(speak));
+    h.talk.close();
+});
+
+test('first line: a reaction that played longer ago than the expression gap no longer decides the line', async () => {
+    const db = fakeAnimDB({}, 20);
+    const h = harness({speakMs: 20, config: {expressionPlay: 'animdb', expressionWaitMs: 500, expressionGapMs: 30}, animDB: db.animDB, expression: db.expression,
+        classify: (person, line, kind) => kind === 'reaction' ? Promise.resolve({label: 'surprised', confidence: 0.9}) : sleep(60).then(() => ({label: 'happy'}))});
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'Guess what happened!'});
+    await sleep(80);
+    reply(h, 'r1', 'Oh, tell me!');
+    await untilListening(h);
+    assert.equal(h.logs.find(e => e.kind === 'jibo').reaction.played, 'before');
+    const wait = h.logs.find(e => e.kind === 'line_wait');
+    assert.equal(wait.by, 'answers'); assert.equal(wait.used, 'happy');
+    h.talk.close();
+});
+
+test('first line: a label that comes after the reaction decided the line goes to the second line', async () => {
+    const h = harness({config: {expressionWaitMs: 500, expressionGapMs: 0}, classify: (person, line, kind) => kind === 'reaction'
+        ? sleep(5).then(() => ({label: 'thinking', confidence: 0.6})) : sleep(/penguin/.test(line) ? 30 : 5).then(() => ({label: /penguin/.test(line) ? 'happy' : 'none'}))});
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'Favourite bird?'});
+    h.emit({type: 'response.created', response: {id: 'r1'}});
+    h.emit({type: 'response.output_text.delta', response_id: 'r1', delta: 'Yes, the penguin. '});
+    await sleep(60);
+    h.emit({type: 'response.output_text.delta', response_id: 'r1', delta: 'It is black and white.'});
+    h.emit({type: 'response.done', response: {id: 'r1', status: 'completed', usage: {}}});
+    await untilListening(h);
+    const jibo = h.logs.find(e => e.kind === 'jibo');
+    assert.equal(h.logs.find(e => e.kind === 'line_wait').by, 'reaction');
+    assert.equal(jibo.expressions[0], null, 'not "late": the reaction decided it');
+    assert.equal(h.logs.filter(e => e.kind === 'line_wait')[1].used, 'happy', 'the late label went to line 2');
     h.talk.close();
 });

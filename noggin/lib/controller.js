@@ -536,6 +536,14 @@ class Conversation {
         this.log.write({kind: 'speak', turn: turn.n, reaction: reaction.label, play: anim});
         return Promise.resolve().then(() => speech.speak(core.animEsml(anim))).catch(() => {});
     }
+    // The reaction is (or was) Jibo's expression for the first line: it played so recently that the
+    // line could have no other, or it will go with that line.
+    reactionTakes(turn) {
+        const reaction = turn.reaction;
+        if (!reaction || !reaction.label || reaction.label === 'none') return false;
+        if (reaction.played === 'before') return this.now() - this.policy.lastAt < this.policy.gapMs;
+        return !turn.reactionDone && this.policy.allow(reaction.label, this.now(), turn.transcript);
+    }
     noteClassifier(result) {
         if (result.switched) this.log.write({kind: 'classifier_switch', detail: result.switched});
         else if (result.error) this.log.write({kind: 'classifier_error', api: result.api || null, status: result.status || null, error: result.error});
@@ -592,8 +600,11 @@ class Conversation {
                 if (!this.active || turn.skipped) return;
                 const reached = this.now();
                 let by = null;
-                // The first line also waits (within the same budget) for the reaction.
-                const both = index === 0 && turn.reacting ? Promise.all([label, turn.reacting]).then(() => ready) : label;
+                // The first line also waits (within the same budget) for the reaction; a reaction that
+                // is Jibo's expression for it makes the line's own label moot (D79).
+                const both = index === 0 && turn.reacting
+                    ? turn.reacting.then(() => { if (!this.reactionTakes(turn)) return label; by = by || 'reaction'; return ready; })
+                    : label;
                 if (!asked && !(index === 0 && turn.reacting)) by = 'no_classifier';
                 return Promise.race([both.then(found => { by = by || 'answers'; return found; }), delay(wait).then(() => { by = by || 'timeout'; return ready; })]).then(found => {
                     released = true;
@@ -615,7 +626,7 @@ class Conversation {
                     this.log.write({kind: 'line_wait', turn: turn.n, line: index, queued: this.since(queuedAt), reached: this.since(reached), released: this.since(), by: by,
                         label: labelAt === null ? null : ready, label_ms: labelAt === null ? null : labelAt - queuedAt,
                         reaction: index === 0 && reaction ? reaction.label : undefined, reaction_at: index === 0 && reaction ? reaction.at : undefined, used: use || null});
-                    turn.expressions.push(found === null ? (index === 0 && wait ? 'late' : null) : found + (use || found === 'none' ? '' : ' (held back)'));
+                    turn.expressions.push(found === null ? (index === 0 && wait && by !== 'reaction' ? 'late' : null) : found + (use || found === 'none' ? '' : ' (held back)'));
                     if (index === 0) turn.firstSpeechAt = this.now();
                     // No expression on this line: an eye emoji for something Jibo names (pizza, rain, a dog).
                     const emoji = !use && found !== 'dance' ? this.emojiFor(piece) : null;
@@ -646,8 +657,9 @@ class Conversation {
             if (!this.active) return;
             let words = core.esml(text, null), lead = Promise.resolve(), leadBy = null;
             const leadFrom = this.now();
-            // animdb: start the animation first, so it holds Jibo's body before speech's own
-            // gestures ask for it; the words follow once it started (at most expressionLeadMs).
+            // animdb: the animation goes first, so it holds Jibo's body before speech's own gestures
+            // ask for it. The words follow once an eye clip started, or once a clip that moves the
+            // body was handed over (its start waits for the body to move, D80); at most expressionLeadMs.
             // An emoji while the previous expression still plays: it follows once that one ends,
             // if Jibo is still saying this line (the words don't wait for it).
             const later = anim && mode === 'animdb' && at && at.emoji && this.player.busy();
@@ -657,8 +669,9 @@ class Conversation {
                 this.player.idle().then(() => { if (this.active && this.lineToken === token) this.player.play(anim, {via: 'emoji', turn: turn, line: line, holdMs: holdMs}); });
             } else if (anim && mode === 'animdb') {
                 const played = this.player.play(anim, {via: at && at.via || 'line', turn: turn, line: line, holdMs: holdMs});
-                lead = Promise.race([played.started.then(ok => { leadBy = leadBy || (ok ? 'started' : 'failed'); }),
-                    delay(this.config.expressionLeadMs || 0).then(() => { leadBy = leadBy || 'timeout'; })]);
+                const ready = played.body === true ? played.playing.then(ok => { leadBy = leadBy || (ok ? 'body' : 'failed'); })
+                    : played.started.then(ok => { leadBy = leadBy || (ok ? 'started' : 'failed'); });
+                lead = Promise.race([ready, delay(this.config.expressionLeadMs || 0).then(() => { leadBy = leadBy || 'timeout'; })]);
             } else if (anim) words = core.animEsml(anim) + words;
             return lead.then(() => {
                 if (!this.active) return;
