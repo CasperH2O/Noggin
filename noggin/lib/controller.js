@@ -660,6 +660,7 @@ class Conversation {
             // animdb: the animation goes first, so it holds Jibo's body before speech's own gestures
             // ask for it. The words follow once an eye clip started, or once a clip that moves the
             // body was handed over (its start waits for the body to move, D80); at most expressionLeadMs.
+            // An emoji after the first line: no wait, it starts within the TTS preparation (D82).
             // An emoji while the previous expression still plays: it follows once that one ends,
             // if Jibo is still saying this line (the words don't wait for it).
             const later = anim && mode === 'animdb' && at && at.emoji && this.player.busy();
@@ -669,9 +670,13 @@ class Conversation {
                 this.player.idle().then(() => { if (this.active && this.lineToken === token) this.player.play(anim, {via: 'emoji', turn: turn, line: line, holdMs: holdMs}); });
             } else if (anim && mode === 'animdb') {
                 const played = this.player.play(anim, {via: at && at.via || 'line', turn: turn, line: line, holdMs: holdMs});
-                const ready = played.body === true ? played.playing.then(ok => { leadBy = leadBy || (ok ? 'body' : 'failed'); })
-                    : played.started.then(ok => { leadBy = leadBy || (ok ? 'started' : 'failed'); });
-                lead = Promise.race([ready, delay(this.config.expressionLeadMs || 0).then(() => { leadBy = leadBy || 'timeout'; })]);
+                const laterEmoji = at && at.emoji && line > 0;
+                if (laterEmoji) leadBy = 'none';
+                else {
+                    const ready = played.body === true ? played.playing.then(ok => { leadBy = leadBy || (ok ? 'body' : 'failed'); })
+                        : played.started.then(ok => { leadBy = leadBy || (ok ? 'started' : 'failed'); });
+                    lead = Promise.race([ready, delay(this.config.expressionLeadMs || 0).then(() => { leadBy = leadBy || 'timeout'; })]);
+                }
             } else if (anim) words = core.animEsml(anim) + words;
             return lead.then(() => {
                 if (!this.active) return;

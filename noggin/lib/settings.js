@@ -73,7 +73,7 @@ const SCHEMA = [
     {key: 'expressionPlay', type: 'enum', default: 'animdb', tab: 'behaviour', group: 'Expressions', label: 'How expressions play',
         help: 'Next to the words (recommended), or inside the speech.', advanced: true,
         options: [{value: 'animdb', label: 'Next to the words'}, {value: 'esml-tts', label: 'In the speech, ends with the words'}, {value: 'esml', label: 'In the speech'}]},
-    {key: 'expressionWaitMs', type: 'number', min: 0, max: 5000, unit: 'ms', default: 700, tab: 'behaviour', group: 'Expressions', label: 'Expression wait',
+    {key: 'expressionWaitMs', type: 'number', min: 0, max: 5000, unit: 'ms', default: 500, tab: 'behaviour', group: 'Expressions', label: 'Expression wait',
         help: 'How long the first line may wait for its expression.', advanced: true},
     {key: 'expressionGapMs', type: 'number', min: 0, max: 60000, unit: 'ms', default: 4000, tab: 'behaviour', group: 'Expressions', label: 'Time between expressions', advanced: true},
     {key: 'emojiGapMs', type: 'number', min: 0, max: 120000, unit: 'ms', default: 6000, tab: 'behaviour', group: 'Expressions', label: 'Time between emoji', advanced: true},

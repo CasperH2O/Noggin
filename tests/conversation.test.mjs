@@ -2224,3 +2224,32 @@ test('first line: a label that comes after the reaction decided the line goes to
     assert.equal(h.logs.filter(e => e.kind === 'line_wait')[1].used, 'happy', 'the late label went to line 2');
     h.talk.close();
 });
+
+test('lead: an emoji on a later line does not hold the words; one on the first line still waits for it to start (D82)', async () => {
+    // An eye clip whose `started` never comes: only the lead timeout would release the words.
+    const slow = {getAnimByName: () => ({meta: {endsNeutral: true, layers: {Eye: true, Body: false}}, createFromConfig: () => Promise.resolve({instance: {events: {}},
+        play: () => sleep(150).then(() => 'STOPPED'), stop: () => Promise.resolve()})})};
+    const run = async text => {
+        const h = harness({animDB: slow, expression: fakeAnimDB().expression, config: {expressionPlay: 'animdb', emoji: true, expressionLeadMs: 80},
+            classify: () => Promise.resolve({label: 'none'})});
+        h.talk.open(); await untilListening(h);
+        h.emit({type: 'input_audio_buffer.speech_stopped'});
+        h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'What should I eat?'});
+        reply(h, 'r1', text);
+        await untilListening(h);
+        const speak = h.logs.find(e => e.kind === 'speak' && e.emoji === 'pizza');
+        await until(() => h.logs.some(e => e.kind === 'anim' && e.via === 'emoji'));
+        const anim = h.logs.find(e => e.kind === 'anim' && e.via === 'emoji');
+        h.talk.close();
+        return Object.assign({}, speak, {anim});
+    };
+    const later = await run('Good question. How about a pizza tonight?');
+    assert.equal(later.line, 1); assert.equal(later.lead, 'none'); assert.ok(later.lead_ms < 30, JSON.stringify(later));
+    assert.equal(later.anim.line, 1); assert.equal(later.anim.result, 'STOPPED', 'the emoji still plays');
+    const first = await run('Pizza sounds great. Enjoy it.');
+    assert.equal(first.line, 0); assert.equal(first.lead, 'timeout'); assert.ok(first.lead_ms >= 70, JSON.stringify(first));
+});
+
+test('expression wait: the first line waits at most 500 ms for its expression by default', () => {
+    assert.equal(settings.DEFAULTS.expressionWaitMs, 500);
+});
