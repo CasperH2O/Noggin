@@ -90,6 +90,8 @@ const SCHEMA = [
         help: 'Digital silence this long while listening restarts the microphone.', advanced: true},
     {key: 'echoTailMs', type: 'number', min: 0, max: 5000, unit: 'ms', default: 400, tab: 'behaviour', group: 'Microphone', label: 'Echo tail',
         help: 'The microphone stays closed this long after Jibo stops speaking.', advanced: true},
+    {key: 'listenWhileThinking', type: 'bool', default: true, tab: 'behaviour', group: 'Microphone', label: 'Hear me while Jibo thinks',
+        help: 'The microphone stays open until Jibo starts his answer, so if you go on after a pause he waits for you.', advanced: true},
     {key: 'transcriptWaitMs', type: 'number', min: 0, max: 10000, unit: 'ms', default: 1500, tab: 'behaviour', group: 'Microphone', label: 'Transcript wait',
         help: 'How long a reply may wait for the transcript of your words.', advanced: true},
     {key: 'ringRefreshMs', type: 'number', min: 0, max: 5000, unit: 'ms', default: 100, tab: 'behaviour', group: 'Microphone', label: 'Ring refresh',

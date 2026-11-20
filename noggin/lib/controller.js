@@ -4,9 +4,12 @@
 // line in his own voice with an expression picked by OpenAI's Decisions API (lib/openai.js).
 //
 //   listening --(server: speech stopped)--> thinking --(first line)--> speaking --> listening
+//   thinking --(the person goes on: speech started, or the server cancels)--> listening
 //
-// Half-duplex: no audio is sent while Jibo thinks or speaks, and for `echoTailMs` after,
-// so he never answers his own voice. A reply is only spoken once the transcript of what
+// Half-duplex: no audio is sent while Jibo speaks, and for `echoTailMs` after, so he never
+// answers his own voice. While he thinks the microphone stays open (`listenWhileThinking`),
+// so a person who goes on after a pause is heard: his answer is dropped, and the next turn
+// answers the whole thought (D89, D90). A reply is only spoken once the transcript of what
 // the person said is known (or `transcriptWaitMs` passed); an empty transcript means
 // nothing was understood, and the reply is cancelled instead of spoken.
 // Actions (lib/actions.js): the model may call a tool. about_jibo, dance, set_volume and
@@ -24,6 +27,7 @@
 // Node 6 / Chrome 53: ES2015 only.
 'use strict';
 const core = require('./core'), actions = require('./actions'), ExpressionPlayer = require('./expression'), trouble = require('./trouble');
+const AudioClock = require('./audio-clock');
 
 // Ring: blue while Jibo listens, orange (blue's opposite on the colour wheel) while he
 // thinks and speaks. The LED takes whatever was set last, with nothing restoring it: some
@@ -31,6 +35,9 @@ const core = require('./core'), actions = require('./actions'), ExpressionPlayer
 // black and leave it black. So the colour is re-sent every ringRefreshMs while a
 // conversation runs, as BEam's Agent Mode does on every frame.
 const LISTENING = [0, 0.45, 1], BUSY = [1, 0.55, 0], OFF = [0, 0, 0];
+// The words a dropped turn carries: those it carried itself, then its own.
+function carriedText(carried) { return carried ? joinWords(carried.before, carried.own) : ''; }
+function joinWords(a, b) { return [a, b].filter(Boolean).join(' '); }
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 // An emoji stays on the eye about as long as Jibo says its line (about 75 ms per character),
 // never shorter than EMOJI_MIN_MS and never longer than EMOJI_MAX_MS.
@@ -87,6 +94,8 @@ class ThinkingEye {
 // The JavaScript thread's lag (a timer firing late), sampled every LAG_MS while a conversation
 // runs: a blocked thread would also hold up an animation's first frame.
 const LAG_MS = 50, LAG_SPIKE_MS = 80, LAG_SPIKES = 12;
+// A hold on the microphone (a reaction that moves the body) never lasts longer than this (D90).
+const HOLD_MAX_MS = 3000;
 let loadavg = () => null;
 try { const os = require('os'); loadavg = () => Math.round(os.loadavg()[0] * 100) / 100; } catch (_) {}
 
@@ -101,7 +110,8 @@ class Conversation {
         this.connectFn = deps.connect; this.diagnoseFn = deps.diagnose || null; this.notice = deps.notice || null; this.mic = deps.mic; this.classify = deps.classify; this.log = deps.log || {write() {}};
         this.now = deps.now || (() => Date.now()); this.random = deps.random || Math.random;
         this.active = false; this.state = 'idle'; this.gate = false; this.turn = null; this.turns = 0;
-        this.audio = {blocks: 0, sent: 0, levels: []}; this.lastClassify = 0;
+        this.audio = {blocks: 0, sent: 0, levels: []}; this.lastClassify = 0; this.clock = null;
+        this.held = 0; this.carried = null; this.droppedReplies = {};
         this.rt = null; this.unwatch = []; this.speechChain = Promise.resolve(); this.speaking = false;
         this.policy = new core.ExpressionPolicy(this.config.expressionGapMs);
         this.acts = deps.actions || null; this.resume = deps.resume || null; this.pairs = []; this.handover = null;
@@ -169,6 +179,10 @@ class Conversation {
         if (this.log.enabled !== false && !this.log.recapOnly) {
             this.lag = {last: this.now(), max: 0};
             this.lagTimer = setInterval(() => this.sampleLag(), LAG_MS);
+            // Classifier connection and VAD timing (D87, D89).
+            this.clock = new AudioClock();
+            if (this.classify && typeof this.classify.watch === 'function')
+                this.unwatch.push(this.classify.watch(info => { if (this.active) this.log.write(Object.assign({kind: 'conn_closed', at: this.since()}, info)); }));
         }
         this.led(BUSY);
         if (config.ringRefreshMs > 0) this.ringTimer = setInterval(() => { if (this.active && this.ring) this.led(this.ring); }, Math.max(20, config.ringRefreshMs));
@@ -245,6 +259,8 @@ class Conversation {
         return Promise.resolve().then(() => this.connectFn()).then(rt => {
             if (!this.active) { rt.close(); return; }
             this.rt = rt;
+            if (this.clock) this.clock.reset();
+            this.droppedReplies = {};
             const timing = rt.timing || {};
             if (timing.open) this.mark('socket_open', timing.open);
             this.mark('session_created', timing.created || undefined);
@@ -252,7 +268,7 @@ class Conversation {
             rt.listen(event => { if (this.rt === rt) this.onEvent(event); });
             const updated = this.waitFor(['session.updated'], 10000);
             rt.send(core.sessionUpdate(config, this.instructions, this.acts ? actions.tools(config) : null));
-            return updated.then(() => { this.mark('session_updated'); this.log.write({kind: 'connected', ms: this.now() - started}); this.warm(); });
+            return updated.then(() => { this.mark('session_updated'); this.log.write({kind: 'connected', ms: this.now() - started}); this.warm('connected'); });
         });
     }
     // Resolves on the first of `types`; rejects on an error event, a closed connection or the timeout.
@@ -312,9 +328,12 @@ class Conversation {
         turn.skipped = true; clearTimeout(turn.waitTimer); clearTimeout(turn.guard);
         if (this.turn === turn) this.turn = null;
     }
-    warm() {
+    // why: 'connected' or 'quiet' (the person starts speaking after a quiet spell).
+    warm(why) {
         this.lastClassify = this.now();
-        if (this.config.expressions && this.classify && this.classify.warm) this.classify.warm();
+        if (!(this.config.expressions && this.classify && this.classify.warm)) return;
+        const at = this.since();
+        Promise.resolve(this.classify.warm()).then(r => { if (r && this.active) this.log.write(Object.assign({kind: 'classifier_warm', why: why, at: at}, r)); }, () => {});
     }
     // A microphone that never answers must not hold the conversation open with the hotword off.
     startMic() {
@@ -339,6 +358,7 @@ class Conversation {
         this.watchZeros(pcm, level);
         if (!this.active || !this.gate || !this.rt) return;
         stats.sent++;
+        if (this.clock) this.clock.sent(this.since(), pcm && pcm.length ? pcm.length / (core.RATE / 1000) : 0);
         this.rt.send({type: 'input_audio_buffer.append', audio: core.base64(pcm)});
     }
     // A real microphone always hears some noise; exact digital silence means no sound reaches
@@ -411,11 +431,12 @@ class Conversation {
         // No connection while reconnecting: the reconnect listens once it is back (D73).
         if (!this.active || !this.rt) return;
         const now = this.now();
-        this.log.write({kind: 'listen', at: this.since(now), after_speech: this.spokenAt === null ? null : now - this.spokenAt, anim_playing: this.player.busy()});
+        this.log.write({kind: 'listen', at: this.since(now), after_speech: this.spokenAt === null ? null : now - this.spokenAt, anim_playing: this.player.busy(),
+            sent_ms: this.clock ? Math.round(this.clock.sentMs) : undefined});
         this.state = 'listening'; this.led(LISTENING); this.zeroMs = 0; this.listenStart = true;
         if (!this.startupLogged) { this.mark('listening'); this.logStartup(); }
         this.rt.send({type: 'input_audio_buffer.clear'});
-        this.gate = true;
+        this.gate = !this.held;
         this.armSilence();
     }
     armSilence() {
@@ -431,29 +452,42 @@ class Conversation {
         const turn = this.turn, type = event.type;
         // The realtime events that explain a turn (not the text/transcript deltas).
         if (/^input_audio_buffer\.(speech_started|speech_stopped|committed|cleared)$|^response\.(created|done)$|^session\.updated$/.test(type))
-            this.log.write({kind: 'rt', type: type, state: this.state, status: event.response && event.response.status || undefined,
-                details: event.response && event.response.status_details || undefined});
+            this.log.write(Object.assign({kind: 'rt', type: type, state: this.state, status: event.response && event.response.status || undefined,
+                details: event.response && event.response.status_details || undefined}, this.vadTiming(event)));
         if (type === 'input_audio_buffer.speech_started') {
-            if (this.state === 'listening') { clearTimeout(this.silence); this.silence = null; if (this.now() - this.lastClassify > 20000) this.warm(); }
-            // Only a pause, not the end: the person goes on before Jibo says anything. The
-            // server drops its reply; keep listening, without clearing what it already heard.
-            else if (this.state === 'thinking' && turn && !turn.lines && !turn.skipped) this.carryOn(turn);
+            if (this.state === 'listening') { clearTimeout(this.silence); this.silence = null; if (this.now() - this.lastClassify > 20000) this.warm('quiet'); }
+            // Only a pause, not the end: the person goes on before Jibo says anything (lines may
+            // be queued, none started). Drop the reply; keep listening, without clearing what the
+            // server already heard. Not for a follow-up after a tool, which is Jibo's own turn.
+            else if (this.state === 'thinking' && turn && !turn.skipped && !turn.followUp) this.carryOn(turn);
         } else if (type === 'input_audio_buffer.speech_stopped') {
             if (this.state === 'listening') this.startTurn();
+        } else if (type === 'input_audio_buffer.committed') {
+            // Which conversation item holds this turn's words: its transcript is matched by it.
+            if (turn && turn.itemId === undefined && event.item_id) turn.itemId = event.item_id;
         } else if (type === 'conversation.item.input_audio_transcription.completed') {
-            if (!turn || turn.transcript !== undefined) return;
-            turn.transcript = String(event.transcript || '').trim(); turn.transcriptAt = this.now(); this.heard = turn.transcript;
-            this.log.write({kind: 'you', turn: turn.n, text: turn.transcript});
+            const said = String(event.transcript || '').trim();
+            // The words of a turn dropped because the person went on: kept for the next turn (D90).
+            const carried = this.carriedFor(event.item_id);
+            if (carried) { carried.own = said; this.log.write({kind: 'you', turn: carried.n, text: said, carried: true}); return; }
+            if (!turn || turn.transcript !== undefined || !this.mine(turn, event.item_id)) return;
+            const before = carriedText(turn.before);
+            turn.own = said; turn.transcript = joinWords(before, said); turn.transcriptAt = this.now(); this.heard = turn.transcript;
+            this.log.write({kind: 'you', turn: turn.n, text: said, before: before ? true : undefined});
             if (!turn.transcript) return this.skip(turn, 'empty_transcript');
             if (core.isStop(turn.transcript)) turn.goodbye = true;
             if (this.config.expressions && this.config.reaction && this.classify) this.react(turn);
             this.pump();
         } else if (type === 'conversation.item.input_audio_transcription.failed') {
-            if (turn && turn.transcript === undefined) { turn.transcript = null; turn.transcriptAt = this.now(); this.pump(); }
+            const carried = this.carriedFor(event.item_id);
+            if (carried) { if (carried.own === undefined) carried.own = ''; return; }
+            if (turn && turn.transcript === undefined && this.mine(turn, event.item_id)) {
+                turn.transcript = carriedText(turn.before) || null; turn.transcriptAt = this.now(); this.pump();
+            }
         } else if (type === 'response.created') {
             const id = event.response && event.response.id;
-            // A reply nobody is waiting for (its turn was skipped): stop it.
-            if (!turn || turn.skipped) { if (id) this.rt.send({type: 'response.cancel', response_id: id}); }
+            // A reply nobody is waiting for (its turn was skipped): stop it, and forget it once done.
+            if (!turn || turn.skipped) { if (id) { this.rt.send({type: 'response.cancel', response_id: id}); this.droppedReplies[id] = true; } }
             else if (!turn.responseId) turn.responseId = id;
         } else if (core.textDelta(event) !== null) {
             if (!turn || turn.skipped || !this.ours(turn, event.response_id)) return;
@@ -465,10 +499,20 @@ class Conversation {
             const response = event.response || {};
             const failure = response.status === 'failed' && response.status_details && response.status_details.error || null;
             if (failure && isFatal(failure.code)) return this.fail(Error('OpenAI: ' + failure.code));
+            const output = Array.isArray(response.output) ? response.output : [];
+            // A reply Jibo never said leaves the model's context (D90).
+            if (response.id && this.droppedReplies[response.id]) { delete this.droppedReplies[response.id]; return this.forget(output); }
             if (!turn || turn.skipped || !this.ours(turn, response.id)) return;
-            turn.done = true; turn.status = response.status; turn.usage = response.usage || null;
+            if (response.status === 'cancelled') {
+                // The person went on: before Jibo spoke, drop the turn; once he spoke, say no more
+                // of the reply and run none of its tools (D90).
+                if (this.state === 'thinking' && !turn.followUp) { turn.output = output; return this.carryOn(turn); }
+                turn.cut = true; turn.text = turn.text.slice(0, turn.sent);
+                this.log.write({kind: 'cut', turn: turn.n, said: turn.sent});
+            }
+            turn.done = true; turn.status = response.status; turn.usage = response.usage || null; turn.output = output;
             // Function calls come as their own output items, next to (or instead of) the text.
-            turn.calls = (Array.isArray(response.output) ? response.output : []).filter(item => item && item.type === 'function_call')
+            turn.calls = turn.cut ? [] : output.filter(item => item && item.type === 'function_call')
                 .map(item => ({name: item.name, callId: item.call_id, args: item.arguments}));
             this.pump();
         } else if (type === 'error') {
@@ -479,11 +523,39 @@ class Conversation {
             this.dropped();
         }
     }
+    // Where the server placed a VAD event in the sent audio (`audio_ms`, its padding and silence
+    // window included), all audio sent so far, and how long after that audio left the event came.
+    vadTiming(event) {
+        const clock = this.clock, started = event.type === 'input_audio_buffer.speech_started';
+        if (!clock || !(started || event.type === 'input_audio_buffer.speech_stopped')) return null;
+        const position = started ? event.audio_start_ms : event.audio_end_ms, sentAt = clock.sentAt(position);
+        return {audio_ms: typeof position === 'number' ? position : null, sent_ms: Math.round(clock.sentMs),
+            behind_ms: sentAt === null ? null : Math.round(this.since() - sentAt)};
+    }
+    // The dropped turn whose words arrive as item `itemId`: the one waiting to be carried, or the
+    // one the current turn carries. null when the words are the current turn's own.
+    carriedFor(itemId) {
+        if (!itemId) return null;
+        const turn = this.turn, carried = this.carried || (turn && turn.before) || null;
+        return carried && carried.itemId === itemId && (!turn || turn.itemId !== itemId) ? carried : null;
+    }
+    // Remove a dropped reply's items from the conversation, so the model never builds on words
+    // Jibo did not say (a half reply, or a tool call with no answer).
+    forget(output) {
+        if (!this.rt) return;
+        output.forEach(item => { if (item && item.id) this.rt.send({type: 'conversation.item.delete', item_id: item.id}); });
+    }
+    // An event for this turn's words: its own item, or any when either id is not known.
+    mine(turn, itemId) { return !itemId || !turn.itemId || turn.itemId === itemId; }
+    thinkingGate() { return this.config.listenWhileThinking !== false && !this.held; }
     ours(turn, responseId) { return !turn.responseId || !responseId || turn.responseId === responseId; }
     startTurn() {
-        this.gate = false; this.state = 'thinking'; this.led(BUSY);
+        // The microphone stays open while Jibo thinks (D89); speak() closes it.
+        this.gate = this.thinkingGate(); this.state = 'thinking'; this.led(BUSY);
         clearTimeout(this.silence); this.silence = null;
         const turn = this.turn = {n: ++this.turns, stoppedAt: this.now(), text: '', sent: 0, lines: 0, transcript: undefined, expressions: [], lag: []};
+        // The words of a turn dropped because the person went on come first (D90).
+        if (this.carried) { turn.before = this.carried; this.carried = null; }
         this.heard = '';   // the dance reads this turn's words, never an earlier turn's
         // If the transcript never comes, speak anyway after a while.
         turn.waitTimer = setTimeout(() => this.pump(), this.config.transcriptWaitMs);
@@ -513,7 +585,7 @@ class Conversation {
             result = result || {};
             this.noteClassifier(result);
             turn.reaction = {label: result.label === undefined ? null : result.label, confidence: result.confidence === undefined ? null : result.confidence,
-                size: result.size || null, ms: this.now() - started, at: this.since()};
+                size: result.size || null, ms: this.now() - started, at: this.since(), conn: result.conn || undefined};
             if (turn.firstSpeechAt !== undefined && turn.reaction.label && turn.reaction.label !== 'none') turn.reaction.played = 'late';
             // Nothing queued to say yet: react now, while Jibo works out his answer.
             if (this.active && !turn.skipped && this.turn === turn && !turn.lines) {
@@ -531,10 +603,35 @@ class Conversation {
         this.policy.used(reaction.label, this.now()); reaction.played = 'before';
         this.thinking.stop();
         const anim = reaction.play = this.choose(reaction.label, reaction.size);
-        if (this.mode() !== 'esml') { this.player.play(anim, {via: 'reaction', turn: turn.n}); return Promise.resolve(); }
+        if (this.mode() !== 'esml') {
+            const played = this.player.play(anim, {via: 'reaction', turn: turn.n});
+            // Only a clip known to leave the body still keeps the microphone open (D89).
+            if (played.body !== false) this.holdMic(played.done);
+            return Promise.resolve();
+        }
         if (!speech || typeof speech.speak !== 'function') return Promise.resolve();
         this.log.write({kind: 'speak', turn: turn.n, reaction: reaction.label, play: anim});
-        return Promise.resolve().then(() => speech.speak(core.animEsml(anim))).catch(() => {});
+        const spoke = Promise.resolve().then(() => speech.speak(core.animEsml(anim))).catch(() => {});
+        this.holdMic(spoke);
+        return spoke;
+    }
+    // A reaction while Jibo thinks: the microphone is closed until `until` settles, at most
+    // HOLD_MAX_MS, since his motors are noise the server could take for the person going on. The
+    // hold is the conversation's, not the turn's: a carry-on or a new turn opens the microphone
+    // only once it is over (D89, D90).
+    holdMic(until) {
+        if (this.state !== 'thinking') return;
+        const closed = this.now();
+        this.held++; this.gate = false;
+        Promise.race([Promise.resolve(until).catch(() => {}), delay(HOLD_MAX_MS)]).then(() => {
+            this.held--;
+            if (!this.active || this.held) return;
+            const turn = this.turn;
+            const open = this.state === 'listening' || (this.state === 'thinking' && turn && !turn.skipped && !turn.followUp && this.thinkingGate());
+            if (!open) return;
+            this.gate = true;
+            this.log.write({kind: 'mic_reopened', state: this.state, turn: turn ? turn.n : null, ms: this.now() - closed});
+        });
     }
     // The reaction is (or was) Jibo's expression for the first line: it played so recently that the
     // line could have no other, or it will go with that line.
@@ -550,12 +647,18 @@ class Conversation {
     }
     carryOn(turn) {
         turn.skipped = true; clearTimeout(turn.waitTimer); clearTimeout(turn.guard);
+        // Its reply leaves the conversation: now when it is complete, else once it is done.
+        if (turn.output) this.forget(turn.output);
+        else if (turn.responseId) this.droppedReplies[turn.responseId] = true;
         if (!turn.done && this.rt) this.rt.send({type: 'response.cancel'});
         this.log.write({kind: 'continued', turn: turn.n});
+        // Its words go in front of the next turn's (D90), with any it carried itself; words that
+        // are still on their way are filled in when they come (carriedFor).
+        this.carried = {n: turn.n, itemId: turn.itemId, before: carriedText(turn.before), own: turn.own};
         if (this.turn === turn) this.turn = null;
         this.thinking.stop();
         this.state = 'listening'; this.led(LISTENING);
-        this.gate = true;
+        this.gate = !this.held;
         this.armSilence();
     }
     // Move finished text from the reply into the speech queue.
@@ -580,7 +683,7 @@ class Conversation {
         core.chunks(text).forEach(piece => {
             if (!core.speechText(piece)) return;
             const index = turn.lines++, config = this.config;
-            let ready = null, readySize = null, labelAt = null, released = false;
+            let ready = null, readySize = null, labelAt = null, labelConn = null, released = false;
             const queuedAt = this.now();
             // A classifier problem only costs the expression, never the words.
             const asked = !!(config.expressions && this.classify);
@@ -589,8 +692,8 @@ class Conversation {
                 if (result) this.noteClassifier(result);
                 ready = result && result.label !== undefined ? result.label : null;
                 readySize = result && result.size || null;
-                labelAt = this.now();
-                if (released && this.active) this.log.write({kind: 'label_late', turn: turn.n, line: index, label: ready, ms: labelAt - queuedAt, at: this.since(labelAt)});
+                labelAt = this.now(); labelConn = result && result.conn || null;
+                if (released && this.active) this.log.write({kind: 'label_late', turn: turn.n, line: index, label: ready, ms: labelAt - queuedAt, at: this.since(labelAt), conn: labelConn || undefined});
                 // Too late for the first line: offer it to the next one instead.
                 if (index === 0 && turn.firstLate && ready && ready !== 'none') turn.carried = {label: ready, size: readySize};
                 return ready;
@@ -608,7 +711,8 @@ class Conversation {
                 if (!asked && !(index === 0 && turn.reacting)) by = 'no_classifier';
                 return Promise.race([both.then(found => { by = by || 'answers'; return found; }), delay(wait).then(() => { by = by || 'timeout'; return ready; })]).then(found => {
                     released = true;
-                    if (!this.active) return;
+                    // The person went on while this line waited (D89): it is never said.
+                    if (!this.active || turn.skipped) return;
                     if (index === 0 && found === null) turn.firstLate = true;
                     let size = readySize;
                     if (index === 1 && (found === null || found === 'none') && turn.carried) { found = turn.carried.label; size = turn.carried.size; }
@@ -625,7 +729,8 @@ class Conversation {
                     // What this line waited for, and whose expression it got (ms since open).
                     this.log.write({kind: 'line_wait', turn: turn.n, line: index, queued: this.since(queuedAt), reached: this.since(reached), released: this.since(), by: by,
                         label: labelAt === null ? null : ready, label_ms: labelAt === null ? null : labelAt - queuedAt,
-                        reaction: index === 0 && reaction ? reaction.label : undefined, reaction_at: index === 0 && reaction ? reaction.at : undefined, used: use || null});
+                        reaction: index === 0 && reaction ? reaction.label : undefined, reaction_at: index === 0 && reaction ? reaction.at : undefined, used: use || null,
+                        conn: labelConn || undefined});
                     turn.expressions.push(found === null ? (index === 0 && wait && by !== 'reaction' ? 'late' : null) : found + (use || found === 'none' ? '' : ' (held back)'));
                     if (index === 0) turn.firstSpeechAt = this.now();
                     // No expression on this line: an eye emoji for something Jibo names (pizza, rain, a dog).

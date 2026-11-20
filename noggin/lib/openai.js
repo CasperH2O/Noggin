@@ -54,7 +54,42 @@ function connect(config, WebSocketClass) {
 }
 
 // ---- HTTPS for the classifier ----
+// Three sockets: a turn asks the reaction and two line labels at once, and a third request
+// would wait for a free socket (D89).
 const agents = {};
+// Connection timing for the log (D87). For each request, `conn`: the socket's id, reused or new
+// (and how long a reused one sat idle), and ms from the request to its socket, the address, the
+// TCP connection, TLS and the answer's first byte. A kept socket that closes goes to closeWatcher.
+let socketIds = 0, closeWatcher = null;
+function watchConnection(request, started, conn) {
+    request.on('socket', socket => {
+        const now = Date.now(), since = () => Date.now() - started;
+        let s = socket.nogginConn;
+        conn.socket_ms = now - started;
+        if (s) { conn.reused = true; conn.idle_ms = s.freeAt === null ? null : now - s.freeAt; }
+        else {
+            s = socket.nogginConn = {id: ++socketIds, uses: 0, opened: now, freeAt: null};
+            conn.reused = false;
+            socket.once('lookup', () => { conn.dns_ms = since(); });
+            socket.once('connect', () => { conn.tcp_ms = since(); });
+            socket.once('secureConnect', () => { conn.tls_ms = since(); });
+            socket.once('close', () => {
+                const at = Date.now();
+                if (closeWatcher) closeWatcher({socket: s.id, uses: s.uses, age_ms: at - s.opened, idle_ms: s.freeAt === null ? null : at - s.freeAt});
+            });
+        }
+        s.uses++; s.freeAt = null; conn.socket = s.id;
+        request.once('response', response => {
+            conn.ttfb_ms = since();
+            response.once('end', () => { s.freeAt = Date.now(); });
+        });
+    });
+}
+// watch(fn): fn({socket, uses, age_ms, idle_ms}) when a kept socket closes; returns the unwatch.
+function watchConnections(fn) {
+    closeWatcher = fn;
+    return () => { if (closeWatcher === fn) closeWatcher = null; };
+}
 // track(abort), when given, receives a function that cancels the request.
 function nodeJson(config, route, body, timeoutMs, track, method) {
     try { return nodeRequest(config, route, body, timeoutMs, track, method); }
@@ -65,10 +100,11 @@ function nodeRequest(config, route, body, timeoutMs, track, method) {
     method = method || 'POST';
     const target = url.parse(config.apiBase + route), started = Date.now(), data = method === 'GET' ? null : JSON.stringify(body);
     const module_ = target.protocol === 'https:' ? https : http;
-    const agent = agents[target.protocol] || (agents[target.protocol] = new module_.Agent({keepAlive: true, maxSockets: 2}));
+    const agent = agents[target.protocol] || (agents[target.protocol] = new module_.Agent({keepAlive: true, maxSockets: 3}));
     const headers = {Authorization: 'Bearer ' + config.apiKey, Accept: 'application/json'};
     if (data !== null) { headers['Content-Type'] = 'application/json'; headers['Content-Length'] = Buffer.byteLength(data); }
     const options = {method: method, protocol: target.protocol, hostname: target.hostname, port: target.port, path: target.path, agent: agent, headers: headers};
+    const conn = {};
     return new Promise((resolve, reject) => {
         const request = module_.request(options, response => {
             const parts = [];
@@ -76,9 +112,10 @@ function nodeRequest(config, route, body, timeoutMs, track, method) {
             response.on('end', () => {
                 let json = null;
                 try { json = JSON.parse(Buffer.concat(parts).toString('utf8')); } catch (_) {}
-                resolve({status: response.statusCode, json: json, ms: Date.now() - started});
+                resolve({status: response.statusCode, json: json, ms: Date.now() - started, conn: conn});
             });
         });
+        watchConnection(request, started, conn);
         request.on('error', reject);
         request.setTimeout(timeoutMs || 10000, () => { request.abort(); reject(Error('timeout')); });
         if (track) track(reason => { request.abort(); reject(Error(reason || 'stopped')); });
@@ -165,6 +202,11 @@ function asker(config) {
         return Promise.race([pageJson(config, route, body, method), late]).then(r => { clearTimeout(timer); return r; }, e => { clearTimeout(timer); throw e; });
     });
 }
+// A result with the request's connection timing, when Node's agent made it (D87).
+function withConn(response, result) {
+    if (response && response.conn) result.conn = response.conn;
+    return result;
+}
 // classify(personSaid, jiboSays, kind) -> {label, confidence, size, ms, api}. kind 'reaction'
 // (no jiboSays yet) or 'line'. The Decisions API is the default; if the account cannot use
 // it (an HTTP error), the rest of the session uses the Responses API with the fallback model.
@@ -183,14 +225,14 @@ function classifier(config, post) {
     function viaResponses(personSaid, jiboSays, kind) {
         const model = api === 'responses' && config.classifierApi === 'responses' ? config.classifierModel : config.fallbackModel;
         return post('/responses', core.classifierRequest(model, personSaid, jiboSays, config.classifierReasoning, kind))
-            .then(r => r.status === 200 ? {label: core.classifierLabel(r.json), size: withSize ? core.classifierSize(r.json) : null, confidence: null, ms: r.ms, api: 'responses'}
-                : {label: null, ms: r.ms, status: r.status, api: 'responses', error: failure(r)});
+            .then(r => withConn(r, r.status === 200 ? {label: core.classifierLabel(r.json), size: withSize ? core.classifierSize(r.json) : null, confidence: null, ms: r.ms, api: 'responses'}
+                : {label: null, ms: r.ms, status: r.status, api: 'responses', error: failure(r)}));
     }
     const classify = (personSaid, jiboSays, kind) => {
         if (api === 'responses') return viaResponses(personSaid, jiboSays, kind);
         const sized = withSize;
         return post('/decisions', core.decisionsRequest(config.classifierModel, personSaid, jiboSays, kind, sized)).then(r => {
-            if (r.status === 200) return Object.assign(core.decisionLabel(r.json, config.minConfidence), {ms: r.ms, api: 'decisions'});
+            if (r.status === 200) return withConn(r, Object.assign(core.decisionLabel(r.json, config.minConfidence), {ms: r.ms, api: 'decisions'}));
             const error = failure(r);
             // A request error with the size question: try once more without it, and keep it off.
             if (sized && r.status === 400) {
@@ -201,14 +243,16 @@ function classifier(config, post) {
                 api = 'responses';
                 return viaResponses(personSaid, jiboSays, kind).then(result => Object.assign(result, {switched: 'decisions failed (' + error + '), now ' + config.fallbackModel}));
             }
-            return {label: null, ms: r.ms, status: r.status, api: 'decisions', error: error};
+            return withConn(r, {label: null, ms: r.ms, status: r.status, api: 'decisions', error: error});
         });
     };
-    // Open the HTTPS connection ahead of time: a cold TLS handshake on the robot costs over a
-    // second, which made reactions miss Jibo's first word. A one-word decision costs nothing.
-    classify.warm = () => api !== 'decisions' ? Promise.resolve() : post('/decisions', {model: config.classifierModel, input: 'hi',
+    // Open a connection ahead of time, so the first reaction does not wait for one. A one-word
+    // decision costs nothing. (The first real answers can still be slow on OpenAI's side, D89.)
+    // Resolves {ms, status, conn} for the log, or null when nothing was sent.
+    classify.warm = () => api !== 'decisions' ? Promise.resolve(null) : post('/decisions', {model: config.classifierModel, input: 'hi',
         questions: [{type: 'choice', name: 'warm', instructions: 'Reply hello.', choices: [{value: 'hello', description: 'hello'}, {value: 'other', description: 'other'}]}]})
-        .then(() => {}, () => {});
+        .then(r => withConn(r, {ms: r.ms, status: r.status}), error => ({error: String(error && error.message || error).slice(0, 200)}));
+    classify.watch = watchConnections;
     return classify;
 }
 

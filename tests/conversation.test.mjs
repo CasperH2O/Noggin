@@ -179,7 +179,7 @@ function reply(h, id, text, done = true) {
     if (done) h.emit({type: 'response.done', response: {id, status: 'completed', usage: {input_tokens: 800, output_tokens: 20}}});
 }
 
-test('a turn: listen, gate closed while thinking/speaking, wait for transcript, speak lines with expression, listen again', async () => {
+test('a turn: listen, gate open while thinking and closed while speaking, wait for transcript, speak lines with expression, listen again', async () => {
     const h = harness();
     const ended = h.talk.open();
     await untilListening(h);
@@ -191,7 +191,7 @@ test('a turn: listen, gate closed while thinking/speaking, wait for transcript, 
     h.emit({type: 'input_audio_buffer.speech_started'});
     h.emit({type: 'input_audio_buffer.speech_stopped'});
     h.audio();
-    assert.equal(h.appends(), 2, 'no audio while thinking');
+    assert.equal(h.appends(), 3, 'audio still goes out while Jibo thinks (D89)');
     reply(h, 'r1', 'A puppy, how lovely! What is its name?');
     await sleep(30);
     assert.equal(h.said.length, 1, 'waits for the transcript');
@@ -200,7 +200,7 @@ test('a turn: listen, gate closed while thinking/speaking, wait for transcript, 
     assert.deepEqual(h.said.slice(1), ["<anim name='excited_01' nonBlocking='true' endNeutral='true'/>A puppy, how lovely!", 'What is its name?']);
     await untilListening(h);
     h.audio();
-    assert.equal(h.appends(), 3, 'listening again');
+    assert.equal(h.appends(), 4, 'listening again');
     assert.equal(h.sent.filter(e => e.type === 'input_audio_buffer.clear').length, 2);
     const you = h.logs.find(e => e.kind === 'you'), jibo = h.logs.find(e => e.kind === 'jibo');
     assert.equal(you.text, 'I got a puppy');
@@ -1452,10 +1452,11 @@ test('timer tools: the instructions and tool descriptions say to call them witho
 const dofSet = names => ({names, minus: other => dofSet(names.filter(n => other.names.indexOf(n) < 0))});
 const DOFS = {ALL: dofSet(['BODY', 'EYE', 'OVERLAY', 'LED', 'BASE', 'EYE_TRANSLATE']), LED: dofSet(['LED']), BASE: dofSet(['BASE']), EYE_TRANSLATE: dofSet(['EYE_TRANSLATE'])};
 // animDB with a few animations: each plays for `ms` and ends as `results[name]` (default STOPPED).
-function fakeAnimDB(results = {}, ms = 60) {
+// layers: {name: {Body: true|false}} for clips whose body layer is known (else unknown).
+function fakeAnimDB(results = {}, ms = 60, layers = {}) {
     const played = [], centred = [];
     const animDB = {getAnimByName: name => name === 'missing_01' ? null : {
-        meta: {endsNeutral: name !== 'Confused_01'},
+        meta: {endsNeutral: name !== 'Confused_01', layers: layers[name]},
         createFromConfig: config => {
             const started = emitter();
             const playback = {instance: {events: {started}}, stopped: false,
@@ -2252,4 +2253,246 @@ test('lead: an emoji on a later line does not hold the words; one on the first l
 
 test('expression wait: the first line waits at most 500 ms for its expression by default', () => {
     assert.equal(settings.DEFAULTS.expressionWaitMs, 500);
+});
+
+test('timing log (D89): warm and label connections, and where the server placed speech in the sent audio', async () => {
+    const conn = {socket: 3, reused: true, idle_ms: 900, socket_ms: 1, ttfb_ms: 140};
+    const classify = () => Promise.resolve({label: 'none', ms: 5, conn});
+    classify.warm = () => Promise.resolve({ms: 1200, status: 200, conn: {socket: 3, reused: false, dns_ms: 30, tcp_ms: 90, tls_ms: 120, ttfb_ms: 1100}});
+    const h = harness({classify, config: {silenceSeconds: 5}});
+    h.talk.open(); await untilListening(h);
+    await sleep(5);
+    const warm = h.logs.find(e => e.kind === 'classifier_warm');
+    assert.equal(warm.why, 'connected'); assert.equal(warm.conn.tls_ms, 120);
+    assert.equal(h.logs.find(e => e.kind === 'listen').sent_ms, 0);
+    h.audio(); h.audio(); h.audio();
+    h.emit({type: 'input_audio_buffer.speech_started', audio_start_ms: 100});
+    h.emit({type: 'input_audio_buffer.speech_stopped', audio_end_ms: 200});
+    const stopped = h.logs.find(e => e.kind === 'rt' && e.type === 'input_audio_buffer.speech_stopped');
+    assert.equal(stopped.audio_ms, 200); assert.equal(stopped.sent_ms, 256);
+    assert.ok(stopped.behind_ms >= 0 && stopped.behind_ms < 100, JSON.stringify(stopped));
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'Hello'});
+    reply(h, 'r1', 'Hello there.');
+    await untilListening(h);
+    assert.deepEqual(h.logs.find(e => e.kind === 'line_wait').conn, conn);
+    assert.deepEqual(h.logs.find(e => e.kind === 'jibo').reaction.conn, conn);
+    h.talk.close();
+});
+
+test('timing log (D89): a closed kept connection is logged while the conversation runs; nothing measured with the log off', async () => {
+    let watcher = null, unwatched = 0;
+    const classify = () => Promise.resolve({label: 'none'});
+    classify.watch = fn => { watcher = fn; return () => { unwatched++; }; };
+    const h = harness({classify});
+    h.talk.open(); await untilListening(h);
+    watcher({socket: 2, uses: 4, age_ms: 70000, idle_ms: 60000});
+    const closed = h.logs.find(e => e.kind === 'conn_closed');
+    assert.equal(closed.socket, 2); assert.equal(closed.idle_ms, 60000);
+    h.talk.close();
+    assert.equal(unwatched, 1);
+    const off = harness({classify});
+    off.talk.log.enabled = false;
+    off.talk.open(); await untilListening(off);
+    assert.equal(off.talk.clock, null);
+    off.talk.close();
+});
+
+test('going on after a pause while Jibo thinks: the queued answer is dropped and the whole thought is answered (D89)', async () => {
+    let answer = null;
+    const classify = (person, line, kind) => kind === 'reaction' ? Promise.resolve({label: 'none'}) : new Promise(resolve => { answer = answer || resolve; });
+    const h = harness({classify, config: {expressionWaitMs: 300}});
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_started'});
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'I went to the shop'});
+    reply(h, 'r1', 'Nice, what did you buy?');
+    await sleep(20);
+    assert.equal(h.talk.state, 'thinking'); assert.equal(h.said.length, 1, 'the line waits for its label');
+    const before = h.appends();
+    h.audio();
+    assert.equal(h.appends(), before + 1, 'the person is still heard');
+    h.emit({type: 'input_audio_buffer.speech_started'});
+    assert.ok(h.logs.some(e => e.kind === 'continued' && e.turn === 1));
+    assert.equal(h.talk.state, 'listening');
+    await sleep(350);
+    assert.equal(h.said.length, 1, 'the dropped answer is never spoken');
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'and then I bought bread'});
+    reply(h, 'r2', 'Bread sounds good.');
+    if (answer) answer({label: 'none'});
+    await untilListening(h);
+    assert.deepEqual(h.said.slice(1), ['Bread sounds good.']);
+    h.talk.close();
+});
+
+test('hear me while Jibo thinks: off closes the microphone at the end of the turn, as before (D89)', async () => {
+    const h = harness({config: {listenWhileThinking: false}});
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_started'});
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    const before = h.appends();
+    h.audio();
+    assert.equal(h.appends(), before, 'nothing sent while thinking');
+    h.talk.close();
+});
+
+test('a reaction that may move the body closes the microphone until it is done (D89)', async () => {
+    const classify = (person, line, kind) => Promise.resolve({label: kind === 'reaction' ? 'happy' : 'none'});
+    const h = harness({classify, speakMs: 80, config: {expressionPlay: 'esml', silenceSeconds: 5, transcriptWaitMs: 400}});
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_started'});
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'I won the game'});
+    await sleep(20);
+    assert.ok(h.said.some(s => /excited_01/.test(s)), 'the reaction plays');
+    const before = h.appends();
+    h.audio();
+    assert.equal(h.appends(), before, 'closed while the reaction plays');
+    await sleep(100);
+    h.audio();
+    assert.equal(h.appends(), before + 1, 'open again once it is done');
+    assert.ok(h.logs.some(e => e.kind === 'mic_reopened' && e.turn === 1));
+    h.talk.close();
+});
+
+test('a reply the server cancelled because the person went on is never spoken (D89)', async () => {
+    const h = harness();
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'So anyway'});
+    h.emit({type: 'response.created', response: {id: 'r1'}});
+    h.emit({type: 'response.output_text.delta', response_id: 'r1', delta: 'Half a'});
+    h.emit({type: 'response.done', response: {id: 'r1', status: 'cancelled'}});
+    await sleep(150);
+    assert.equal(h.said.length, 1);
+    assert.equal(h.talk.state, 'listening');
+    assert.ok(h.logs.some(e => e.kind === 'continued'));
+    h.talk.close();
+});
+
+// A turn's words with item ids, as the server sends them (D90).
+function heardTurn(h, item) {
+    h.emit({type: 'input_audio_buffer.speech_started'});
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'input_audio_buffer.committed', item_id: item});
+}
+const words = (h, item, transcript) => h.emit({type: 'conversation.item.input_audio_transcription.completed', item_id: item, transcript});
+
+test('going on: words that come after the turn was dropped are carried to the next turn, never given to it as its own (D90)', async () => {
+    const asked = [];
+    const classify = (person, line, kind) => { asked.push([kind, person]); return Promise.resolve({label: 'none'}); };
+    const h = harness({classify, config: {silenceSeconds: 5}});
+    h.talk.open(); await untilListening(h);
+    heardTurn(h, 'i1');
+    h.emit({type: 'input_audio_buffer.speech_started'});           // goes on before the first words are known
+    assert.equal(h.talk.state, 'listening');
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'input_audio_buffer.committed', item_id: 'i2'});
+    words(h, 'i1', 'I went to the shop');                         // late: the dropped turn's words
+    assert.equal(h.talk.turn.transcript, undefined, 'not taken as the new turn\'s words');
+    words(h, 'i2', 'and bought bread');
+    assert.equal(h.talk.turn.transcript, 'I went to the shop and bought bread');
+    const you = h.logs.filter(e => e.kind === 'you');
+    assert.deepEqual(you.map(e => [e.turn, e.text, !!e.carried, !!e.before]), [[1, 'I went to the shop', true, false], [2, 'and bought bread', false, true]]);
+    await sleep(5);
+    assert.deepEqual(asked.find(a => a[0] === 'reaction'), ['reaction', 'I went to the shop and bought bread']);
+    reply(h, 'r2', 'Fresh bread, nice.');
+    await untilListening(h);
+    assert.deepEqual(h.said.slice(1), ['Fresh bread, nice.']);
+    h.talk.close();
+});
+
+test('going on with only noise: the carried words keep the turn, and its reply is spoken (D90)', async () => {
+    const h = harness({config: {silenceSeconds: 5}});
+    h.talk.open(); await untilListening(h);
+    heardTurn(h, 'i1');
+    words(h, 'i1', 'Tell me a joke');
+    h.emit({type: 'input_audio_buffer.speech_started'});
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'input_audio_buffer.committed', item_id: 'i2'});
+    words(h, 'i2', '');
+    assert.ok(!h.logs.some(e => e.kind === 'skipped'), 'not skipped as an empty turn');
+    reply(h, 'r2', 'Why did the robot cross the road?');
+    await untilListening(h);
+    assert.deepEqual(h.said.slice(1), ['Why did the robot cross the road?']);
+    assert.equal(h.logs.find(e => e.kind === 'jibo').turn, 2);
+    h.talk.close();
+});
+
+test('going on: the dropped reply is deleted from the conversation, complete or still coming (D90)', async () => {
+    let answer = null;
+    const classify = (person, line, kind) => kind === 'reaction' ? Promise.resolve({label: 'none'}) : new Promise(resolve => { answer = answer || resolve; });
+    const h = harness({classify, config: {expressionWaitMs: 300, silenceSeconds: 5}});
+    h.talk.open(); await untilListening(h);
+    heardTurn(h, 'i1'); words(h, 'i1', 'I went to the shop');
+    h.emit({type: 'response.created', response: {id: 'r1'}});
+    h.emit({type: 'response.output_text.delta', response_id: 'r1', delta: 'Nice, what did you buy? '});
+    h.emit({type: 'response.done', response: {id: 'r1', status: 'completed', output: [{id: 'm1', type: 'message'}]}});
+    await sleep(10);
+    h.emit({type: 'input_audio_buffer.speech_started'});       // the complete reply waited for its label
+    const deleted = () => h.sent.filter(e => e.type === 'conversation.item.delete').map(e => e.item_id);
+    assert.deepEqual(deleted(), ['m1']);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'input_audio_buffer.committed', item_id: 'i2'});
+    h.emit({type: 'response.created', response: {id: 'r2'}});
+    h.emit({type: 'input_audio_buffer.speech_started'});       // goes on again while r2 is still coming
+    assert.ok(h.sent.some(e => e.type === 'response.cancel'));
+    h.emit({type: 'response.done', response: {id: 'r2', status: 'cancelled', output: [{id: 'm2', type: 'message'}, {id: 'f2', type: 'function_call', name: 'set_volume'}]}});
+    assert.deepEqual(deleted(), ['m1', 'm2', 'f2']);
+    if (answer) answer({label: 'none'});
+    assert.equal(h.said.length, 1, 'nothing of either reply was said');
+    h.talk.close();
+});
+
+test('a reply the server cancels after Jibo began speaking: no more of it is said and its tools do not run (D90)', async () => {
+    const acts = fakeActions();
+    const h = harness({actions: acts, speakMs: 60});
+    h.talk.open(); await untilListening(h);
+    heardTurn(h, 'i1'); words(h, 'i1', 'Make it quieter');
+    h.emit({type: 'response.created', response: {id: 'r1'}});
+    h.emit({type: 'response.output_text.delta', response_id: 'r1', delta: 'Sure thing. '});
+    await until(() => h.talk.state === 'speaking');
+    h.emit({type: 'response.output_text.delta', response_id: 'r1', delta: 'Turning it down to'});
+    h.emit({type: 'response.done', response: {id: 'r1', status: 'cancelled', output: [{id: 'f1', type: 'function_call', name: 'set_volume', call_id: 'c1', arguments: '{"lev'}]}});
+    await untilListening(h);
+    assert.deepEqual(h.said.slice(1), ['Sure thing.']);
+    assert.equal(acts.volume, undefined, 'the cut tool call did not run');
+    assert.ok(h.logs.some(e => e.kind === 'cut' && e.turn === 1));
+    assert.equal(h.logs.find(e => e.kind === 'jibo').text, 'Sure thing.', 'the log and the pairs keep only what was said');
+    h.talk.close();
+});
+
+test('the microphone hold is the conversation\'s: going on during a body reaction keeps it closed until the clip ends (D90)', async () => {
+    const db = fakeAnimDB({}, 150, {excited_01: {Body: true}});
+    const classify = (person, line, kind) => Promise.resolve({label: kind === 'reaction' ? 'happy' : 'none'});
+    const h = harness({classify, config: {expressionPlay: 'animdb', silenceSeconds: 5, transcriptWaitMs: 1000}, animDB: db.animDB, expression: db.expression});
+    h.talk.open(); await untilListening(h);
+    heardTurn(h, 'i1'); words(h, 'i1', 'I won the game');
+    await until(() => db.played.some(p => p.name === 'excited_01'));
+    const before = h.appends();
+    h.audio();
+    assert.equal(h.appends(), before, 'closed while the reaction moves the body');
+    h.emit({type: 'input_audio_buffer.speech_started'});          // goes on (or the motors were heard)
+    assert.equal(h.talk.state, 'listening');
+    h.audio();
+    assert.equal(h.appends(), before, 'still closed after the carry-on');
+    await until(() => h.logs.some(e => e.kind === 'mic_reopened'));
+    h.audio();
+    assert.equal(h.appends(), before + 1, 'open once the clip ended');
+    assert.equal(h.logs.find(e => e.kind === 'mic_reopened').state, 'listening');
+    h.talk.close();
+});
+
+test('animdb: a reaction known to leave the body still keeps the microphone open while Jibo thinks (D89)', async () => {
+    const db = fakeAnimDB({}, 150, {excited_01: {Body: false}});
+    const classify = (person, line, kind) => Promise.resolve({label: kind === 'reaction' ? 'happy' : 'none'});
+    const h = harness({classify, config: {expressionPlay: 'animdb', silenceSeconds: 5, transcriptWaitMs: 1000}, animDB: db.animDB, expression: db.expression});
+    h.talk.open(); await untilListening(h);
+    heardTurn(h, 'i1'); words(h, 'i1', 'I won the game');
+    await until(() => db.played.some(p => p.name === 'excited_01'));
+    const before = h.appends();
+    h.audio();
+    assert.equal(h.appends(), before + 1);
+    assert.ok(!h.logs.some(e => e.kind === 'mic_reopened'));
+    h.talk.close();
 });
