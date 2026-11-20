@@ -413,6 +413,76 @@ test('cloud turn: disableOnce is cleared whenever the pretend "Hey Jibo" did not
     await assert.rejects(cloudTurn.create({}, () => dialog).ask('x'), /no mimicGlobalTurn/);
 });
 
+// A Jibo with the action system's orientToHJ switch and the hotword-position event.
+function orientJibo(options = {}) {
+    const listeners = [], configured = [], asked = [];
+    const hjEvent = {on: f => listeners.push(f), removeListener: f => { const i = listeners.indexOf(f); if (i >= 0) listeners.splice(i, 1); },
+        emit: data => listeners.slice().forEach(f => f(data))};
+    const atMimic = [];
+    const jibo = {jetstream: {mimicGlobalTurn: o => { asked.push(o.clientASR); atMimic.push(configured.slice()); return options.fail ? Promise.reject(Error('refused')) : Promise.resolve(); }},
+        embodied: {listen: {disableOnce: () => {}}},
+        lps: {identity: {events: {hjEvent}}},
+        action: {configure: o => configured.push(o.orientToHJ), hjGoalProvider: {listening: options.listening === undefined ? true : options.listening}}};
+    return {jibo, hjEvent, listeners, configured, asked, atMimic};
+}
+
+test('cloud turn: turning to "Hey Jibo" is off for the pretend turn and back on once its direction has passed (D85)', async () => {
+    const cloudTurn = require(path.join(source, 'noggin/lib/cloud-turn.js'));
+    const dialog = () => ({_embodied: {listen: {}}});
+    // The pretend turn's direction arrives: back on after the settle time, the direction logged.
+    const a = orientJibo(), notes = [];
+    const turn = cloudTurn.create(a.jibo, dialog, {settleMs: 20, maxMs: 500});
+    await turn.ask('tell me about the news', entry => notes.push(entry));
+    assert.deepEqual(a.atMimic, [[false]], 'off before the pretend turn is asked');
+    assert.equal(a.listeners.length, 1);
+    a.hjEvent.emit({primary: {position: {x: -0.5, y: 0.866, z: 1}, confidence: 0.612}});
+    a.hjEvent.emit({primary: {position: {x: 1, y: 0, z: 1}, confidence: 0.9}});
+    assert.deepEqual(a.configured, [false], 'still off while it settles');
+    await sleep(40);
+    assert.deepEqual(a.configured, [false, true]);
+    assert.equal(a.listeners.length, 0);
+    assert.equal(notes.length, 1);
+    assert.equal(notes[0].kind, 'orient_hj'); assert.equal(notes[0].on, 'heard');
+    assert.deepEqual(notes[0].heard, {deg: 120, confidence: 0.61}, 'the first direction');
+    assert.equal(notes[0].events, 2, 'every event in the window is counted'); assert.ok(notes[0].last_ms >= 0);
+    turn.release();
+    assert.deepEqual(a.configured, [false, true], 'a later give-up changes nothing');
+    // No direction ever comes: back on after maxMs, even though Noggin has closed by then.
+    const b = orientJibo(), bNotes = [];
+    const timed = cloudTurn.create(b.jibo, dialog, {settleMs: 20, maxMs: 60});
+    await timed.ask('what is the weather', entry => bNotes.push(entry));
+    assert.equal(timed.orienting(), true);
+    await sleep(90);
+    assert.deepEqual(b.configured, [false, true]); assert.equal(bNotes[0].on, 'timeout'); assert.equal(bNotes[0].events, 0); assert.equal(bNotes[0].heard, undefined);
+    assert.equal(b.listeners.length, 0); assert.equal(timed.orienting(), false);
+    // The handover failed or gave up first: back on at once.
+    const c = orientJibo();
+    const failed = cloudTurn.create(c.jibo, dialog, {settleMs: 20, maxMs: 500});
+    await failed.ask('surprise me');
+    failed.release();
+    assert.deepEqual(c.configured, [false, true]); assert.equal(c.listeners.length, 0);
+    // The pretend turn could not be asked: back on at once.
+    const d = orientJibo({fail: true}), dNotes = [];
+    await assert.rejects(cloudTurn.create(d.jibo, dialog, {maxMs: 500}).ask('x', entry => dNotes.push(entry)), /refused/);
+    assert.deepEqual(d.configured, [false, true]); assert.equal(dNotes[0].on, 'failed');
+});
+
+test('cloud turn: turning to "Hey Jibo" that something else switched off is left alone; no action system is fine', async () => {
+    const cloudTurn = require(path.join(source, 'noggin/lib/cloud-turn.js'));
+    const dialog = () => ({_embodied: {listen: {}}});
+    const off = orientJibo({listening: false});
+    const turn = cloudTurn.create(off.jibo, dialog, {settleMs: 5, maxMs: 30});
+    await turn.ask('tell me about the news');
+    await sleep(50); turn.release();
+    assert.deepEqual(off.configured, [], 'not ours to switch');
+    assert.deepEqual(off.asked, ['tell me about the news']);
+    const bare = orientJibo();
+    delete bare.jibo.action;
+    const plain = cloudTurn.create(bare.jibo, dialog, {settleMs: 5, maxMs: 30});
+    await plain.ask('tell me a joke');
+    assert.equal(plain.orienting(), false); assert.deepEqual(bare.asked, ['tell me a joke']);
+});
+
 test('extras: at most MAX_APPS extra apps reach open_app, the first ones in the setting', () => {
     assert.equal(actions.MAX_APPS, 8);
     const openApps = {};

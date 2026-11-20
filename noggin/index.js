@@ -88,7 +88,7 @@ class Noggin extends BeSkill {
             classify: config.expressions ? openai.classifier(config) : null,
             actions: config.actions ? {
                 redirect: (pkg, options) => this.redirect(pkg, options),
-                cloud: phrase => cloudTurn.ask(phrase),
+                cloud: phrase => cloudTurn.ask(phrase, entry => log.write(entry)),
                 handover: state => this.watchHandover(state, config, log),
                 handoverFailed: () => { stopWatching(); cloudTurn.release(); },
                 readClock: () => actions.readClock(jibo),
