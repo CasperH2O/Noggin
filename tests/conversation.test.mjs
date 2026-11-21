@@ -596,6 +596,7 @@ test('reaction that arrives after the first line is queued goes with that line',
     assert.equal(h.said[1], "<anim name='Emoji_HeartRed' nonBlocking='true' endNeutral='true'/>Aw, I love you too!");
     assert.equal(h.said[2], 'You are the best.', 'own expression held back by the 4 s gap');
     assert.equal(h.logs.find(e => e.kind === 'jibo').reaction.played, 'with first line');
+    assert.equal(h.logs.find(e => e.kind === 'jibo').expressions[0], 'happy (held back)', 'the reaction played, not the line\'s own label');
     h.talk.close();
 });
 
@@ -2201,7 +2202,7 @@ test('timing log: a line label that comes after the wait is logged as late', asy
     reply(h, 'r1', 'Hello there.');
     await until(() => h.logs.some(e => e.kind === 'label_late'));
     const wait = h.logs.find(e => e.kind === 'line_wait'), late = h.logs.find(e => e.kind === 'label_late');
-    assert.equal(wait.by, 'timeout'); assert.equal(wait.label_ms, null); assert.equal(wait.label, null);
+    assert.equal(wait.by, 'reaction', 'released by the "none" reaction, not by the label'); assert.equal(wait.label_ms, null); assert.equal(wait.label, null);
     assert.equal(late.label, 'happy'); assert.equal(late.line, 0); assert.ok(late.ms >= 100);
     h.talk.close();
 });
@@ -2283,7 +2284,7 @@ test('timing log: no lag probe when the full log is off; lines without a classif
     h.talk.close();
 });
 
-test('first line: a "none" reaction still waits for the line\'s own expression', async () => {
+test('first line: after a "none" reaction the line does not wait for its own expression; the label comes late (D104)', async () => {
     const h = harness({config: {expressionWaitMs: 300}, classify: (person, line, kind) => kind === 'reaction'
         ? sleep(5).then(() => ({label: 'none'})) : sleep(40).then(() => ({label: /dog/.test(line) ? 'happy' : 'none'}))});
     h.talk.open(); await untilListening(h);
@@ -2292,8 +2293,12 @@ test('first line: a "none" reaction still waits for the line\'s own expression',
     reply(h, 'r1', 'A dog, how lovely!');
     await untilListening(h);
     const wait = h.logs.find(e => e.kind === 'line_wait');
-    assert.equal(wait.by, 'answers'); assert.equal(wait.label, 'happy'); assert.equal(wait.used, 'happy');
-    assert.equal(h.said[1], "<anim name='excited_01' nonBlocking='true' endNeutral='true'/>A dog, how lovely!");
+    assert.equal(wait.by, 'reaction'); assert.equal(wait.label, null); assert.equal(wait.used, null);
+    assert.ok(wait.released - wait.reached < 30, JSON.stringify(wait));
+    assert.equal(h.said[1], 'A dog, how lovely!');
+    await until(() => h.logs.some(e => e.kind === 'label_late'));
+    assert.equal(h.logs.find(e => e.kind === 'label_late').label, 'happy');
+    assert.equal(h.logs.find(e => e.kind === 'jibo').expressions[0], 'late');
     h.talk.close();
 });
 
@@ -2346,7 +2351,7 @@ test('lead: a clip that moves the body is handed to the body before the words, s
     h.talk.close();
 });
 
-test('first line: a reaction that played longer ago than the expression gap no longer decides the line', async () => {
+test('first line: after a reaction that played longer ago than the expression gap, the line still does not wait for its label (D104)', async () => {
     const db = fakeAnimDB({}, 20);
     const h = harness({speakMs: 20, config: {expressionPlay: 'animdb', expressionWaitMs: 500, expressionGapMs: 30}, animDB: db.animDB, expression: db.expression,
         classify: (person, line, kind) => kind === 'reaction' ? Promise.resolve({label: 'surprised', confidence: 0.9}) : sleep(60).then(() => ({label: 'happy'}))});
@@ -2358,7 +2363,8 @@ test('first line: a reaction that played longer ago than the expression gap no l
     await untilListening(h);
     assert.equal(h.logs.find(e => e.kind === 'jibo').reaction.played, 'before');
     const wait = h.logs.find(e => e.kind === 'line_wait');
-    assert.equal(wait.by, 'answers'); assert.equal(wait.used, 'happy');
+    assert.equal(wait.by, 'reaction'); assert.equal(wait.used, null); assert.ok(wait.released - wait.reached < 30, JSON.stringify(wait));
+    assert.equal(h.logs.find(e => e.kind === 'jibo').expressions[0], null, 'not "late": the reaction stood in for it');
     h.talk.close();
 });
 
@@ -2398,8 +2404,57 @@ test('a keyword emoji never holds the words: no animation next to the line, no l
     assert.equal(db.played.length, 0);
 });
 
-test('expression wait: the first line does not wait for its expression by default (D99)', () => {
-    assert.equal(settings.DEFAULTS.expressionWaitMs, 0);
+test('first line: a reaction that comes while the line waits plays first, and the words follow at once (D104)', async () => {
+    const db = fakeAnimDB({}, 30, {surprised_02: {Eye: true}});
+    const h = harness({speakMs: 20, config: {expressionPlay: 'animdb', expressionWaitMs: 300}, animDB: db.animDB, expression: db.expression,
+        classify: (person, line, kind) => kind === 'reaction' ? sleep(60).then(() => ({label: 'surprised', confidence: 0.9})) : sleep(400).then(() => ({label: 'none'}))});
+    h.talk.choose = label => label === 'surprised' ? 'surprised_02' : null;
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'I won the lottery!'});
+    reply(h, 'r1', 'No way!');
+    await untilListening(h);
+    const wait = h.logs.find(e => e.kind === 'line_wait' && e.turn === 1);
+    assert.equal(wait.by, 'reaction'); assert.equal(wait.used, 'surprised'); assert.equal(wait.label, null, 'its own label was not waited for');
+    assert.ok(wait.released - wait.reached >= 30 && wait.released - wait.reached < 250, JSON.stringify(wait));
+    assert.equal(h.logs.find(e => e.kind === 'jibo').reaction.played, 'with first line');
+    await until(() => h.logs.some(e => e.kind === 'anim' && e.turn === 1));
+    const anim = h.logs.find(e => e.kind === 'anim' && e.turn === 1), speak = h.logs.find(e => e.kind === 'speak' && e.turn === 1);
+    assert.equal(anim.name, 'surprised_02'); assert.ok(anim.asked <= speak.at, 'the clip is asked before the words');
+    assert.equal(speak.lead, 'none', 'an eye clip does not hold the words');
+    h.talk.close();
+});
+
+test('first line: a reaction slower than the expression wait does not hold the words; it is not played late (D104)', async () => {
+    const h = harness({config: {expressionWaitMs: 80}, classify: (person, line, kind) => kind === 'reaction'
+        ? sleep(300).then(() => ({label: 'surprised', confidence: 0.9})) : Promise.resolve({label: 'none'})});
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'I won the lottery!'});
+    reply(h, 'r1', 'No way!');
+    await untilListening(h); await sleep(320);
+    const wait = h.logs.find(e => e.kind === 'line_wait' && e.turn === 1);
+    assert.equal(wait.by, 'timeout'); assert.ok(wait.released - wait.reached >= 70 && wait.released - wait.reached < 200, JSON.stringify(wait));
+    assert.equal(h.said[1], 'No way!');
+    assert.ok(!h.said.some(t => /surprised/.test(t)));
+    h.talk.close();
+});
+
+test('first line: with the quick reaction off it does not wait for its label (D104)', async () => {
+    const h = harness({config: {reaction: false, expressionWaitMs: 300}, classify: () => sleep(200).then(() => ({label: 'happy'}))});
+    h.talk.open(); await untilListening(h);
+    h.emit({type: 'input_audio_buffer.speech_stopped'});
+    h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'Hello'});
+    reply(h, 'r1', 'Hello there.');
+    await untilListening(h);
+    const wait = h.logs.find(e => e.kind === 'line_wait' && e.turn === 1);
+    assert.equal(wait.by, 'no_wait'); assert.ok(wait.released - wait.reached < 30, JSON.stringify(wait));
+    assert.equal(wait.reaction, undefined);
+    h.talk.close();
+});
+
+test('expression wait: the first line waits at most 300 ms for the quick reaction by default (D104)', () => {
+    assert.equal(settings.DEFAULTS.expressionWaitMs, 300);
 });
 
 // The eye's own events (jibo.face.eye): addAnimation when something starts on the screen,
@@ -2424,7 +2479,7 @@ test('late first-line expression (D99): the words go at once; an eye expression 
     reply(h, 'r1', 'That sounds fun! You start.');
     await until(() => h.said.includes('That sounds fun!'));
     const wait = h.logs.find(e => e.kind === 'line_wait' && e.turn === 1);
-    assert.equal(wait.by, 'timeout'); assert.equal(wait.used, null);
+    assert.equal(wait.by, 'reaction'); assert.equal(wait.used, null);
     eye.emit('addAnimation');          // speech's blink on the first word
     answer({label: 'happy'});
     await sleep(60);
@@ -2716,7 +2771,7 @@ test('timing log (D89): a closed kept connection is logged while the conversatio
 
 test('going on after a pause while Jibo thinks: the queued answer is dropped and the whole thought is answered (D89)', async () => {
     let answer = null;
-    const classify = (person, line, kind) => kind === 'reaction' ? Promise.resolve({label: 'none'}) : new Promise(resolve => { answer = answer || resolve; });
+    const classify = (person, line, kind) => kind === 'reaction' ? new Promise(resolve => { answer = answer || resolve; }) : Promise.resolve({label: 'none'});
     const h = harness({classify, config: {expressionWaitMs: 300}});
     h.talk.open(); await untilListening(h);
     h.emit({type: 'input_audio_buffer.speech_started'});
@@ -2724,7 +2779,7 @@ test('going on after a pause while Jibo thinks: the queued answer is dropped and
     h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'I went to the shop'});
     reply(h, 'r1', 'Nice, what did you buy?');
     await sleep(20);
-    assert.equal(h.talk.state, 'thinking'); assert.equal(h.said.length, 1, 'the line waits for its label');
+    assert.equal(h.talk.state, 'thinking'); assert.equal(h.said.length, 1, 'the line waits for the reaction');
     const before = h.appends();
     h.audio();
     assert.equal(h.appends(), before + 1, 'the person is still heard');
@@ -2868,7 +2923,7 @@ test('going on after a goodbye: the person is not done, so the session stays ope
 
 test('going on: the dropped reply is deleted from the conversation, complete or still coming (D90)', async () => {
     let answer = null;
-    const classify = (person, line, kind) => kind === 'reaction' ? Promise.resolve({label: 'none'}) : new Promise(resolve => { answer = answer || resolve; });
+    const classify = (person, line, kind) => kind === 'reaction' ? new Promise(resolve => { answer = answer || resolve; }) : Promise.resolve({label: 'none'});
     const h = harness({classify, config: {expressionWaitMs: 300, silenceSeconds: 5}});
     h.talk.open(); await untilListening(h);
     heardTurn(h, 'i1'); words(h, 'i1', 'I went to the shop');
@@ -2876,7 +2931,7 @@ test('going on: the dropped reply is deleted from the conversation, complete or 
     h.emit({type: 'response.output_text.delta', response_id: 'r1', delta: 'Nice, what did you buy? '});
     h.emit({type: 'response.done', response: {id: 'r1', status: 'completed', output: [{id: 'm1', type: 'message'}]}});
     await sleep(10);
-    h.emit({type: 'input_audio_buffer.speech_started'});       // the complete reply waited for its label
+    h.emit({type: 'input_audio_buffer.speech_started'});       // the complete reply waited for the reaction
     const deleted = () => h.sent.filter(e => e.type === 'conversation.item.delete').map(e => e.item_id);
     assert.deepEqual(deleted(), ['m1']);
     h.emit({type: 'input_audio_buffer.speech_stopped'});

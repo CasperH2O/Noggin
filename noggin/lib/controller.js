@@ -656,14 +656,6 @@ class Conversation {
             this.log.write({kind: 'mic_reopened', state: this.state, turn: turn ? turn.n : null, ms: this.now() - closed});
         });
     }
-    // The reaction is (or was) Jibo's expression for the first line: it played so recently that the
-    // line could have no other, or it will go with that line.
-    reactionTakes(turn) {
-        const reaction = turn.reaction;
-        if (!reaction || !reaction.label || reaction.label === 'none') return false;
-        if (reaction.played === 'before') return this.now() - this.policy.lastAt < this.policy.gapMs;
-        return !turn.reactionDone && this.policy.allow(reaction.label, this.now(), turn.transcript);
-    }
     // The first line's expression came after its words started (D99, D102): it plays on that line
     // while Jibo still says it. An eye clip first waits for speech's own eye animation (the blink on
     // his first word) to end, at most EYE_FREE_MS; any clip is then asked again while refused
@@ -776,18 +768,20 @@ class Conversation {
                 if (index === 0 && turn.firstLate && ready && ready !== 'none' && !this.playLate(turn, ready, readySize)) turn.carried = {label: ready, size: readySize};
                 return ready;
             }, () => null) : Promise.resolve(null);
-            const wait = index === 0 ? config.expressionWaitMs : 0;
             this.speechChain = this.speechChain.then(() => {
                 if (!this.active || turn.skipped) return;
                 const reached = this.now();
                 let by = null;
-                // The first line also waits (within the same budget) for the reaction; a reaction that
-                // is Jibo's expression for it makes the line's own label moot (D79).
-                const both = index === 0 && turn.reacting
-                    ? turn.reacting.then(() => { if (!this.reactionTakes(turn)) return label; by = by || 'reaction'; return ready; })
-                    : label;
-                if (!asked && !(index === 0 && turn.reacting)) by = 'no_classifier';
-                return Promise.race([both.then(found => { by = by || 'answers'; return found; }), delay(wait).then(() => { by = by || 'timeout'; return ready; })]).then(found => {
+                // The first line waits (at most expressionWaitMs) for the quick reaction, never for its
+                // own label: a reaction plays first and the words follow at once. A label that comes
+                // later plays on the line, or on line 2 when a reaction took the expression gap (D104).
+                const reacting = index === 0 && turn.reacting;
+                const wait = reacting ? config.expressionWaitMs : 0;
+                const awaited = reacting ? turn.reacting.then(() => { by = by || 'reaction'; return ready; }) : label;
+                if (!asked && !reacting) by = 'no_classifier';
+                // 'timeout': the reaction wait ran out; 'no_wait': this line had nothing to wait for.
+                const waited = delay(wait).then(() => { by = by || (wait > 0 ? 'timeout' : 'no_wait'); return ready; });
+                return Promise.race([awaited.then(found => { by = by || 'answers'; return found; }), waited]).then(found => {
                     released = true;
                     // The person went on while this line waited (D89): it is never said.
                     if (!this.active || turn.skipped) return;
@@ -810,7 +804,9 @@ class Conversation {
                         reaction: index === 0 && reaction ? reaction.label : undefined, reaction_at: index === 0 && reaction ? reaction.at : undefined, used: use || null,
                         conn: labelConn || undefined});
                     if (index === 0) turn.firstEntry = turn.expressions.length;
-                    turn.expressions.push(found === null ? (index === 0 && by === 'timeout' ? 'late' : null) : found + (use || found === 'none' ? '' : ' (held back)'));
+                    // "late": the first line's label was not there yet and no reaction stood in for it.
+                    const reacted = index === 0 && reaction && (reaction.played === 'before' || reaction.played === 'with first line');
+                    turn.expressions.push(found === null ? (index === 0 && !reacted ? 'late' : null) : found + (use === found || found === 'none' ? '' : ' (held back)'));
                     if (index === 0) turn.firstSpeechAt = this.now();
                     // No expression on this line: an eye emoji for something Jibo names (pizza, rain, a dog),
                     // at that word. Without one, speech's own keyword emoji may show, unless one was just shown (D98).
