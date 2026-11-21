@@ -12,6 +12,12 @@ const ConversationLog = require(path.join(source, 'noggin/lib/conversation-log.j
 const temp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'noggin-settings-'));
 const KEY = 'sk-test-0123456789abcdefghij';
 
+test('transcription: gpt-transcribe is the default, and the usage tab counts it as transcription', () => {
+    assert.equal(settings.DEFAULTS.transcribeModel, 'gpt-transcribe');
+    const usage = require(path.join(source, 'noggin/lib/usage.js'));
+    assert.equal(usage.featureOf('gpt-transcribe', settings.DEFAULTS), 'transcription');
+});
+
 test('schema: every field has a key, type, tab, group and label, and its default passes its own check', () => {
     const keys = new Set();
     for (const field of settings.SCHEMA) {

@@ -31,8 +31,9 @@ const SCHEMA = [
         help: 'Change only for a compatible proxy.', advanced: true},
     {key: 'realtimeModel', type: 'text', pattern: MODEL, default: 'gpt-realtime-2.1', tab: 'brain', group: 'Models', label: 'Conversation model',
         help: 'Hears Jibo\'s microphone and writes what he says.', suggestions: ['gpt-realtime-2.1', 'gpt-realtime-2.1-mini', 'gpt-realtime']},
-    {key: 'transcribeModel', type: 'text', pattern: MODEL, default: 'gpt-4o-mini-transcribe', tab: 'brain', group: 'Models', label: 'Transcription model',
-        help: 'Turns your words into text for the log and Jibo\'s skills.', suggestions: ['gpt-4o-mini-transcribe', 'gpt-4o-transcribe']},
+    // The 4o transcription models are deprecated; gpt-transcribe replaces them (D108).
+    {key: 'transcribeModel', type: 'text', pattern: MODEL, default: 'gpt-transcribe', tab: 'brain', group: 'Models', label: 'Transcription model',
+        help: 'Turns your words into text for the log and Jibo\'s skills.', suggestions: ['gpt-transcribe', 'gpt-4o-mini-transcribe']},
     {key: 'turnDetection', type: 'enum', default: 'semantic_vad', tab: 'brain', group: 'Models', label: 'When you are done talking',
         help: 'Semantic waits for the end of a thought; silence waits for a pause.',
         options: [{value: 'semantic_vad', label: 'Semantic (end of a thought)'}, {value: 'server_vad', label: 'Silence (a pause)'}]},
