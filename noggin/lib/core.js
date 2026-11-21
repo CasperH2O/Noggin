@@ -249,6 +249,18 @@ function levelDb(samples) {
 
 // The transcript is for the log and stop phrases; the hint stops "Jibo" becoming "Thibaut".
 const TRANSCRIBE_HINT = 'A person talking to Jibo, a small social robot.';
+// The languages the settings page offers as hints, by their ISO 639-1 code.
+const LANGUAGES = [{value: 'en', label: 'English'}, {value: 'nl', label: 'Dutch'}, {value: 'de', label: 'German'},
+    {value: 'fr', label: 'French'}, {value: 'es', label: 'Spanish'}, {value: 'it', label: 'Italian'}];
+// Only these models take a `languages` list; others get no hint rather than a refused session (D109).
+const LANGUAGE_MODELS = /^gpt-(live-)?transcribe(-|$)/;
+function transcription(config) {
+    const out = {model: config.transcribeModel, prompt: TRANSCRIBE_HINT};
+    const known = LANGUAGES.map(l => l.value);
+    const wanted = Array.isArray(config.transcribeLanguages) ? config.transcribeLanguages.filter(code => known.indexOf(code) >= 0) : [];
+    if (wanted.length && LANGUAGE_MODELS.test(String(config.transcribeModel || ''))) out.languages = wanted;
+    return out;
+}
 // session.update for text-out voice turns (GA realtime schema).
 // `tools`: the function tools Noggin offers (lib/actions.js), or none.
 function sessionUpdate(config, instructions, tools) {
@@ -258,7 +270,7 @@ function sessionUpdate(config, instructions, tools) {
         instructions: instructions,
         audio: {input: {
             format: {type: 'audio/pcm', rate: RATE},
-            transcription: {model: config.transcribeModel, prompt: TRANSCRIBE_HINT},
+            transcription: transcription(config),
             turn_detection: {type: config.turnDetection}
         }}
     };
@@ -489,5 +501,5 @@ function isStop(text) {
     return STOP.indexOf(normalized) >= 0;
 }
 
-module.exports = {RATE, MOODS, DANCE, EXTRA, CATALOG, EMOJI, DANCES, animFor, pickAnimation, danceChoice, danceStyles, pickDance, danceName, danceLine, danceAnnounce, moodDescription, emojiFor, emojiEsml, toPcm24, base64, levelDb, sessionUpdate, textDelta, firstSentenceEnd, speechText, chunks, esml, animEsml,
+module.exports = {RATE, MOODS, DANCE, EXTRA, CATALOG, EMOJI, DANCES, animFor, pickAnimation, danceChoice, danceStyles, pickDance, danceName, danceLine, danceAnnounce, moodDescription, emojiFor, emojiEsml, toPcm24, base64, levelDb, LANGUAGES, transcription, sessionUpdate, textDelta, firstSentenceEnd, speechText, chunks, esml, animEsml,
     choices, decisionsRequest, decisionLabel, classifierRequest, classifierLabel, classifierSize, ExpressionPolicy, personaText, voiceSetup, instructions, resumeNote, reconnectNote, isStop};

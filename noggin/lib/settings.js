@@ -34,6 +34,9 @@ const SCHEMA = [
     // The 4o transcription models are deprecated; gpt-transcribe replaces them (D108).
     {key: 'transcribeModel', type: 'text', pattern: MODEL, default: 'gpt-transcribe', tab: 'brain', group: 'Models', label: 'Transcription model',
         help: 'Turns your words into text for the log and Jibo\'s skills.', suggestions: ['gpt-transcribe', 'gpt-4o-mini-transcribe']},
+    {key: 'transcribeLanguages', type: 'set', default: ['en', 'nl'], tab: 'brain', group: 'Models', label: 'Languages spoken',
+        help: 'Tells the transcription model which languages to expect, so it does not mishear one as another. None: it guesses. Only gpt-transcribe and gpt-live-transcribe use this.',
+        options: core.LANGUAGES},
     {key: 'turnDetection', type: 'enum', default: 'semantic_vad', tab: 'brain', group: 'Models', label: 'When you are done talking',
         help: 'Semantic waits for the end of a thought; silence waits for a pause.',
         options: [{value: 'semantic_vad', label: 'Semantic (end of a thought)'}, {value: 'server_vad', label: 'Silence (a pause)'}]},

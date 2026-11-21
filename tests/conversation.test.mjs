@@ -536,6 +536,19 @@ test('the same expression may come back after the repeat window, and the thinkin
     assert.equal(core.sessionUpdate({transcribeModel: 'x', turnDetection: 'semantic_vad'}, 'i').session.audio.input.transcription.prompt.includes('Jibo'), true);
 });
 
+test('transcription languages: sent only to models that take them, only known codes, none when empty', () => {
+    const sent = config => core.sessionUpdate(Object.assign({turnDetection: 'semantic_vad'}, config), 'i').session.audio.input.transcription;
+    assert.deepEqual(sent({transcribeModel: 'gpt-transcribe', transcribeLanguages: ['en', 'nl']}).languages, ['en', 'nl']);
+    assert.deepEqual(sent({transcribeModel: 'gpt-live-transcribe', transcribeLanguages: ['nl']}).languages, ['nl']);
+    assert.deepEqual(sent({transcribeModel: 'gpt-transcribe-2026-11-01', transcribeLanguages: ['en', 'xx']}).languages, ['en'], 'a snapshot too; unknown codes dropped');
+    for (const config of [{transcribeModel: 'gpt-4o-mini-transcribe', transcribeLanguages: ['en', 'nl']}, {transcribeModel: 'gpt-transcribe', transcribeLanguages: []},
+        {transcribeModel: 'gpt-transcribe'}, {transcribeModel: 'gpt-transcribe', transcribeLanguages: 'en'}, {transcribeModel: 'gpt-transcribex', transcribeLanguages: ['en']}]) {
+        const t = sent(config);
+        assert.equal('languages' in t, false, JSON.stringify(config));
+        assert.equal(t.model, config.transcribeModel); assert.ok(t.prompt.includes('Jibo'));
+    }
+});
+
 test('Decisions API: request shape, answer parsing, confidence threshold', () => {
     const line = core.decisionsRequest('gpt-6-luna', 'I got a puppy', 'A puppy, how lovely!', 'line');
     assert.equal(line.model, 'gpt-6-luna');

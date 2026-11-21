@@ -179,7 +179,8 @@ class Conversation {
         this.done = new Promise(resolve => { this.finish = resolve; });
         this.active = true; this.state = 'starting'; this.mark('talk_open');
         const jibo = this.jibo, config = this.config;
-        this.log.write({kind: 'session', version: this.version || undefined, realtimeModel: config.realtimeModel, transcribeModel: config.transcribeModel, turnDetection: config.turnDetection,
+        this.log.write({kind: 'session', version: this.version || undefined, realtimeModel: config.realtimeModel, transcribeModel: config.transcribeModel,
+            transcribeLanguages: core.transcription(config).languages || null, turnDetection: config.turnDetection,
             classifierModel: config.expressions ? config.classifierModel : null, actions: !!this.acts, resumed: this.resume ? this.resume.tool || true : undefined,
             expressionPlay: this.mode(), lab: config.lab || undefined, persona: this.persona || undefined,
             timing: {thinkingEye: config.thinkingEye !== false, expressionWaitMs: config.expressionWaitMs, expressionLeadMs: config.expressionLeadMs, echoTailMs: config.echoTailMs}});

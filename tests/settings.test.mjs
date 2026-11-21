@@ -18,6 +18,14 @@ test('transcription: gpt-transcribe is the default, and the usage tab counts it 
     assert.equal(usage.featureOf('gpt-transcribe', settings.DEFAULTS), 'transcription');
 });
 
+test('transcription languages: English and Dutch by default, known codes only, in a fixed order', () => {
+    assert.deepEqual(settings.DEFAULTS.transcribeLanguages, ['en', 'nl']);
+    const field = settings.SCHEMA.find(f => f.key === 'transcribeLanguages');
+    assert.deepEqual(settings.check(field, ['nl', 'en']).value, ['en', 'nl']);
+    assert.deepEqual(settings.check(field, []).value, [], 'none: the model guesses');
+    assert.match(settings.check(field, ['nl', 'xx']).error, /Unknown: xx/);
+});
+
 test('schema: every field has a key, type, tab, group and label, and its default passes its own check', () => {
     const keys = new Set();
     for (const field of settings.SCHEMA) {
