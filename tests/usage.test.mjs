@@ -261,6 +261,24 @@ test('bills: per day, caching savings and the other conversation model at the ac
     assert.equal(unknown.whatIf.would, null, 'the mini was never used, so its price is unknown');
 });
 
+test('bills: per-minute transcription counts audio seconds, not tokens, next to a token model of the same feature (D110)', () => {
+    // The shape OpenAI's costs API gives a per-minute model: the bare model name, quantity in seconds.
+    const seconds = (item, quantity, value, key = 'key_jibo') => ({line_item: item, quantity, quantity_unit: 'duration_seconds', api_key_id: key, project_id: 'proj_a', amount: {currency: 'usd', value: String(value)}});
+    const costs = [{start_time: sec(dayStart(1)), results: [
+        seconds('gpt-transcribe', 387, 0.029025), seconds('gpt-live-transcribe', 238, 0.0674333331), seconds('gpt-transcribe', 600, 0.045, 'key_other'),
+        cost('gpt-4o-mini-transcribe-2025-12-15 audio, input', 2809, 0.008427), cost('gpt-4o-mini-transcribe-2025-12-15 text, output', 912, 0.00456)]}];
+    const view = usage.build({now: NOW, config: Object.assign({}, CONFIG, {transcribeModel: 'gpt-transcribe'}), key: {id: 'key_jibo'}, costs, hours: [], local: () => ({})});
+    const model = name => view.models.find(m => m.model === name);
+    assert.deepEqual([model('gpt-transcribe').seconds, model('gpt-transcribe').tokens, model('gpt-transcribe').cost], [387, 0, 0.029], 'Jibo\'s key only');
+    assert.equal(model('gpt-transcribe').feature, 'transcription');
+    assert.equal(model('gpt-live-transcribe').seconds, 238);
+    assert.deepEqual([model('gpt-4o-mini-transcribe').seconds, model('gpt-4o-mini-transcribe').tokens], [0, 3721]);
+    const f = view.features.find(x => x.feature === 'transcription');
+    assert.deepEqual([f.seconds, f.tokens, f.cost], [625, 3721, 0.1094]);
+    assert.equal(view.days[5].tokens, 3721, 'seconds never count as tokens per day');
+    assert.equal(view.caching.cachedTokens, 0);
+});
+
 test('the hour grid: requests by Jibo\'s local day and hour', () => {
     const local = ms => { const d = new Date(ms + 3600000); return {year: d.getUTCFullYear(), monthNum: d.getUTCMonth(), date: d.getUTCDate(), hour: d.getUTCHours()}; };
     const grid = usage.hourGrid([

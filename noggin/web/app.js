@@ -543,6 +543,13 @@
         if (n >= 1e3) return (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + 'k';
         return String(Math.round(n));
     }
+    // What a model or feature used: tokens, audio minutes for per-minute models, or both.
+    function amountUsed(x) {
+        const s = x.seconds || 0;
+        const audio = s < 60 ? Math.round(s) + ' s of audio' : (s < 600 ? (s / 60).toFixed(1) : String(Math.round(s / 60))) + ' min of audio';
+        if (s > 0 && !x.tokens) return audio;
+        return tokens(x.tokens) + ' tokens' + (s > 0 ? ' · ' + audio : '');
+    }
     function dayName(day, today) {
         if (day === today) return 'Today';
         const d = new Date(day + 'T12:00:00Z');
@@ -715,13 +722,13 @@
         const total = u.features.reduce((sum, f) => sum + f.cost, 0) || 1;
         out.push(el('h2', {class: 'section-header', text: 'What it was spent on'}), el('div', {class: 'setting-block rows'}, u.features.length ? u.features.map(f => el('div', {class: 'usage-row'}, [
             el('div', {class: 'usage-name', text: f.label}), el('div', {class: 'usage-money', text: money(f.cost, c)}),
-            el('div', {class: 'usage-use', text: f.use}), el('div', {class: 'usage-tokens', text: tokens(f.tokens) + ' tokens'}),
+            el('div', {class: 'usage-use', text: f.use}), el('div', {class: 'usage-tokens', text: amountUsed(f)}),
             el('div', {class: 'share'}, [el('div', {style: {width: (f.cost / total * 100).toFixed(1) + '%'}})])])) : [el('div', {class: 'empty', text: 'Nothing spent in the last 7 days.'})]));
 
         out.push(el('h2', {class: 'section-header', text: 'Models'}), el('div', {class: 'setting-block rows'}, u.models.length ? u.models.map(m => el('div', {class: 'usage-row'}, [
             el('div', {class: 'usage-name'}, [m.model, el('span', {class: 'chip', text: m.label})]), el('div', {class: 'usage-money', text: money(m.cost, c)}),
             el('div', {class: 'usage-use', text: m.use}),
-            el('div', {class: 'usage-tokens', text: tokens(m.tokens) + ' tokens', title: tokens(m.input) + ' in · ' + tokens(m.cached) + ' from cache · ' + tokens(m.output) + ' out'})])) : [el('div', {class: 'empty', text: 'No models used in the last 7 days.'})]));
+            el('div', {class: 'usage-tokens', text: amountUsed(m), title: m.tokens ? tokens(m.input) + ' in · ' + tokens(m.cached) + ' from cache · ' + tokens(m.output) + ' out' : null})])) : [el('div', {class: 'empty', text: 'No models used in the last 7 days.'})]));
 
         const notes = [];
         if (u.caching.cachedTokens) notes.push(el('div', {class: 'note-row'}, [el('div', {class: 'usage-name', text: 'Caching saved about ' + money(u.caching.saved, c)}),

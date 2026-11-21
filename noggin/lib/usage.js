@@ -149,6 +149,8 @@ function build(input) {
         (bucket.results || []).forEach(r => {
             const cost = amount(r), item = lineItem(r.line_item), mine = r.api_key_id === jiboKey;
             const tokens = r.quantity_unit === 'tokens' && isFinite(r.quantity) ? Number(r.quantity) : 0;
+            // Per-minute models (gpt-transcribe) bill audio seconds, not tokens (D110).
+            const seconds = r.quantity_unit === 'duration_seconds' && isFinite(r.quantity) ? Number(r.quantity) : 0;
             if (counts(r)) countedByDay[day] = (countedByDay[day] || 0) + cost;
             if (day >= monthStart) { month.account += cost; if (counts(r)) month.counted += cost; if (mine) month.jibo += cost; }
             // Prices from every day fetched, any key: the account's real prices (D67).
@@ -161,8 +163,8 @@ function build(input) {
             if (!mine) { week.other += cost; return; }
             week.jibo += cost;
             if (perDay[day]) { perDay[day].cost += cost; perDay[day].tokens += tokens; }
-            const m = models[item.model] || (models[item.model] = {model: item.model, cost: 0, tokens: 0, input: 0, cached: 0, output: 0, items: {}});
-            m.cost += cost; m.tokens += tokens;
+            const m = models[item.model] || (models[item.model] = {model: item.model, cost: 0, tokens: 0, seconds: 0, input: 0, cached: 0, output: 0, items: {}});
+            m.cost += cost; m.tokens += tokens; m.seconds += seconds;
             const k = tokenKind(item.kind);
             if (k === 'input' || k === 'cacheWrite') m.input += tokens; else if (k === 'cached') m.cached += tokens; else if (k === 'output') m.output += tokens;
             const key = (item.modality || '') + '|' + item.kind;
@@ -205,14 +207,14 @@ function build(input) {
     const modelList = Object.keys(models).map(name => {
         const m = models[name], feature = featureOf(name, config);
         return {model: name, feature: feature, label: FEATURES[feature].label, use: FEATURES[feature].use, cost: round(m.cost, 4),
-            tokens: m.tokens, input: m.input, cached: m.cached, output: m.output};
+            tokens: m.tokens, seconds: round(m.seconds, 1), input: m.input, cached: m.cached, output: m.output};
     }).sort((a, b) => b.cost - a.cost || b.tokens - a.tokens);
     const features = {};
     modelList.forEach(m => {
-        const f = features[m.feature] || (features[m.feature] = {feature: m.feature, label: m.label, use: m.use, cost: 0, tokens: 0, models: []});
-        f.cost += m.cost; f.tokens += m.tokens; f.models.push(m.model);
+        const f = features[m.feature] || (features[m.feature] = {feature: m.feature, label: m.label, use: m.use, cost: 0, tokens: 0, seconds: 0, models: []});
+        f.cost += m.cost; f.tokens += m.tokens; f.seconds += m.seconds; f.models.push(m.model);
     });
-    const featureList = Object.keys(features).map(k => Object.assign(features[k], {cost: round(features[k].cost, 4)})).sort((a, b) => b.cost - a.cost);
+    const featureList = Object.keys(features).map(k => Object.assign(features[k], {cost: round(features[k].cost, 4), seconds: round(features[k].seconds, 1)})).sort((a, b) => b.cost - a.cost);
 
     // Budget and forecast (D65): what the limit counts this month, plus the average of the 7 full
     // days before today for each day after today (today counts with what is billed so far).
