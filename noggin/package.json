@@ -1,6 +1,6 @@
 {
   "name": "@be/noggin",
-  "version": "0.5.14",
+  "version": "0.5.16",
   "description": "Noggin: Jibo's AI brain. A voice conversation in Jibo's own voice, with his expressions and skills, and a settings page on the local network.",
   "license": "MIT",
   "main": "index.js",

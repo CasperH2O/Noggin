@@ -545,10 +545,15 @@
     }
     // What a model or feature used: tokens, audio minutes for per-minute models, or both.
     function amountUsed(x) {
-        const s = x.seconds || 0;
-        const audio = s < 60 ? Math.round(s) + ' s of audio' : (s < 600 ? (s / 60).toFixed(1) : String(Math.round(s / 60))) + ' min of audio';
-        if (s > 0 && !x.tokens) return audio;
-        return tokens(x.tokens) + ' tokens' + (s > 0 ? ' · ' + audio : '');
+        const s = Math.round(x.seconds || 0);
+        if (!s) return tokens(x.tokens) + ' tokens';
+        const audio = audioTime(s) + ' of audio';
+        return x.tokens ? tokens(x.tokens) + ' tokens · ' + audio : audio;
+    }
+    function audioTime(seconds) {
+        if (seconds < 60) return seconds + ' s';
+        if (seconds < 600) return (seconds / 60).toFixed(1) + ' min';
+        return Math.round(seconds / 60) + ' min';
     }
     function dayName(day, today) {
         if (day === today) return 'Today';

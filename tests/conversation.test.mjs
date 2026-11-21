@@ -2174,11 +2174,20 @@ test('a notice or trouble emoji asks for a hold of about the line\'s length, bet
     h.talk.close();
 });
 
-test('the session entry names the skill version that wrote the log', async () => {
+test('the session entry names the skill version that wrote the log, and the transcription languages sent', async () => {
     const h = harness({version: '9.8.7'});
     h.talk.open(); await untilListening(h);
     assert.equal(h.logs.find(e => e.kind === 'session').version, '9.8.7');
     h.talk.close();
+    const languages = async config => {
+        const t = harness({config: Object.assign({transcribeModel: 'gpt-transcribe', transcribeLanguages: ['en', 'nl']}, config)});
+        t.talk.open(); await untilListening(t);
+        const sent = t.logs.find(e => e.kind === 'session').transcribeLanguages;
+        t.talk.close();
+        return sent;
+    };
+    assert.deepEqual(await languages({}), ['en', 'nl'], 'the languages sent to the transcription model');
+    assert.equal(await languages({transcribeModel: 'gpt-4o-mini-transcribe'}), null, 'none for a model that takes no list');
     const bare = harness();
     bare.talk.open(); await untilListening(bare);
     assert.ok(!('version' in JSON.parse(JSON.stringify(bare.logs.find(e => e.kind === 'session')))), 'left out when unknown');

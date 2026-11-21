@@ -250,8 +250,7 @@ function levelDb(samples) {
 // The transcript is for the log and stop phrases; the hint stops "Jibo" becoming "Thibaut".
 const TRANSCRIBE_HINT = 'A person talking to Jibo, a small social robot.';
 // The languages the settings page offers as hints, by their ISO 639-1 code.
-const LANGUAGES = [{value: 'en', label: 'English'}, {value: 'nl', label: 'Dutch'}, {value: 'de', label: 'German'},
-    {value: 'fr', label: 'French'}, {value: 'es', label: 'Spanish'}, {value: 'it', label: 'Italian'}];
+const LANGUAGES = [{value: 'en', label: 'English'}, {value: 'nl', label: 'Dutch'}];
 // Only these models take a `languages` list; others get no hint rather than a refused session (D109).
 const LANGUAGE_MODELS = /^gpt-(live-)?transcribe(-|$)/;
 function transcription(config) {
