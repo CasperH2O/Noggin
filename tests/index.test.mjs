@@ -51,3 +51,19 @@ test('review: closed while Jibo says the line, no setup screen appears afterward
     assert.equal(created.length, 0);
     assert.ok(!s.screen);
 });
+
+test('opened by "Hey Jibo" through background.js: the conversation gets when it was heard (D132)', async () => {
+    const calls = [];
+    const s = skill();
+    s.talk = (...args) => { calls.push(args); return Promise.resolve('test'); };
+    s.exit = () => {};
+    s.open({nlu: {intent: 'background', entities: {reason: 'hey_jibo', heardAt: Date.now() - 400}}});
+    s.open({nlu: {intent: 'menu'}});
+    s.open();
+    await sleep(20);
+    assert.equal(calls.length, 3);
+    assert.ok(calls[0][4] && typeof calls[0][4].heardAt === 'number');
+    assert.ok(calls[0][3].since_hey_jibo_ms >= 400, 'in the startup log');
+    assert.equal(calls[1][4], null);
+    assert.equal(calls[2][4], null);
+});

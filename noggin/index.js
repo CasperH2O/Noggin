@@ -13,7 +13,7 @@ const settings = require('./lib/settings'), Conversation = require('./lib/contro
 const openai = require('./lib/openai'), ttsText = require('./lib/tts-text'), realtime = require('./lib/realtime-session'), ConversationLog = require('./lib/conversation-log');
 const actions = require('./lib/actions'), comeback = require('./lib/comeback'), createLog = require('./lib/log');
 const memory = require('./lib/memory'), recap = require('./lib/recap'), trouble = require('./lib/trouble'), budget = require('./lib/budget');
-const SetupScreen = require('./lib/setup-screen'), ExpressionPlayer = require('./lib/expression');
+const SetupScreen = require('./lib/setup-screen'), ExpressionPlayer = require('./lib/expression'), heyJibo = require('./lib/hey-jibo');
 const fs = require('fs');
 const OWN = require('./package.json').name, VERSION = require('./package.json').version;
 const RESUME_MS = 15000;
@@ -27,7 +27,8 @@ const cloudTurn = require('./lib/cloud-turn').create(jibo, () => require('jibo-e
 function stopWatching() { if (watcher) { const w = watcher; watcher = null; w.cancel(); } }
 
 class Noggin extends BeSkill {
-    open() {
+    // result: what opened the skill; "Hey Jibo" through background.js is recognised (D132).
+    open(result) {
         const generation = this.generation = (this.generation || 0) + 1;
         const current = () => generation === this.generation;
         const log = this.tagged = this.tagged || createLog(this.log);
@@ -38,7 +39,9 @@ class Noggin extends BeSkill {
         resume = null; stopWatching();
         const startup = {};
         if (back) startup.since_comeback_ms = openedAt - back.at;
-        Promise.resolve().then(() => this.talk(settings.dataDir(), back, openedAt, startup)).then(reason => {
+        const hey = heyJibo.fromResult(result);
+        if (hey) startup.since_hey_jibo_ms = openedAt - hey.heardAt;
+        Promise.resolve().then(() => this.talk(settings.dataDir(), back, openedAt, startup, hey)).then(reason => {
             if (current()) log.info('conversation ended: ' + reason);
         }, error => {
             if (current()) log.error('conversation failed: ' + (error && error.stack || error));
@@ -65,7 +68,8 @@ class Noggin extends BeSkill {
         });
         return Promise.race([spoken, late]).then(() => clearTimeout(timer));
     }
-    talk(dataDir, back, openedAt, startup) {
+    // hey: {heardAt} when "Hey Jibo" opened Noggin (lib/hey-jibo.js), else null.
+    talk(dataDir, back, openedAt, startup, hey) {
         const generation = this.generation;
         let config;
         try { config = settings.read(dataDir); }
@@ -106,6 +110,7 @@ class Noggin extends BeSkill {
                 memory: config.memory ? args => memory.tool(dataDir, args, memory.dayOf(actions.localTime(jibo))) : null
             } : null,
             resume: back,
+            heyJibo: hey || null,
             openedAt: openedAt,
             startup: startup,
             diagnose: () => trouble.diagnose(config, openai.asker(config), {stopped: () => this.session !== session}),

@@ -14,7 +14,7 @@
 const catalog = require('./catalog'), ttsText = require('./tts-text'), realtime = require('./realtime-session');
 const actions = require('./actions'), trouble = require('./trouble'), ExpressionPlayer = require('./expression');
 const delay = require('./http').delay;
-const AudioClock = require('./audio-clock');
+const AudioClock = require('./audio-clock'), heyJibo = require('./hey-jibo');
 // Conversation's methods, by topic; mixed into the class below.
 const micMethods = require('./conversation-mic'), lineMethods = require('./conversation-lines'), toolMethods = require('./conversation-tools');
 
@@ -31,6 +31,7 @@ class Conversation {
     // deps: {jibo, config, instructions, persona: {edited, chars, facts} (for the log), connect(), mic, classify(personSaid, jiboSays), log, now(),
     //        actions: {redirect(pkg, options), cloud(phrase), handover(state), handoverFailed(), readClock(), setVolume(args), installed(pkg), localTime(), facts()} or null,
     //        resume: {pairs, tool, args, said} when coming back after a handover,
+    //        heyJibo: {heardAt} when "Hey Jibo" opened Noggin (lib/hey-jibo.js),
     //        openedAt: when the skill's open() began (Date.now()), startup: facts for the startup log,
     //        diagnose() -> {cause, detail} after an OpenAI failure (lib/trouble.js), notice: {text, emoji, said()} after the greeting,
     //        version: the skill's version for the session log entry (optional)}
@@ -46,6 +47,7 @@ class Conversation {
         this.rt = null; this.unwatch = []; this.speechChain = Promise.resolve(); this.speaking = false;
         this.policy = new catalog.ExpressionPolicy(this.config.expressionGapMs);
         this.acts = deps.actions || null; this.resume = deps.resume || null; this.pairs = []; this.handover = null;
+        this.heyJibo = deps.heyJibo || null;
         // Startup timing: ms since the skill's open() for each step, logged once as `startup`
         // when Jibo first listens (or with the failure, if he never gets there).
         this.t0 = typeof deps.openedAt === 'number' ? deps.openedAt : this.now();
@@ -101,7 +103,15 @@ class Conversation {
         const js = jibo.jetstream;
         if (js && js.events) {
             this.watch(js.events.skillSwitch, () => this.leave('skill_switch'));
-            this.watch(js.events.globalTurnStarted, () => this.leave('global_turn'));
+            this.watch(js.events.globalTurnStarted, () => {
+                // The turn of the "Hey Jibo" that opened Noggin, cancelled by background.js: once only (D132).
+                if (heyJibo.ownTurn(this.heyJibo, Date.now())) {
+                    this.heyJibo = null;
+                    this.log.write({kind: 'hey_jibo_turn', at: this.since()});
+                    return;
+                }
+                this.leave('global_turn');
+            });
         }
         const eyeWatch = this.eyeWatch = ExpressionPlayer.watchEye(jibo.face && jibo.face.eye);
         this.unwatch.push(() => eyeWatch.stop());

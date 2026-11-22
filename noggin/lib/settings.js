@@ -61,6 +61,9 @@ const SCHEMA = [
         help: 'Smile is quick and eye only.', options: greetingExpressions},
     {key: 'comebackLine', type: 'text', max: 200, empty: true, default: 'Anything else?', tab: 'behaviour', group: 'Conversation', label: 'Coming back',
         help: 'Said when Noggin comes back after another skill. Empty: the model says something.'},
+    // Opening on the hotword (lib/hey-jibo.js, D132).
+    {key: 'heyJibo', type: 'bool', default: false, tab: 'behaviour', group: 'Conversation', label: 'Open on "Hey Jibo"',
+        help: 'When Jibo is idle, "Hey Jibo" opens Noggin instead of Jibo\'s own listening, so everything you ask goes through Noggin. Words said right after "Hey Jibo" are not heard: wait until his ring turns blue. Needs the API key.'},
     {key: 'silenceSeconds', type: 'number', min: 5, max: 3600, unit: 's', default: 60, tab: 'behaviour', group: 'Conversation', label: 'End after silence',
         help: 'The conversation ends after this many seconds of quiet.'},
     {key: 'expressions', type: 'bool', default: true, tab: 'behaviour', group: 'Expressions', label: 'Expressions',

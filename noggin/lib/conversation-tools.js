@@ -6,6 +6,7 @@
 'use strict';
 const catalog = require('./catalog'), ttsText = require('./tts-text'), actions = require('./actions');
 const delay = require('./http').delay;
+const heyJibo = require('./hey-jibo');
 
 const MAX_ROUNDS = 2;        // tool rounds in a row before the model must answer without one
 const RECENT_DANCES = 3;     // no dance again within this many dances (unless asked for "again")
@@ -131,6 +132,8 @@ const methods = {
     // switches to @be/nimbus, which speaks the answer.
     handOver(turn, handover, outputs, round) {
         const plan = handover.plan, call = handover.call, acts = this.acts, cloud = plan.kind === 'cloud';
+        // From here on a global turn is this handover's, never the opening "Hey Jibo"'s (D132).
+        this.heyJibo = null; heyJibo.release();
         const state = this.handover = {tool: call.name, target: plan.target, reason: plan.comeback ? 'handover' : 'leaves'};
         this.state = 'handover'; this.gate = false; this.busyRing();
         this.log.write({kind: 'handover', turn: turn.n, tool: call.name, target: plan.target, comeback: plan.comeback, phrase: cloud ? plan.phrase : undefined});

@@ -66,6 +66,14 @@ On the robot: BEacon, Store, Upload ZIP, and choose `Noggin.zip` from a release.
   `background.js` reads the Usage tab's numbers 2 minutes after start and then every 12 hours,
   and keeps the answer in memory on the shared `global` object. When at most `budgetWarnPercent`
   (10%) of the limit is left, the next conversation says so after the greeting, once a day.
+- **Open on "Hey Jibo"** (`noggin/lib/hey-jibo.js`, setting `heyJibo`, off by default). `background.js`
+  listens to Jibo's `hjHeard` event. With the setting on, while Jibo is idle and Noggin is closed, it
+  opens Noggin through BEam's background `api.open()` and ends the cloud turn that "Hey Jibo" started
+  (`jibo.jetstream.cancelAnyTurn()`, again if that turn only starts afterwards), so its result cannot
+  switch Noggin away. The conversation ignores the start of that one turn; a handover releases the
+  claim (`global.nogginHeyJibo`), so Noggin's own cloud turns are never cancelled. Only with an API
+  key saved. Words said right after "Hey Jibo" are not heard. The simulator cancels turns
+  differently, so check this on the robot.
 
 ## Data on the robot
 
@@ -123,7 +131,7 @@ The tests and tools run on a current Node.
 | `manifest.json`, `icon.png`, `banner.png` | the store entry (icon 330x300, banner 1600x900) |
 | `store/README.md` | the store text, shipped as the ZIP's README.md |
 | `noggin/index.js` | the skill: opening it starts a conversation; coming back after another skill |
-| `noggin/background.js` | starts and stops the settings page, the memory recap and the budget check with BEam |
+| `noggin/background.js` | starts and stops the settings page, the memory recap, the budget check and the "Hey Jibo" watch with BEam |
 | **Conversation** | |
 | `noggin/lib/controller.js` | one conversation: start, the realtime events, a turn's flow, failures and close |
 | `noggin/lib/conversation-lines.js` | what Jibo says: lines, their expressions and emoji, the speak itself |
@@ -151,6 +159,7 @@ The tests and tools run on a current Node.
 | `noggin/lib/describe.js` | Describe with AI: a line on what an extra app does |
 | `noggin/lib/usage.js` | the Usage tab: the read-only check, Jibo's key, costs, usage and limits from OpenAI |
 | `noggin/lib/budget.js` | the budget check in the background and the heads-up |
+| `noggin/lib/hey-jibo.js` | "Hey Jibo" opens Noggin: the hotword watch and cancelling that hotword's cloud turn |
 | **When something is wrong** | |
 | `noggin/lib/trouble.js` | what went wrong when Noggin cannot talk, and how Jibo says it |
 | `noggin/lib/setup-screen.js` | the QR code screen to the settings page |

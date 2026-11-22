@@ -176,7 +176,7 @@ function harness(over = {}) {
     const classify = over.classify || ((person, line) => Promise.resolve({label: /dog|puppy/i.test(line) ? 'happy' : 'none', ms: 5}));
     const talk = new Conversation({jibo, config, instructions: 'be Jibo', connect, classify, diagnose: over.diagnose, notice: over.notice,
         mic: over.mic || {start: f => { onBlock = f; starts++; return Promise.resolve(); }, stop: () => { onBlock = null; }, label: 'arecord default', rate: 48000, kind: 'arecord'},
-        log: {write: e => logs.push(e)}, actions: over.actions || null, resume: over.resume || null, openedAt: over.openedAt, startup: over.startup,
+        log: {write: e => logs.push(e)}, actions: over.actions || null, resume: over.resume || null, heyJibo: over.heyJibo || null, openedAt: over.openedAt, startup: over.startup,
         random: over.random || (() => 0.5), version: over.version});
     // One known animation per mood (the catalogue's random pick has its own tests).
     if (!over.realChoose) talk.choose = label => !label || label === 'none' ? null : TEST_ANIM[label] || catalog.animFor(label);
@@ -454,6 +454,27 @@ test('privacy, swipe-like leave and skill switch end the session quietly', async
     h2.jibo.jetstream.events.skillSwitch.fire();
     assert.equal(await ended2, 'skill_switch');
     assert.equal(h2.jibo.jetstream.events.skillSwitch.count, 0, 'unwatched');
+});
+
+test('opened by "Hey Jibo": the global turn that hotword started is ignored once, the next one ends the talk (D132)', async () => {
+    const h = harness({heyJibo: {heardAt: Date.now()}});
+    const ended = h.talk.open(); await untilListening(h);
+    h.jibo.jetstream.events.globalTurnStarted.fire();
+    await sleep(20);
+    assert.equal(h.talk.state, 'listening', 'still talking');
+    assert.equal(h.logs.filter(e => e.kind === 'hey_jibo_turn').length, 1);
+    h.jibo.jetstream.events.globalTurnStarted.fire();
+    assert.equal(await ended, 'global_turn');
+});
+
+test('opened by "Hey Jibo" long ago, or from the menu: a global turn ends the talk (D132)', async () => {
+    for (const hey of [{heardAt: Date.now() - 60000}, null]) {
+        const h = harness({heyJibo: hey});
+        const ended = h.talk.open(); await untilListening(h);
+        h.jibo.jetstream.events.globalTurnStarted.fire();
+        assert.equal(await ended, 'global_turn');
+        assert.ok(!h.logs.some(e => e.kind === 'hey_jibo_turn'));
+    }
 });
 
 test('a slow classifier does not hold the first line beyond expressionWaitMs', async () => {
@@ -1945,6 +1966,23 @@ test('a cloud tool: no words first; the hotword is given back, then the cloud ge
     h.jibo.jetstream.events.globalTurnStarted.fire();   // the robot's speech service starts the cloud's turn
     assert.equal(await ended, 'handover');
     assert.equal(order.filter(x => x === 'release').length, 1, 'released once, not again on close');
+});
+
+test('review: opened by "Hey Jibo", a quick cloud tool: its turn ends Noggin as a handover, and the shared claim is released (D132)', async () => {
+    const acts = fakeActions(), asked = [];
+    const h = harness({actions: acts, config: {cloudSkills: ['weather']}, heyJibo: {heardAt: Date.now()}});
+    cloudJetstream(h);
+    acts.cloud = phrase => { asked.push(phrase); return Promise.resolve(); };
+    global.nogginHeyJibo = {claimedAt: Date.now()};
+    const ended = h.talk.open(); await untilListening(h);
+    await youSay(h, 'what is the weather?');
+    callReply(h, 'r1', '', [['weather', {}]]);
+    await until(() => asked.length === 1);
+    assert.equal(global.nogginHeyJibo.claimedAt, null, 'background.js will not cancel this turn');
+    h.jibo.jetstream.events.globalTurnStarted.fire();
+    assert.equal(await ended, 'handover');
+    assert.ok(!h.logs.some(e => e.kind === 'hey_jibo_turn'));
+    delete global.nogginHeyJibo;
 });
 
 test('a cloud tool whose hotword release never answers (the simulator) is still asked, after at most 1.5 s', async () => {
