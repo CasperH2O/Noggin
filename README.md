@@ -66,14 +66,17 @@ On the robot: BEacon, Store, Upload ZIP, and choose `Noggin.zip` from a release.
   `background.js` reads the Usage tab's numbers 2 minutes after start and then every 12 hours,
   and keeps the answer in memory on the shared `global` object. When at most `budgetWarnPercent`
   (10%) of the limit is left, the next conversation says so after the greeting, once a day.
-- **Open on "Hey Jibo"** (`noggin/lib/hey-jibo.js`, setting `heyJibo`, off by default). `background.js`
-  listens to Jibo's `hjHeard` event. With the setting on, while Jibo is idle and Noggin is closed, it
-  opens Noggin through BEam's background `api.open()` and ends the cloud turn that "Hey Jibo" started
-  (`jibo.jetstream.cancelAnyTurn()`, again if that turn only starts afterwards), so its result cannot
-  switch Noggin away. The conversation ignores the start of that one turn; a handover releases the
+- **Open on "Hey Jibo"** (`noggin/lib/hey-jibo.js`, setting `heyJibo`, off by default).
+  `background.js` listens to Jibo's `hjHeard` event. With the setting on, while Jibo is idle and
+  Noggin is closed, it opens Noggin through BEam's background `api.open()` and, 600 ms later, ends
+  the cloud turn that "Hey Jibo" started (`jibo.jetstream.cancelAnyTurn()`, again if that turn only
+  starts afterwards), so its result cannot switch Noggin away. The delay lets Jibo's own "Hey Jibo"
+  action, which restarts when Noggin opens, see the turn end; it then only turns toward the voice
+  before Noggin starts. The conversation ignores the start of that one turn; a handover releases the
   claim (`global.nogginHeyJibo`), so Noggin's own cloud turns are never cancelled. Only with an API
-  key saved. Words said right after "Hey Jibo" are not heard. The simulator cancels turns
-  differently, so check this on the robot.
+  key saved. The ring stays orange until Noggin is up (Be first finishes Jibo's own "Hey Jibo"
+  action, about two seconds); the ring colours are in `noggin/lib/ring.js`. Words said right after
+  "Hey Jibo" are not heard. The simulator cancels turns differently, so check this on the robot.
 
 ## Data on the robot
 
@@ -159,6 +162,7 @@ The tests and tools run on a current Node.
 | `noggin/lib/describe.js` | Describe with AI: a line on what an extra app does |
 | `noggin/lib/usage.js` | the Usage tab: the read-only check, Jibo's key, costs, usage and limits from OpenAI |
 | `noggin/lib/budget.js` | the budget check in the background and the heads-up |
+| `noggin/lib/ring.js` | the ring colours, shared by the conversation and the "Hey Jibo" hold |
 | `noggin/lib/hey-jibo.js` | "Hey Jibo" opens Noggin: the hotword watch and cancelling that hotword's cloud turn |
 | **When something is wrong** | |
 | `noggin/lib/trouble.js` | what went wrong when Noggin cannot talk, and how Jibo says it |

@@ -20,7 +20,7 @@ const micMethods = require('./conversation-mic'), lineMethods = require('./conve
 
 // Ring: blue while Jibo listens, orange while he thinks and speaks. Speech's hot-word glances can
 // key the ring to black, so it is re-sent after each line and every ringRefreshMs (D113).
-const LISTENING = [0, 0.45, 1], BUSY = [1, 0.55, 0], OFF = [0, 0, 0];
+const LISTENING = require('./ring').LISTENING, BUSY = require('./ring').BUSY, OFF = require('./ring').OFF;
 // The words a dropped turn carries: those it carried itself, then its own.
 function carriedText(carried) { return carried ? joinWords(carried.before, carried.own) : ''; }
 function joinWords(a, b) { return [a, b].filter(Boolean).join(' '); }

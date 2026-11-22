@@ -16,7 +16,7 @@ No key yet? Open Noggin anyway: Jibo shows a QR code on his screen that takes yo
 
 ## Talking with Jibo
 
-- Open Noggin from the menu, or switch on **Open on "Hey Jibo"** (Behaviour tab, off by default): then "Hey Jibo" opens Noggin whenever Jibo is idle, and everything you ask goes through Noggin. Say "Hey Jibo", wait for his blue ring, then talk.
+- Open Noggin from the menu, or switch on **Open on "Hey Jibo"** (Behaviour tab, off by default): then "Hey Jibo" opens Noggin whenever Jibo is idle, and everything you ask goes through Noggin. Say "Hey Jibo": his ring turns orange while Noggin starts, then blue when he listens. Then talk.
 - Jibo says hi as soon as Noggin opens. His ring is **blue** while he listens and **orange** while he thinks and talks.
 - Talk normally and wait for his answer. He does not hear you while he speaks.
 - Say **goodbye** to end, swipe down, or stay quiet for a minute.
