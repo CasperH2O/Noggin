@@ -10,13 +10,14 @@
 // back on within ORIENT_MAX_MS. The timers belong to this module, which outlives Noggin's close.
 // Node 6: ES2015 only.
 'use strict';
+const embodiedListen = require('./embodied-listen');
 
 const SETTLE_MS = 300;       // after the pretend turn's direction arrived
 const ORIENT_MAX_MS = 3000;  // back on even if it never arrives
 
-// jibo: the SDK; dialog(): jibo-embodied-dialog, loaded only when needed.
+// jibo: the SDK (its Embodied Listen holds the disableOnce flag, lib/embodied-listen.js).
 // options: {settleMs, maxMs} (tests).
-function create(jibo, dialog, options) {
+function create(jibo, options) {
     options = options || {};
     const settleMs = options.settleMs === undefined ? SETTLE_MS : options.settleMs;
     const maxMs = options.maxMs === undefined ? ORIENT_MAX_MS : options.maxMs;
@@ -78,10 +79,7 @@ function create(jibo, dialog, options) {
             orientOn('released');
             if (!held) return;
             held = false;
-            try {
-                const embodied = dialog()._embodied;
-                if (embodied && embodied.listen) embodied.listen._disableOnce = false;
-            } catch (_) {}
+            embodiedListen.clear(jibo);
         }
     };
 }

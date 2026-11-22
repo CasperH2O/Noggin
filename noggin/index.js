@@ -23,7 +23,7 @@ const SAY_MS = 20000;   // the longest a trouble or setup line may take
 const LEAVE_MS = 30000;
 // Survives the skill's close (a skill switch closes a skill, it does not destroy it).
 let resume = null, watcher = null;
-const cloudTurn = require('./lib/cloud-turn').create(jibo, () => require('jibo-embodied-dialog'));
+const cloudTurn = require('./lib/cloud-turn').create(jibo);
 function stopWatching() { if (watcher) { const w = watcher; watcher = null; w.cancel(); } }
 
 class Noggin extends BeSkill {

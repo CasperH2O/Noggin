@@ -13,6 +13,7 @@ const TURN_MS = 10000;
 // Orange (busy) and off as Jibo's idle ring. Re-sent, since the end of Jibo's own listening switches
 // the ring off; given up after RING_MAX_MS (D135).
 const BUSY = require('./ring').BUSY, OFF = require('./ring').OFF;
+const embodiedListen = require('./embodied-listen');
 const RING_MS = 400, RING_MAX_MS = 10000;
 // Jibo's own "Hey Jibo" action (turning toward the voice) holds Noggin's switch until it sees the
 // turn end. Opening Noggin restarts it about 150 ms later; a cancel before that restart is missed
@@ -68,8 +69,7 @@ function subscribe(event, handler) {
 }
 
 // jibo: Jibo's SDK; api: BEam's background api ({open, isOpen, isIdle}).
-// options: {enabled() -> bool (read at every "Hey Jibo"), log, now(), clock: {setTimeout, clearTimeout},
-//   dialog() -> the jibo-embodied-dialog module (its _embodied.listen holds the disableOnce flag)}.
+// options: {enabled() -> bool (read at every "Hey Jibo"), log, now(), clock: {setTimeout, clearTimeout}}.
 // Returns {stop()}.
 function watch(jibo, api, options) {
     const log = options.log, now = options.now || Date.now;
@@ -113,35 +113,29 @@ function watch(jibo, api, options) {
         step();
     };
     // Will this "Hey Jibo" open Noggin? Off, no key, not idle, privacy: no, and Jibo keeps all of his own.
+    // The in-memory checks come first, so with Noggin or another skill open, or Jibo busy, nothing is
+    // read from disk in front of Jibo's own handlers.
     const decide = () => {
-        let on = false;
-        try { on = !!options.enabled(); } catch (error) { log.warn('hey jibo: settings unreadable: ' + error.message); }
         // ringTimer: an earlier "Hey Jibo" is still opening Noggin.
-        return on && ringTimer === null && !api.isOpen() && idle() && !isPrivate();
-    };
-    // The flag lives in jibo-embodied-dialog's state, as lib/cloud-turn.js clears it too.
-    const listenState = () => {
-        try {
-            const embodied = options.dialog && options.dialog()._embodied;
-            return embodied && embodied.listen && '_disableOnce' in embodied.listen ? embodied.listen : null;
-        } catch (_) { return null; }
+        if (ringTimer !== null || api.isOpen() || !idle() || isPrivate()) return false;
+        try { return !!options.enabled(); } catch (error) { log.warn('hey jibo: settings unreadable: ' + error.message); return false; }
     };
     // Clearing a used flag is harmless; an unused one would swallow the next listening look
     // (a menu's voice prompt, the next "Hey Jibo" with the setting off).
     const disarm = () => {
         if (!armed) return;
         armed = false;
-        const state = listenState();
-        if (state) state._disableOnce = false;
+        embodiedListen.clear(jibo);
     };
-    // In front of Jibo's own handlers (D140): only arms when Noggin will open, and only when the
-    // flag can be cleared again.
+    // In front of Jibo's own handlers (D140): only arms when Noggin will open, when the flag can be
+    // cleared again, and when Embodied Listen rests: from a listening state the skip would jump past
+    // the step that turns his ring and listening eye off.
     const onHotwordFirst = () => {
         if (stopped) return;
         decided = decide();
         if (!decided) return;
         const listen = jibo.embodied && jibo.embodied.listen;
-        if (listenState() && listen && typeof listen.disableOnce === 'function') {
+        if (embodiedListen.resting(jibo) && listen && typeof listen.disableOnce === 'function') {
             try { listen.disableOnce(); armed = true; } catch (_) {}
         }
         // Orange first: on the first open after an install or a reboot, BEam loads Noggin inside

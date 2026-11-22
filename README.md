@@ -178,6 +178,7 @@ The tests and tools run on a current Node.
 | `noggin/lib/usage.js` | the Usage tab: the read-only check, Jibo's key, costs, usage and limits from OpenAI |
 | `noggin/lib/budget.js` | the budget check in the background and the heads-up |
 | `noggin/lib/ring.js` | the ring colours, shared by the conversation and the "Hey Jibo" hold |
+| `noggin/lib/embodied-listen.js` | Jibo's own listening look (Embodied Listen): its state and clearing `disableOnce` |
 | `noggin/lib/hey-jibo.js` | "Hey Jibo" opens Noggin: the hotword watch and cancelling that hotword's cloud turn |
 | **When something is wrong** | |
 | `noggin/lib/trouble.js` | what went wrong when Noggin cannot talk, and how Jibo says it |

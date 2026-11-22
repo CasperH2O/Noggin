@@ -270,24 +270,25 @@ function typedEvent() {
     return ev;
 }
 const BLUE = '0,0.4,1';
+// Its state sits on jibo.embodied._embodied.listen, as in the SDK (jibo.embodied is the dialog's api).
 function lookJibo(over = {}) {
     const jibo = ledJibo();
-    const state = {_disableOnce: false, skipped: 0, shown: 0};
+    const idleState = {name: 'Idle'}, engage = {name: 'Engage'};
+    const state = {_disableOnce: false, skipped: 0, shown: 0, _idle: idleState, current: over.listening ? engage : idleState};
     jibo.jetstream.events.hjHeard = typedEvent();
-    jibo.embodied = {listen: {disableOnce: () => { state._disableOnce = true; }}};
-    const dialog = {_embodied: {listen: state}};
+    jibo.embodied = {_embodied: {listen: state}, listen: {disableOnce: () => { state._disableOnce = true; }}};
     if (!over.noEmbodied) {
         jibo.jetstream.events.hjHeard.on(() => {
             if (state._disableOnce) { state._disableOnce = false; state.skipped++; return; }
             state.shown++; jibo.expression.setLEDColor([0, 0.4, 1]);
         });
     }
-    return {jibo, state, dialog};
+    return {jibo, state};
 }
 
 test('setting on: Jibo\'s own listening look is skipped, so the ring is never blue; orange comes first (D140)', () => {
-    const {jibo, state, dialog} = lookJibo(), api = slowApi(), clock = fakeClock();
-    const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock, dialog: () => dialog});
+    const {jibo, state} = lookJibo(), api = slowApi(), clock = fakeClock();
+    const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock});
     jibo.jetstream.events.hjHeard.emit();
     assert.equal(state.skipped, 1);
     assert.equal(state.shown, 0);
@@ -301,10 +302,10 @@ test('setting on: Jibo\'s own listening look is skipped, so the ring is never bl
 test('setting off, no key, not idle or privacy: nothing armed, Jibo shows his own look as always (D140)', () => {
     const cases = [{enabled: false}, {idle: false}, {privacy: true}];
     for (const c of cases) {
-        const {jibo, state, dialog} = lookJibo(), api = slowApi(), clock = fakeClock();
+        const {jibo, state} = lookJibo(), api = slowApi(), clock = fakeClock();
         if (c.idle === false) api.isIdle = () => false;
         if (c.privacy) jibo.privacyController.enabled = true;
-        const w = heyJibo.watch(jibo, api, {enabled: () => c.enabled !== false, log: fakeLog(), now: clock.now, clock, dialog: () => dialog});
+        const w = heyJibo.watch(jibo, api, {enabled: () => c.enabled !== false, log: fakeLog(), now: clock.now, clock});
         jibo.jetstream.events.hjHeard.emit();
         assert.equal(state.shown, 1, JSON.stringify(c));
         assert.equal(state.skipped, 0);
@@ -315,10 +316,10 @@ test('setting off, no key, not idle or privacy: nothing armed, Jibo shows his ow
 });
 
 test('switching the setting off again: the next "Hey Jibo" is Jibo\'s own, with his blue ring (D140)', () => {
-    const {jibo, state, dialog} = lookJibo(), clock = fakeClock();
+    const {jibo, state} = lookJibo(), clock = fakeClock();
     let on = true;
     const api = fakeApi();
-    const w = heyJibo.watch(jibo, api, {enabled: () => on, log: fakeLog(), now: clock.now, clock, dialog: () => dialog});
+    const w = heyJibo.watch(jibo, api, {enabled: () => on, log: fakeLog(), now: clock.now, clock});
     jibo.jetstream.events.hjHeard.emit();
     assert.equal(state.skipped, 1);
     api.showing = false; clock.advance(20000);
@@ -330,18 +331,40 @@ test('switching the setting off again: the next "Hey Jibo" is Jibo\'s own, with 
     w.stop();
 });
 
+test('review: Embodied Listen is still in a listening state: its look is left to it, nothing armed (D140)', () => {
+    const {jibo, state} = lookJibo({listening: true}), api = slowApi(), clock = fakeClock();
+    const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock});
+    jibo.jetstream.events.hjHeard.emit();
+    assert.equal(state.skipped, 0);
+    assert.equal(state.shown, 1, 'goes through its own HJ expression, which its Off expression ends later');
+    assert.equal(api.opened.length, 1, 'Noggin still opens');
+    w.stop();
+});
+
+test('review: with Noggin open or Jibo busy, the settings are not read in front of Jibo\'s handlers (D140)', () => {
+    let reads = 0;
+    const {jibo} = lookJibo(), api = slowApi(), clock = fakeClock();
+    api.showing = true;
+    const w = heyJibo.watch(jibo, api, {enabled: () => { reads++; return true; }, log: fakeLog(), now: clock.now, clock});
+    jibo.jetstream.events.hjHeard.emit();
+    api.showing = false; api.isIdle = () => false;
+    jibo.jetstream.events.hjHeard.emit();
+    assert.equal(reads, 0);
+    w.stop();
+});
+
 test('Jibo\'s listener did not use the flag up (not listening): it is cleared after the "Hey Jibo" (D140)', () => {
-    const {jibo, state, dialog} = lookJibo({noEmbodied: true}), api = slowApi(), clock = fakeClock();
-    const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock, dialog: () => dialog});
+    const {jibo, state} = lookJibo({noEmbodied: true}), api = slowApi(), clock = fakeClock();
+    const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock});
     jibo.jetstream.events.hjHeard.emit();
     assert.equal(state._disableOnce, false);
     w.stop();
 });
 
 test('a listener between ours throws and ends the emit: the flag is still cleared on the next tick (D140)', () => {
-    const {jibo, state, dialog} = lookJibo({noEmbodied: true}), api = slowApi(), clock = fakeClock();
+    const {jibo, state} = lookJibo({noEmbodied: true}), api = slowApi(), clock = fakeClock();
     jibo.jetstream.events.hjHeard.on(() => { throw Error('another skill'); });
-    const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock, dialog: () => dialog});
+    const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock});
     assert.throws(() => jibo.jetstream.events.hjHeard.emit());
     assert.equal(state._disableOnce, true, 'armed, and our second handler never ran');
     clock.advance(0);
@@ -350,8 +373,8 @@ test('a listener between ours throws and ends the emit: the flag is still cleare
 });
 
 test('stop(): both handlers leave Jibo\'s event (also the one in front) and nothing stays armed (D140)', () => {
-    const {jibo, state, dialog} = lookJibo(), api = slowApi(), clock = fakeClock();
-    const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock, dialog: () => dialog});
+    const {jibo, state} = lookJibo(), api = slowApi(), clock = fakeClock();
+    const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock});
     assert.equal(jibo.jetstream.events.hjHeard._events.length, 3, "Jibo's, our front one and our normal one");
     w.stop();
     assert.equal(jibo.jetstream.events.hjHeard._events.length, 1, "only Jibo's");
@@ -360,19 +383,20 @@ test('stop(): both handlers leave Jibo\'s event (also the one in front) and noth
     assert.equal(state._disableOnce, false);
 });
 
-test('without the flag\'s module, or an event without _events: nothing is armed, Noggin still opens (D140)', () => {
+test('without Embodied Listen\'s state, or an event without _events: nothing is armed, Noggin still opens (D140)', () => {
     {
         const {jibo, state} = lookJibo(), api = slowApi(), clock = fakeClock();
-        const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock, dialog: () => { throw Error('no module'); }});
+        delete jibo.embodied._embodied;   // Embodied Listen not initialised
+        const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock});
         jibo.jetstream.events.hjHeard.emit();
         assert.equal(state.shown, 1, 'Jibo shows his look; it cannot be cleared, so it is not skipped');
         assert.equal(api.opened.length, 1);
         w.stop();
     }
     {
-        const jibo = ledJibo(), api = slowApi(), clock = fakeClock(), state = {_disableOnce: false};
-        jibo.embodied = {listen: {disableOnce: () => { state._disableOnce = true; }}};
-        const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock, dialog: () => ({_embodied: {listen: state}})});
+        const jibo = ledJibo(), api = slowApi(), clock = fakeClock(), rest = {}, state = {_disableOnce: false, _idle: rest, current: rest};
+        jibo.embodied = {_embodied: {listen: state}, listen: {disableOnce: () => { state._disableOnce = true; }}};
+        const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock});
         jibo.jetstream.events.hjHeard.fire();   // emitter() has no _events: no front
         assert.equal(state._disableOnce, false);
         assert.equal(api.opened.length, 1);
