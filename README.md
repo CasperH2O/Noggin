@@ -86,8 +86,12 @@ On the robot: BEacon, Store, Upload ZIP, and choose `Noggin.zip` from a release.
   claim (`global.nogginHeyJibo`), so Noggin's own cloud turns are never cancelled. Only with an API
   key saved. The ring turns orange before the open (BEam may load Noggin inside it) and stays orange
   until Noggin is up (Be first finishes Jibo's own "Hey Jibo" action, about two seconds); the ring
-  colours are in `noggin/lib/ring.js`. Words said right after "Hey Jibo" are not heard. The
-  simulator cancels turns differently, so check this on the robot.
+  colours are in `noggin/lib/ring.js`. Jibo's own listening look for that "Hey Jibo" (blue ring,
+  listening eye) is skipped with `jibo.embodied.listen.disableOnce()`, called from a handler placed
+  in front of Jibo's own on the `hjHeard` event and only when Noggin is about to open; the flag is
+  cleared again after that "Hey Jibo", so with the setting off Jibo looks as he always does. Words
+  said right after "Hey Jibo" are not heard. The simulator cancels turns differently, so check this
+  on the robot.
 
 ## Data on the robot
 

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 // "Hey Jibo" opens Noggin (setting heyJibo, off by default, D132). Runs in background.js: when
 // Jibo hears the hotword while he is idle, Noggin opens and, shortly after, the cloud turn that
-// "Hey Jibo" started is cancelled, so its result cannot switch Noggin away. The conversation then ignores that turn's
-// start once (lib/controller.js).
-// Until Noggin is open the ring stays orange, as while the conversation is busy (D135).
+// "Hey Jibo" started is cancelled, so its result cannot switch Noggin away. The conversation then
+// ignores that turn's start once (lib/controller.js).
+// Until Noggin is open the ring stays orange, as while the conversation is busy (D135), and Jibo's
+// own listening look (blue ring, listening eye) is skipped for that "Hey Jibo" (D140).
 // Node 6: ES2015 only.
 'use strict';
 const REASON = 'hey_jibo';
@@ -50,6 +51,16 @@ function ownTurn(hey, now) {
     return age >= 0 && age < TURN_MS;
 }
 
+// Jibo's own listening look on "Hey Jibo" (Embodied Listen) turns the ring blue in its hjHeard
+// handler, registered before ours. A handler put in front of it can call listen.disableOnce() in
+// time. Jibo's typed events keep their handlers in `_events`, called in order; without it there is
+// no front, and the blue shows briefly as before (D140).
+function subscribeFirst(event, handler) {
+    if (!event || !Array.isArray(event._events)) return null;
+    event._events.unshift(handler);
+    return () => { const at = event._events.indexOf(handler); if (at >= 0) event._events.splice(at, 1); };
+}
+
 function subscribe(event, handler) {
     if (!event || typeof event.on !== 'function') return null;
     event.on(handler);
@@ -57,7 +68,8 @@ function subscribe(event, handler) {
 }
 
 // jibo: Jibo's SDK; api: BEam's background api ({open, isOpen, isIdle}).
-// options: {enabled() -> bool (read at every "Hey Jibo"), log, now(), clock: {setTimeout, clearTimeout}}.
+// options: {enabled() -> bool (read at every "Hey Jibo"), log, now(), clock: {setTimeout, clearTimeout},
+//   dialog() -> the jibo-embodied-dialog module (its _embodied.listen holds the disableOnce flag)}.
 // Returns {stop()}.
 function watch(jibo, api, options) {
     const log = options.log, now = options.now || Date.now;
@@ -65,6 +77,9 @@ function watch(jibo, api, options) {
     const clock = options.clock || {setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: id => clearTimeout(id)};
     const js = jetstream(jibo), events = js && js.events || {};
     let stopped = false, ringTimer = null, cancelTimer = null, startedEarly = false;
+    // This hotword's decision, taken once by the front handler (undefined: not taken), and whether
+    // it armed Jibo's disableOnce, which must never outlive this hotword.
+    let decided, armed = false;
     const idle = () => typeof api.isIdle === 'function' && api.isIdle();
     const isPrivate = () => !!(jibo.privacyController && jibo.privacyController.enabled);
     const ring = color => {
@@ -97,15 +112,52 @@ function watch(jibo, api, options) {
         };
         step();
     };
-    const onHotword = () => {
-        if (stopped) return;
+    // Will this "Hey Jibo" open Noggin? Off, no key, not idle, privacy: no, and Jibo keeps all of his own.
+    const decide = () => {
         let on = false;
         try { on = !!options.enabled(); } catch (error) { log.warn('hey jibo: settings unreadable: ' + error.message); }
         // ringTimer: an earlier "Hey Jibo" is still opening Noggin.
-        if (!on || ringTimer !== null || api.isOpen() || !idle() || isPrivate()) return;
-        const at = now();
+        return on && ringTimer === null && !api.isOpen() && idle() && !isPrivate();
+    };
+    // The flag lives in jibo-embodied-dialog's state, as lib/cloud-turn.js clears it too.
+    const listenState = () => {
+        try {
+            const embodied = options.dialog && options.dialog()._embodied;
+            return embodied && embodied.listen && '_disableOnce' in embodied.listen ? embodied.listen : null;
+        } catch (_) { return null; }
+    };
+    // Clearing a used flag is harmless; an unused one would swallow the next listening look
+    // (a menu's voice prompt, the next "Hey Jibo" with the setting off).
+    const disarm = () => {
+        if (!armed) return;
+        armed = false;
+        const state = listenState();
+        if (state) state._disableOnce = false;
+    };
+    // In front of Jibo's own handlers (D140): only arms when Noggin will open, and only when the
+    // flag can be cleared again.
+    const onHotwordFirst = () => {
+        if (stopped) return;
+        decided = decide();
+        if (!decided) return;
+        const listen = jibo.embodied && jibo.embodied.listen;
+        if (listenState() && listen && typeof listen.disableOnce === 'function') {
+            try { listen.disableOnce(); armed = true; } catch (_) {}
+        }
         // Orange first: on the first open after an install or a reboot, BEam loads Noggin inside
         // api.open() and nothing else runs until it returns (D139).
+        ring(BUSY);
+        // A handler that throws ends Jibo's emit before onHotword: disarm then anyway.
+        if (armed) clock.setTimeout(disarm, 0);
+    };
+    const onHotword = () => {
+        if (stopped) return;
+        // Jibo's own handlers have run: the flag is used up, or must not stay.
+        disarm();
+        const go = decided === undefined ? decide() : decided;
+        decided = undefined;
+        if (!go) return;
+        const at = now();
         ring(BUSY);
         let opened = false;
         try { opened = api.open({reason: REASON, heardAt: at}); } catch (error) { log.warn('hey jibo: open threw: ' + (error && error.message)); }
@@ -140,13 +192,13 @@ function watch(jibo, api, options) {
         log.info('hey jibo: its cloud turn ' + (cancelled ? 'cancelled' : 'could not be cancelled') + ' after ' + age + ' ms');
     };
     const onTurnResult = () => { if (!stopped) { stopCancel(); release(); } };
-    const undo = [subscribe(events.hjHeard, onHotword), subscribe(events.globalTurnStarted, onTurnStarted),
-        subscribe(events.globalTurnResult, onTurnResult)].filter(Boolean);
+    const undo = [subscribeFirst(events.hjHeard, onHotwordFirst), subscribe(events.hjHeard, onHotword),
+        subscribe(events.globalTurnStarted, onTurnStarted), subscribe(events.globalTurnResult, onTurnResult)].filter(Boolean);
     if (!events.hjHeard) log.warn('hey jibo: no hotword event in this runtime');
     return {stop: () => {
         // Stopped while holding orange (an update): leave the ring as idle has it.
         if (ringTimer !== null && !api.isOpen() && idle()) ring(OFF);
-        stopped = true; stopRing(); stopCancel(); release(); undo.forEach(fn => fn());
+        stopped = true; stopRing(); stopCancel(); release(); disarm(); decided = undefined; undo.forEach(fn => fn());
     }};
 }
 

@@ -260,6 +260,126 @@ test('the ring is orange before api.open() is called (BEam may load Noggin insid
     w3.stop();
 });
 
+// ---- Jibo's own listening look (D140) ----
+// Jibo's typed event: handlers in `_events`, called in order. Embodied Listen registers first (at Be's
+// start) and turns the ring blue on "Hey Jibo" unless its disableOnce flag is set, which it uses up.
+function typedEvent() {
+    const ev = {_events: [], on: f => { ev._events.push(f); return ev; }, removeListener: f => { const i = ev._events.indexOf(f); if (i >= 0) ev._events.splice(i, 1); },
+        emit: d => ev._events.slice().forEach(f => f(d))};
+    ev.off = ev.removeListener;
+    return ev;
+}
+const BLUE = '0,0.4,1';
+function lookJibo(over = {}) {
+    const jibo = ledJibo();
+    const state = {_disableOnce: false, skipped: 0, shown: 0};
+    jibo.jetstream.events.hjHeard = typedEvent();
+    jibo.embodied = {listen: {disableOnce: () => { state._disableOnce = true; }}};
+    const dialog = {_embodied: {listen: state}};
+    if (!over.noEmbodied) {
+        jibo.jetstream.events.hjHeard.on(() => {
+            if (state._disableOnce) { state._disableOnce = false; state.skipped++; return; }
+            state.shown++; jibo.expression.setLEDColor([0, 0.4, 1]);
+        });
+    }
+    return {jibo, state, dialog};
+}
+
+test('setting on: Jibo\'s own listening look is skipped, so the ring is never blue; orange comes first (D140)', () => {
+    const {jibo, state, dialog} = lookJibo(), api = slowApi(), clock = fakeClock();
+    const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock, dialog: () => dialog});
+    jibo.jetstream.events.hjHeard.emit();
+    assert.equal(state.skipped, 1);
+    assert.equal(state.shown, 0);
+    assert.ok(!jibo.leds.includes(BLUE), jibo.leds.join(' '));
+    assert.equal(jibo.leds[0], ORANGE);
+    assert.equal(state._disableOnce, false, 'nothing left armed');
+    assert.equal(api.opened.length, 1, 'Noggin still opens from the normal handler');
+    w.stop();
+});
+
+test('setting off, no key, not idle or privacy: nothing armed, Jibo shows his own look as always (D140)', () => {
+    const cases = [{enabled: false}, {idle: false}, {privacy: true}];
+    for (const c of cases) {
+        const {jibo, state, dialog} = lookJibo(), api = slowApi(), clock = fakeClock();
+        if (c.idle === false) api.isIdle = () => false;
+        if (c.privacy) jibo.privacyController.enabled = true;
+        const w = heyJibo.watch(jibo, api, {enabled: () => c.enabled !== false, log: fakeLog(), now: clock.now, clock, dialog: () => dialog});
+        jibo.jetstream.events.hjHeard.emit();
+        assert.equal(state.shown, 1, JSON.stringify(c));
+        assert.equal(state.skipped, 0);
+        assert.equal(state._disableOnce, false);
+        assert.equal(api.opened.length, 0);
+        w.stop();
+    }
+});
+
+test('switching the setting off again: the next "Hey Jibo" is Jibo\'s own, with his blue ring (D140)', () => {
+    const {jibo, state, dialog} = lookJibo(), clock = fakeClock();
+    let on = true;
+    const api = fakeApi();
+    const w = heyJibo.watch(jibo, api, {enabled: () => on, log: fakeLog(), now: clock.now, clock, dialog: () => dialog});
+    jibo.jetstream.events.hjHeard.emit();
+    assert.equal(state.skipped, 1);
+    api.showing = false; clock.advance(20000);
+    on = false;
+    jibo.jetstream.events.hjHeard.emit();
+    assert.equal(state.shown, 1, 'his own look is back');
+    assert.equal(jibo.leds.at(-1), BLUE);
+    assert.equal(state._disableOnce, false);
+    w.stop();
+});
+
+test('Jibo\'s listener did not use the flag up (not listening): it is cleared after the "Hey Jibo" (D140)', () => {
+    const {jibo, state, dialog} = lookJibo({noEmbodied: true}), api = slowApi(), clock = fakeClock();
+    const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock, dialog: () => dialog});
+    jibo.jetstream.events.hjHeard.emit();
+    assert.equal(state._disableOnce, false);
+    w.stop();
+});
+
+test('a listener between ours throws and ends the emit: the flag is still cleared on the next tick (D140)', () => {
+    const {jibo, state, dialog} = lookJibo({noEmbodied: true}), api = slowApi(), clock = fakeClock();
+    jibo.jetstream.events.hjHeard.on(() => { throw Error('another skill'); });
+    const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock, dialog: () => dialog});
+    assert.throws(() => jibo.jetstream.events.hjHeard.emit());
+    assert.equal(state._disableOnce, true, 'armed, and our second handler never ran');
+    clock.advance(0);
+    assert.equal(state._disableOnce, false);
+    w.stop();
+});
+
+test('stop(): both handlers leave Jibo\'s event (also the one in front) and nothing stays armed (D140)', () => {
+    const {jibo, state, dialog} = lookJibo(), api = slowApi(), clock = fakeClock();
+    const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock, dialog: () => dialog});
+    assert.equal(jibo.jetstream.events.hjHeard._events.length, 3, "Jibo's, our front one and our normal one");
+    w.stop();
+    assert.equal(jibo.jetstream.events.hjHeard._events.length, 1, "only Jibo's");
+    jibo.jetstream.events.hjHeard.emit();
+    assert.equal(state.shown, 1);
+    assert.equal(state._disableOnce, false);
+});
+
+test('without the flag\'s module, or an event without _events: nothing is armed, Noggin still opens (D140)', () => {
+    {
+        const {jibo, state} = lookJibo(), api = slowApi(), clock = fakeClock();
+        const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock, dialog: () => { throw Error('no module'); }});
+        jibo.jetstream.events.hjHeard.emit();
+        assert.equal(state.shown, 1, 'Jibo shows his look; it cannot be cleared, so it is not skipped');
+        assert.equal(api.opened.length, 1);
+        w.stop();
+    }
+    {
+        const jibo = ledJibo(), api = slowApi(), clock = fakeClock(), state = {_disableOnce: false};
+        jibo.embodied = {listen: {disableOnce: () => { state._disableOnce = true; }}};
+        const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock, dialog: () => ({_embodied: {listen: state}})});
+        jibo.jetstream.events.hjHeard.fire();   // emitter() has no _events: no front
+        assert.equal(state._disableOnce, false);
+        assert.equal(api.opened.length, 1);
+        w.stop();
+    }
+});
+
 test('Noggin never opens: the ring goes back off after 10 s and the hold ends (D135)', () => {
     const jibo = ledJibo(), api = slowApi(), clock = fakeClock(), log = fakeLog();
     const w = heyJibo.watch(jibo, api, {enabled: () => true, log, now: clock.now, clock});

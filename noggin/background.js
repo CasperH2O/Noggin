@@ -94,7 +94,8 @@ function startHeyJibo(log, api) {
                 const loaded = settings.load(settings.dataDir());
                 return loaded.config.heyJibo === true && !!loaded.secrets.apiKey;
             },
-            log: log
+            log: log,
+            dialog: () => require('jibo-embodied-dialog')
         });
     } catch (error) {
         log.error('hey jibo off: ' + error.message);
