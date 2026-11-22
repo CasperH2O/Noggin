@@ -1,6 +1,6 @@
 # Noggin
 
-Noggin is a new AI brain for Jibo. Open it and talk with Jibo: he listens, answers in his own voice, moves with what he says, and uses his own skills along the way.
+Noggin is a new AI brain for Jibo. Open it and talk with Jibo: he listens, answers in his own voice, moves with what he says, and uses skills along the way: his native skills, server skills from Jibo's cloud, and custom skills you add.
 
 Noggin needs BEam 3.1.9 or newer, an internet connection and your own OpenAI API key.
 

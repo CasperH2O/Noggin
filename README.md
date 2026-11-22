@@ -2,9 +2,9 @@
 
 Noggin is a custom skill for Jibo running the BE ecosystem (BEam with the BEacon menu and the
 5x1 Store): Jibo's AI brain. Open it and talk with Jibo in his own voice; he answers with
-OpenAI's realtime model, moves with what he says, and uses his own skills (timers, the clock,
-music, dances, Jibo's cloud) along the way. A settings page on port 8131 holds the key, the
-models, the persona and everything else.
+OpenAI's realtime model, moves with what he says, and uses skills along the way: native skills
+(timers, the clock, music, dances), server skills from Jibo's cloud, and custom skills you add. A
+settings page on port 8131 holds the key, the models, the persona and everything else.
 
 ## Install
 
