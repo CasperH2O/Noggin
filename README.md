@@ -74,9 +74,10 @@ On the robot: BEacon, Store, Upload ZIP, and choose `Noggin.zip` from a release.
   action, which restarts when Noggin opens, see the turn end; it then only turns toward the voice
   before Noggin starts. The conversation ignores the start of that one turn; a handover releases the
   claim (`global.nogginHeyJibo`), so Noggin's own cloud turns are never cancelled. Only with an API
-  key saved. The ring stays orange until Noggin is up (Be first finishes Jibo's own "Hey Jibo"
-  action, about two seconds); the ring colours are in `noggin/lib/ring.js`. Words said right after
-  "Hey Jibo" are not heard. The simulator cancels turns differently, so check this on the robot.
+  key saved. The ring turns orange before the open (BEam may load Noggin inside it) and stays orange
+  until Noggin is up (Be first finishes Jibo's own "Hey Jibo" action, about two seconds); the ring
+  colours are in `noggin/lib/ring.js`. Words said right after "Hey Jibo" are not heard. The
+  simulator cancels turns differently, so check this on the robot.
 
 ## Data on the robot
 

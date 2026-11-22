@@ -104,7 +104,12 @@ function watch(jibo, api, options) {
         // ringTimer: an earlier "Hey Jibo" is still opening Noggin.
         if (!on || ringTimer !== null || api.isOpen() || !idle() || isPrivate()) return;
         const at = now();
-        if (!api.open({reason: REASON, heardAt: at})) { log.warn('hey jibo: Noggin did not open'); return; }
+        // Orange first: on the first open after an install or a reboot, BEam loads Noggin inside
+        // api.open() and nothing else runs until it returns (D139).
+        ring(BUSY);
+        let opened = false;
+        try { opened = api.open({reason: REASON, heardAt: at}); } catch (error) { log.warn('hey jibo: open threw: ' + (error && error.message)); }
+        if (!opened) { ring(OFF); log.warn('hey jibo: Noggin did not open'); return; }
         hub().claimedAt = at;
         holdRing(at);
         log.info('hey jibo: opening Noggin');

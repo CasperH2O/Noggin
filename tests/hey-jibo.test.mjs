@@ -183,7 +183,7 @@ test('the ring is orange from "Hey Jibo" until Noggin is open, re-sent while Jib
     const jibo = ledJibo(), api = slowApi(), clock = fakeClock();
     const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock});
     jibo.jetstream.events.hjHeard.fire();
-    assert.deepEqual(jibo.leds, [ORANGE], 'at once');
+    assert.ok(jibo.leds.length >= 1 && jibo.leds.every(c => c === ORANGE), 'at once: ' + jibo.leds.join(' '));
     clock.advance(4400);
     assert.ok(jibo.leds.length >= 10 && jibo.leds.every(c => c === ORANGE), jibo.leds.join(' '));
     api.showing = true;   // the conversation owns the ring now
@@ -236,6 +236,28 @@ test('review: privacy switched on during the hold stops the colour; a second "He
     assert.equal(jibo.leds.length, before, 'nothing sent in privacy, also not the off at 10 s');
     assert.equal(clock.timers.length, 0);
     w.stop();
+});
+
+test('the ring is orange before api.open() is called (BEam may load Noggin inside it); a refused open sets it off again (D139)', () => {
+    const jibo = ledJibo(), clock = fakeClock();
+    let ledsAtOpen = null;
+    const api = Object.assign(slowApi(), {open: data => { ledsAtOpen = jibo.leds.slice(); api.opened.push(data); return true; }});
+    const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock});
+    jibo.jetstream.events.hjHeard.fire();
+    assert.deepEqual(ledsAtOpen, [ORANGE]);
+    w.stop();
+    const refused = ledJibo(), log = fakeLog();
+    const w2 = heyJibo.watch(refused, fakeApi({open: () => false}), {enabled: () => true, log, now: clock.now, clock});
+    refused.jetstream.events.hjHeard.fire();
+    assert.deepEqual(refused.leds, [ORANGE, RING_OFF]);
+    assert.ok(log.lines.some(l => /did not open/.test(l)));
+    w2.stop();
+    const thrown = ledJibo(), log3 = fakeLog();
+    const w3 = heyJibo.watch(thrown, fakeApi({open: () => { throw Error('boom'); }}), {enabled: () => true, log: log3, now: clock.now, clock});
+    assert.doesNotThrow(() => thrown.jetstream.events.hjHeard.fire());
+    assert.deepEqual(thrown.leds, [ORANGE, RING_OFF], 'review: a throwing open leaves no orange');
+    assert.ok(log3.lines.some(l => /open threw: boom/.test(l)));
+    w3.stop();
 });
 
 test('Noggin never opens: the ring goes back off after 10 s and the hold ends (D135)', () => {
