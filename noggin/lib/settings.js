@@ -5,7 +5,7 @@
 // Node 6: ES2015 only.
 'use strict';
 const fs = require('fs'), path = require('path');
-const core = require('./core'), actions = require('./actions');
+const catalog = require('./catalog'), realtime = require('./realtime-session'), actions = require('./actions'), files = require('./files');
 
 const ROBOT_SKILLS = '/opt/jibo/Jibo/Skills';
 const ROBOT_DATA = '/opt/jibo/Knowledge/beacon/custom-skills/noggin';
@@ -14,9 +14,11 @@ const FILE = 'settings.json';
 const PACKAGED_PERSONA = path.join(__dirname, '../persona');
 const MODEL = /^[A-Za-z0-9._:-]{1,64}$/;
 const MAX_MS = 600000;
+// The settings page's port (D5).
+const PORT = 8131;
 
 function greetingExpressions() {
-    return ['none'].concat(Object.keys(core.EXTRA), Object.keys(core.MOODS).filter(name => name !== 'dance'));
+    return ['none'].concat(Object.keys(catalog.EXTRA), Object.keys(catalog.MOODS).filter(name => name !== 'dance'));
 }
 function cloudOptions() {
     return Object.keys(actions.CLOUD).map(name => ({value: name, disabled: actions.CLOUD[name].disabled || null}));
@@ -31,12 +33,12 @@ const SCHEMA = [
         help: 'Change only for a compatible proxy.', advanced: true},
     {key: 'realtimeModel', type: 'text', pattern: MODEL, default: 'gpt-realtime-2.1', tab: 'brain', group: 'Models', label: 'Conversation model',
         help: 'Hears Jibo\'s microphone and writes what he says.', suggestions: ['gpt-realtime-2.1', 'gpt-realtime-2.1-mini', 'gpt-realtime']},
-    // The 4o transcription models are deprecated; gpt-transcribe replaces them (D108).
+    // gpt-transcribe is the default transcription model (D108).
     {key: 'transcribeModel', type: 'text', pattern: MODEL, default: 'gpt-transcribe', tab: 'brain', group: 'Models', label: 'Transcription model',
         help: 'Turns your words into text for the log and Jibo\'s skills.', suggestions: ['gpt-transcribe', 'gpt-4o-mini-transcribe']},
     {key: 'transcribeLanguages', type: 'set', default: ['en', 'nl'], tab: 'brain', group: 'Models', label: 'Languages spoken',
         help: 'Tells the transcription model which languages to expect, so it does not mishear one as another. None: it guesses. Only gpt-transcribe and gpt-live-transcribe use this.',
-        options: core.LANGUAGES},
+        options: realtime.LANGUAGES},
     {key: 'turnDetection', type: 'enum', default: 'semantic_vad', tab: 'brain', group: 'Models', label: 'When you are done talking',
         help: 'Semantic waits for the end of a thought; silence waits for a pause.',
         options: [{value: 'semantic_vad', label: 'Semantic (end of a thought)'}, {value: 'server_vad', label: 'Silence (a pause)'}]},
@@ -74,9 +76,6 @@ const SCHEMA = [
         options: [{value: 'sometimes', label: 'Sometimes'}, {value: 'always', label: 'Always'}, {value: 'off', label: 'Never'}]},
     {key: 'thinkingEye', type: 'bool', default: false, tab: 'behaviour', group: 'Expressions', label: 'Thinking eye',
         help: 'Jibo\'s thinking loop on his eye while he waits for the reply.', advanced: true},
-    {key: 'expressionPlay', type: 'enum', default: 'animdb', tab: 'behaviour', group: 'Expressions', label: 'How expressions play',
-        help: 'Next to the words (recommended), or inside the speech.', advanced: true,
-        options: [{value: 'animdb', label: 'Next to the words'}, {value: 'esml-tts', label: 'In the speech, ends with the words'}, {value: 'esml', label: 'In the speech'}]},
     {key: 'expressionWaitMs', type: 'number', min: 0, max: 5000, unit: 'ms', default: 300, tab: 'behaviour', group: 'Expressions', label: 'Expression wait',
         help: 'How long the first line may wait for the quick reaction, which then plays just before the words. The line never waits for its own expression: one that comes later shows while Jibo says it.', advanced: true},
     {key: 'expressionGapMs', type: 'number', min: 0, max: 60000, unit: 'ms', default: 4000, tab: 'behaviour', group: 'Expressions', label: 'Time between expressions', advanced: true},
@@ -98,11 +97,8 @@ const SCHEMA = [
         help: 'The microphone stays open until Jibo starts his answer, so if you go on after a pause he waits for you.', advanced: true},
     {key: 'transcriptWaitMs', type: 'number', min: 0, max: 10000, unit: 'ms', default: 1500, tab: 'behaviour', group: 'Microphone', label: 'Transcript wait',
         help: 'How long a reply may wait for the transcript of your words.', advanced: true},
-    {key: 'ringRefreshMs', type: 'number', min: 0, max: 5000, unit: 'ms', default: 100, tab: 'behaviour', group: 'Microphone', label: 'Ring refresh',
-        help: 'Re-send the ring colour this often; 0: never.', advanced: true},
-    {key: 'lab', type: 'enum', default: '', tab: 'behaviour', group: 'Microphone', label: 'Lab mode',
-        help: 'A fixed test run instead of a conversation.', advanced: true,
-        options: [{value: '', label: 'Off'}, {value: 'expressions', label: 'Expressions'}, {value: 'animdb', label: 'Expressions, next to the words only'}, {value: 'timing', label: 'Timing'}]},
+    {key: 'ringRefreshMs', type: 'number', min: 0, max: 5000, unit: 'ms', default: 500, tab: 'behaviour', group: 'Microphone', label: 'Ring refresh',
+        help: 'Re-send the ring colour this often, besides after each line; 0: only after each line.', advanced: true},
 
     {key: 'actions', type: 'bool', default: true, tab: 'skills', group: 'Jibo\'s skills', label: 'Use Jibo\'s skills',
         help: 'Timers, alarms, the clock, music, radio, photos, dances and apps. Off: conversation only.'},
@@ -134,22 +130,26 @@ const SCHEMA = [
 const SECRETS = ['apiKey', 'adminKey'];
 const BY_KEY = {};
 SCHEMA.forEach(field => { BY_KEY[field.key] = field; });
-const DEFAULTS = {};
-SCHEMA.forEach(field => { if (SECRETS.indexOf(field.key) < 0) DEFAULTS[field.key] = field.default; });
 const FIELDS = SCHEMA.map(field => field.key);
 
 const PERSONA = {soul: {file: 'SOUL.md', max: 8000}, identity: {file: 'IDENTITY.md', max: 8000}, facts: {file: 'FACTS.md', max: 4000}};
 
 function options(field) { return typeof field.options === 'function' ? field.options() : field.options; }
 
+// An OpenAI key: letters, digits, _ and - only. A pasted key often comes with spaces or quotes.
+const SECRET = /^[A-Za-z0-9_-]{4,400}$/;
+function unquoted(value) { return value.trim().replace(/^["'\u2018\u2019\u201c\u201d`]+|["'\u2018\u2019\u201c\u201d`]+$/g, '').trim(); }
+
 // One value checked against its field: {value} or {error}. `null` is never passed here.
 function check(field, value) {
     const fail = message => ({error: message});
     switch (field.type) {
-    case 'secret':
-        if (typeof value !== 'string' || !/^\S{4,400}$/.test(value.trim())) return fail('That does not look like an API key.');
-        if (field.prefix && value.trim().indexOf(field.prefix) !== 0) return fail('An admin key starts with ' + field.prefix + '.');
-        return {value: value.trim()};
+    case 'secret': {
+        const key = typeof value === 'string' ? unquoted(value) : '';
+        if (!SECRET.test(key)) return fail('That does not look like an API key.');
+        if (field.prefix && key.indexOf(field.prefix) !== 0) return fail('An admin key starts with ' + field.prefix + '.');
+        return {value: key};
+    }
     case 'url':
         if (typeof value !== 'string' || value.length > 200 || !/^https?:\/\/[^\s/]+(\/\S*)?$/.test(value)) return fail('An http or https address.');
         return {value: value.replace(/\/+$/, '')};
@@ -207,29 +207,6 @@ function check(field, value) {
 function dataDir() { return fs.existsSync(ROBOT_SKILLS) ? ROBOT_DATA : DEV_DATA; }
 function file(dir) { return path.join(dir, FILE); }
 
-function makeDir(dir) {
-    try { fs.mkdirSync(dir, 448); }
-    catch (error) {
-        if (error.code === 'ENOENT') { makeDir(path.dirname(dir)); fs.mkdirSync(dir, 448); }
-        else if (error.code !== 'EEXIST') throw error;
-    }
-}
-// Write via a temporary file and a rename, so a power cut never leaves half a file.
-function atomic(target, data) {
-    makeDir(path.dirname(target));
-    const temporary = target + '.new';
-    try { fs.unlinkSync(temporary); } catch (_) {}
-    if (typeof fs.fsyncSync !== 'function' || typeof fs.openSync !== 'function') {
-        // The simulator's fs has no file descriptors: write, then rename, without the fsync.
-        fs.writeFileSync(temporary, data, {mode: 384});
-    } else {
-        const fd = fs.openSync(temporary, 'wx', 384);
-        try { fs.writeFileSync(fd, data); fs.fsyncSync(fd); }
-        finally { fs.closeSync(fd); }
-    }
-    fs.renameSync(temporary, target);
-}
-
 // What settings.json holds, or {} when it is missing. A broken file throws.
 function stored(dir) {
     let raw;
@@ -240,7 +217,7 @@ function stored(dir) {
     return value;
 }
 
-// A stored map longer than its cap (an older version allowed more): its first `max` entries (D32).
+// A stored map longer than its cap: its first `max` entries (D32).
 function overCap(field, value) {
     if (field.type !== 'map' || !value || typeof value !== 'object' || Array.isArray(value)) return null;
     const names = Object.keys(value);
@@ -302,7 +279,7 @@ function update(dir, patch, options) {
         else next[key] = result.value;
     });
     if (Object.keys(errors).length) return {ok: false, errors: errors};
-    if (!(options && options.dryRun)) atomic(file(dir), JSON.stringify(next, null, 2) + '\n');
+    if (!(options && options.dryRun)) files.atomic(file(dir), JSON.stringify(next, null, 2) + '\n');
     return {ok: true, errors: {}};
 }
 
@@ -312,22 +289,22 @@ function keyHint(key) {
     return {set: true, hint: key.slice(0, 3) + '…' + key.slice(-4) + ' (' + key.length + ' characters)'};
 }
 
-// Settings for the page: every value except the keys, which only come back as keyHint().
-function publicView(dir) {
+// settings.json read once: {config (every value except the keys), secrets ({apiKey, adminKey},
+// '' when unset), problems, broken (why the file could not be read, or null)}.
+function load(dir) {
     let raw, broken = null;
     try { raw = stored(dir); } catch (error) { raw = {}; broken = error.message; }
-    const result = effective(raw);
-    const values = {};
-    FIELDS.forEach(key => { if (SECRETS.indexOf(key) < 0) values[key] = result.config[key]; });
-    return {values: values, key: keyHint(result.config.apiKey), adminKey: keyHint(result.config.adminKey), problems: result.problems, broken: broken};
+    const result = effective(raw), config = {};
+    FIELDS.forEach(key => { if (SECRETS.indexOf(key) < 0) config[key] = result.config[key]; });
+    return {config: config, secrets: {apiKey: result.config.apiKey || '', adminKey: result.config.adminKey || ''}, problems: result.problems, broken: broken};
+}
+// Settings for the page: every value except the keys, which only come back as keyHint().
+function publicView(dir) {
+    const loaded = load(dir);
+    return {values: loaded.config, key: keyHint(loaded.secrets.apiKey), adminKey: keyHint(loaded.secrets.adminKey), problems: loaded.problems, broken: loaded.broken};
 }
 // The saved keys themselves, for the server's own calls: {apiKey, adminKey}, '' when unset.
-function secrets(dir) {
-    let raw;
-    try { raw = stored(dir); } catch (_) { raw = {}; }
-    const config = effective(raw).config;
-    return {apiKey: config.apiKey || '', adminKey: config.adminKey || ''};
-}
+function secrets(dir) { return load(dir).secrets; }
 
 // The schema as JSON for the page (patterns as strings, option lists resolved).
 function schemaView() {
@@ -375,10 +352,10 @@ function updatePersona(dir, patch, options, packagedDir) {
     Object.keys(patch).forEach(name => {
         const target = path.join(dir, 'persona', PERSONA[name].file), value = patch[name];
         if (value === null || value === packaged(name, packagedDir)) { try { fs.unlinkSync(target); } catch (_) {} }
-        else atomic(target, value);
+        else files.atomic(target, value);
     });
     return {ok: true, errors: {}};
 }
 
-module.exports = {SCHEMA, DEFAULTS, PERSONA, SECRETS, dataDir, file, read, update, publicView, secrets, schemaView, check,
-    persona, updatePersona, packaged, atomic};
+module.exports = {SCHEMA, PERSONA, SECRETS, PORT, dataDir, file, read, load, update, publicView, secrets, schemaView, check,
+    persona, updatePersona, packaged};

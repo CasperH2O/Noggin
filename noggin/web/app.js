@@ -217,7 +217,7 @@
         const rows = el('div', {class: 'map-rows'});
         const max = field.max || 8, noteMax = field.noteMax || 120;
         const value = current(field.key) || {};
-        // [name, package, what it does]; an older value is a package alone.
+        // [name, package, what it does]; a value may also be a package alone.
         let entries = Object.keys(value).map(name => typeof value[name] === 'string' ? [name, value[name], ''] : [name, value[name].pkg, value[name].about || '']);
         const full = () => entries.length >= max;
         function commit() {
@@ -418,10 +418,10 @@
     }
 
     // ---- history ----
-    function when(name) {
-        const m = /^conversation-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/.exec(name);
-        if (!m) return name;
-        const date = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+    // When a log started, from the robot's list (`started`, ms), or its name.
+    function when(item) {
+        if (!Number.isFinite(item.started)) return item.name;
+        const date = new Date(item.started);
         return date.toLocaleDateString(undefined, {weekday: 'short', day: 'numeric', month: 'short'}) + ' ' + date.toLocaleTimeString(undefined, {hour: '2-digit', minute: '2-digit'});
     }
     function timeline(text) {
@@ -458,7 +458,7 @@
                 }});
                 list.appendChild(el('div', {}, [
                     el('div', {class: 'log-row'}, [
-                        el('div', {}, [el('div', {class: 'log-title', text: when(item.name)}), el('div', {class: 'log-sub', text: Math.max(1, Math.round(item.bytes / 1024)) + ' KB'})]),
+                        el('div', {}, [el('div', {class: 'log-title', text: when(item)}), el('div', {class: 'log-sub', text: Math.max(1, Math.round(item.bytes / 1024)) + ' KB'})]),
                         el('div', {class: 'log-actions'}, [button, el('a', {class: 'btn btn-flat', href: '/api/logs/' + encodeURIComponent(item.name), download: item.name, text: 'Download'})])
                     ]),
                     view

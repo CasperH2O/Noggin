@@ -136,7 +136,7 @@ test('pass: a finished conversation of two logs is recapped once, as one', async
     now = t0 + 125000;
     assert.equal((await recap.pass(deps)).waiting, true);
     const b = writeLog(dir, t0 + 130000, [{kind: 'startup', resumed: 'set_timer'}, {kind: 'jibo', text: 'Anything else?'}, {kind: 'session_end', reason: 'goodbye'}], t0 + 140000);
-    now = t0 + 150000;
+    now = t0 + 160000;
     const r = await recap.pass(deps);
     assert.deepEqual(r.recapped, [a, b]);
     assert.equal(bodies.length, 1);
@@ -156,11 +156,11 @@ test('pass: nothing said costs no call; failures retry 3 times then give up; dai
     const deps = {dataDir: dir, config, now: () => now, local, post: () => { calls++; return Promise.resolve({status: status, json: null}); }};
     await recap.pass(deps);
     writeLog(dir, t0 + 1000, [{kind: 'jibo', text: 'Hi!'}, {kind: 'session_end', reason: 'silence'}], t0 + 2000);
-    now = t0 + 5000;
+    now = t0 + 20000;
     assert.equal((await recap.pass(deps)).skipped, 'nothing said');
     assert.equal(calls, 0);
     writeLog(dir, t0 + 10000, [{kind: 'you', text: 'hello'}, {kind: 'session_end'}], t0 + 11000);
-    now = t0 + 20000;
+    now = t0 + 30000;
     for (let i = 0; i < recap.TRIES; i++) assert.equal((await recap.pass(deps)).failed, 'HTTP 500');
     assert.equal((await recap.pass(deps)).skipped, 'gave up');
     assert.equal(calls, recap.TRIES);
@@ -169,7 +169,7 @@ test('pass: nothing said costs no call; failures retry 3 times then give up; dai
     capped.recap.calls = recap.DAILY_CALLS;
     memory.write(dir, capped);
     writeLog(dir, t0 + 30000, [{kind: 'you', text: 'hello again'}, {kind: 'session_end'}], t0 + 31000);
-    now = t0 + 40000;
+    now = t0 + 50000;
     assert.equal((await recap.pass(deps)).waiting, 'daily limit');
     assert.equal(calls, recap.TRIES);
 });
@@ -204,7 +204,7 @@ test('loop: one pass at a time, nothing without a config, stop aborts the reques
     cfg = config;
     loop.tick();
     await new Promise(r => setTimeout(r, 20));
-    writeLog(dir, stamped + 2000, [{kind: 'you', text: 'hello'}, {kind: 'session_end'}]);
+    writeLog(dir, stamped + 2000, [{kind: 'you', text: 'hello'}, {kind: 'session_end'}], Date.now() - 60000);
     loop.tick();
     await new Promise(r => setTimeout(r, 20));
     // A pass waits for the model; another tick meanwhile does nothing.
@@ -277,7 +277,7 @@ test('recap transcripts: deleted once recapped, and when learning is off; old on
     const file = path.join(dir, 'logs', stamp(t0 + 1000).replace('conversation-', 'recap-'));
     fs.writeFileSync(file, log([{kind: 'you', text: 'my cat is Moos'}, {kind: 'session_end'}]));
     fs.utimesSync(file, (t0 + 2000) / 1000, (t0 + 2000) / 1000);
-    now = t0 + 5000;
+    now = t0 + 20000;
     assert.deepEqual((await recap.pass(deps)).recapped, [path.basename(file)]);
     assert.equal(fs.existsSync(file), false);
     assert.equal(memory.read(dir).summaries[0].text, 'Talked about Moos the cat.');
@@ -325,8 +325,88 @@ test('start: the skill starts learning as a conversation opens, so the first con
     assert.equal(memory.read(dir).since, t0, 'only the first start counts');
     writeLog(dir, t0, [{kind: 'you', text: 'my cat is called Moos'}, {kind: 'session_end', reason: 'goodbye'}], t0 + 20000);
     let calls = 0;
-    const r = await recap.pass({dataDir: dir, config, now: () => t0 + 30000, local,
+    const r = await recap.pass({dataDir: dir, config, now: () => t0 + 40000, local,
         post: () => { calls++; return Promise.resolve({status: 200, json: answer({summary: 'Someone named the cat Moos.', add: [], remove: []})}); }});
     assert.equal(r.recapped.length, 1);
     assert.equal(calls, 1);
+});
+
+// Counts what fs reads from one file, while fn runs.
+function readsOf(file, fn) {
+    const seen = {whole: 0, bytes: 0}, readFileSync = fs.readFileSync, readSync = fs.readSync, openSync = fs.openSync;
+    const fds = new Set();
+    fs.readFileSync = function (name) { if (name === file) seen.whole++; return readFileSync.apply(fs, arguments); };
+    fs.openSync = function (name) { const fd = openSync.apply(fs, arguments); if (name === file) fds.add(fd); return fd; };
+    fs.readSync = function (fd) { const n = readSync.apply(fs, arguments); if (fds.has(fd)) seen.bytes += n; return n; };
+    try { return Object.assign(seen, {result: fn()}); }
+    finally { fs.readFileSync = readFileSync; fs.readSync = readSync; fs.openSync = openSync; }
+}
+
+test('pass: a log written to in the last 15 s is the live conversation: not read, and its chain waits', async () => {
+    const dir = setup(), t0 = new Date(2026, 10, 19, 10, 0, 0).getTime();
+    let now = t0, calls = 0;
+    const deps = {dataDir: dir, config, now: () => now, local, post: () => { calls++; return Promise.resolve({status: 200, json: answer({summary: 's', add: [], remove: []})}); }};
+    await recap.pass(deps);
+    // Came back after a handover: the first log continues in the live one.
+    writeLog(dir, t0 + 1000, [{kind: 'you', text: 'set a timer'}, {kind: 'handover', comeback: true}, {kind: 'session_end'}, {kind: 'comeback', ok: true}], t0 + 2000);
+    const live = writeLog(dir, t0 + 700000, [{kind: 'startup', resumed: 'set_timer'}, {kind: 'you', text: 'still talking'}], t0 + 710000);
+    now = t0 + 710000 + recap.LIVE_MS - 1000;
+    const file = path.join(dir, 'logs', live);
+    const waited = await readsOf(file, () => recap.pass(deps)).result;
+    assert.equal(waited.waiting, true, 'the first log is past CONTINUE_MS, but its conversation goes on');
+    assert.equal(readsOf(file, () => recap.pass(deps)).whole, 0, 'the live log is not read');
+    assert.equal(calls, 0);
+    fs.appendFileSync(file, line({kind: 'session_end', reason: 'goodbye'}) + '\n');
+    fs.utimesSync(file, (t0 + 720000) / 1000, (t0 + 720000) / 1000);
+    now = t0 + 720000 + recap.LIVE_MS + 1000;
+    assert.equal((await recap.pass(deps)).recapped.length, 2);
+    assert.equal(calls, 1);
+});
+
+test('tail: only the last 64 KB of the previous log is read', () => {
+    const dir = setup(), t0 = new Date(2026, 10, 19, 10, 0, 0).getTime();
+    const early = Array.from({length: 400}, (_, i) => ({kind: 'you', text: 'early line ' + i + ' ' + 'x'.repeat(400)}));
+    const name = writeLog(dir, t0, early.concat({kind: 'you', text: 'my cat is called Moos'}, {kind: 'jibo', text: 'Moos! Lovely.'}, {kind: 'session_end'}), t0 + 60000);
+    const file = path.join(dir, 'logs', name);
+    assert.ok(fs.statSync(file).size > 2 * recap.TAIL_BYTES);
+    const seen = readsOf(file, () => recap.tail(dir, memory.empty(), t0 + 4 * 60000, null));
+    assert.equal(seen.whole, 0);
+    assert.ok(seen.bytes <= recap.TAIL_BYTES);
+    assert.match(seen.result, /Person: my cat is called Moos\nJibo: Moos! Lovely\.$/);
+});
+
+test('conversation log: lines go out together, the first, a speak and a session end at once; close() writes the rest', async () => {
+    const dir = setup(), log = new ConversationLog(dir, true), size = () => fs.statSync(log.file).size;
+    log.write({kind: 'startup'});
+    const first = size();
+    assert.ok(first > 0, 'the first line creates the file');
+    log.write({kind: 'you', text: 'one'});
+    log.write({kind: 'jibo', text: 'two'});
+    assert.equal(size(), first, 'queued');
+    await new Promise(r => setTimeout(r, ConversationLog.FLUSH_MS + 100));
+    const flushed = size();
+    assert.ok(flushed > first, 'written together after FLUSH_MS');
+    log.write({kind: 'you', text: 'three'});
+    log.write({kind: 'session_end', reason: 'goodbye'});
+    const kinds = () => fs.readFileSync(log.file, 'utf8').trim().split('\n').map(l => JSON.parse(l).kind);
+    assert.deepEqual(kinds(), ['startup', 'you', 'jibo', 'you', 'session_end'], 'the end of the conversation is on disk at once, in order');
+    log.write({kind: 'speak', text: 'Hi!'});
+    assert.equal(kinds().at(-1), 'speak', 'a speak is on disk before it starts');
+    log.write({kind: 'audio'});
+    log.close();
+    assert.equal(kinds().at(-1), 'audio');
+    assert.equal(ConversationLog.startedAt(path.basename(log.file)), ConversationLog.list(dir)[0].started);
+    assert.ok(Number.isFinite(ConversationLog.startedAt('recap-20261119-100000.jsonl')));
+    assert.ok(Number.isNaN(ConversationLog.startedAt('memory.json')));
+});
+
+test('conversation log: the 2 MB cap counts queued lines, so a full log never passes it', () => {
+    const dir = setup(), log = new ConversationLog(dir, true), file = log.file;
+    log.write({kind: 'startup'});
+    for (let i = 0; i < 3000; i++) log.write({kind: 'you', text: 'z'.repeat(1000)});
+    assert.equal(log.file, null, 'full');
+    const lines = fs.readFileSync(file, 'utf8').trim().split('\n');
+    assert.ok(fs.statSync(file).size <= ConversationLog.MAX_BYTES + 100);
+    assert.equal(JSON.parse(lines.at(-1)).kind, 'log_full');
+    log.close();
 });

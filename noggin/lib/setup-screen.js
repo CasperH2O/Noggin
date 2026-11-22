@@ -6,8 +6,8 @@
 // Node 6 / Chrome 53: ES2015 only.
 'use strict';
 const qrcode = require('../vendor/qrcode');
+const PORT = require('./settings').PORT;
 
-const PORT = 8131;
 const WAIT_MS = 3 * 60000;
 const POLL_MS = 2000;
 const CLOSE_MS = 2000;   // a view change that never ends must not keep the screen open

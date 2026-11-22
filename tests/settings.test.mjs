@@ -11,15 +11,18 @@ const settings = require(path.join(source, 'noggin/lib/settings.js'));
 const ConversationLog = require(path.join(source, 'noggin/lib/conversation-log.js'));
 const temp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'noggin-settings-'));
 const KEY = 'sk-test-0123456789abcdefghij';
+// Every default except the keys, as a conversation without settings.json gets them.
+const DEFAULTS = {};
+settings.SCHEMA.forEach(field => { if (!settings.SECRETS.includes(field.key)) DEFAULTS[field.key] = field.default; });
 
 test('transcription: gpt-transcribe is the default, and the usage tab counts it as transcription', () => {
-    assert.equal(settings.DEFAULTS.transcribeModel, 'gpt-transcribe');
+    assert.equal(DEFAULTS.transcribeModel, 'gpt-transcribe');
     const usage = require(path.join(source, 'noggin/lib/usage.js'));
-    assert.equal(usage.featureOf('gpt-transcribe', settings.DEFAULTS), 'transcription');
+    assert.equal(usage.featureOf('gpt-transcribe', DEFAULTS), 'transcription');
 });
 
 test('transcription languages: English and Dutch by default, known codes only, in a fixed order', () => {
-    assert.deepEqual(settings.DEFAULTS.transcribeLanguages, ['en', 'nl']);
+    assert.deepEqual(DEFAULTS.transcribeLanguages, ['en', 'nl']);
     const field = settings.SCHEMA.find(f => f.key === 'transcribeLanguages');
     assert.deepEqual(settings.check(field, ['nl', 'en']).value, ['en', 'nl']);
     assert.deepEqual(settings.check(field, []).value, [], 'none: the model guesses');
@@ -36,8 +39,8 @@ test('schema: every field has a key, type, tab, group and label, and its default
         if (field.default === null) continue;
         assert.equal(settings.check(field, field.default).error, undefined, field.key + ' default');
     }
-    assert.equal(settings.DEFAULTS.apiKey, undefined, 'the key has no default');
-    assert.equal(settings.DEFAULTS.adminKey, undefined, 'the admin key has no default');
+    assert.equal(DEFAULTS.apiKey, undefined, 'the key has no default');
+    assert.equal(DEFAULTS.adminKey, undefined, 'the admin key has no default');
 });
 
 test('the admin key: sk-admin- only, never in the page view, only as a hint; secrets() has both keys', () => {
@@ -237,4 +240,45 @@ test('come back within: 5 minutes by default, 1 to 60, on the Skills tab under A
     assert.equal(settings.update(dir, {apiKey: KEY, comebackMinutes: 0}).ok, false);
     assert.equal(settings.update(dir, {apiKey: KEY, comebackMinutes: 10}).ok, true);
     assert.equal(settings.read(dir).comebackMinutes, 10);
+});
+
+test('keys: spaces and quotes around a pasted key are dropped; anything but letters, digits, _ and - is refused', () => {
+    const field = settings.SCHEMA.find(f => f.key === 'apiKey'), admin = settings.SCHEMA.find(f => f.key === 'adminKey');
+    assert.equal(settings.check(field, '  "' + KEY + '"\n').value, KEY);
+    assert.equal(settings.check(field, '“' + KEY + '”').value, KEY);
+    assert.equal(settings.check(field, "'" + KEY + "'").value, KEY);
+    assert.match(settings.check(field, KEY + ',sk-other-0123456789').error, /does not look like an API key/);
+    assert.match(settings.check(field, 'sk-test 0123456789').error, /does not look like an API key/);
+    assert.match(settings.check(field, KEY + 'é').error, /does not look like an API key/);
+    assert.equal(settings.check(admin, '"sk-admin-0123456789abcdefghij"').value, 'sk-admin-0123456789abcdefghij');
+    const dir = temp();
+    assert.equal(settings.update(dir, {apiKey: ' "' + KEY + '" '}).ok, true);
+    assert.equal(settings.secrets(dir).apiKey, KEY);
+});
+
+test('load: settings.json read once, the values without the keys, the keys apart; removed settings are ignored', () => {
+    const dir = temp();
+    fs.writeFileSync(settings.file(dir), JSON.stringify({apiKey: KEY, budgetWarnPercent: 20, lab: 'timing', expressionPlay: 'esml', silenceSeconds: 'x'}));
+    const loaded = settings.load(dir);
+    assert.equal(loaded.config.budgetWarnPercent, 20);
+    assert.equal(loaded.config.apiKey, undefined);
+    assert.deepEqual(loaded.secrets, {apiKey: KEY, adminKey: ''});
+    assert.equal(loaded.config.lab, undefined); assert.equal(loaded.config.expressionPlay, undefined);
+    assert.deepEqual(Object.keys(loaded.problems), ['silenceSeconds']);
+    assert.equal(loaded.broken, null);
+    assert.equal(settings.read(dir).lab, undefined);
+    // A save keeps only known settings, and a removed one cannot be set.
+    assert.equal(settings.update(dir, {greeting: 'Hello'}).ok, true);
+    assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(settings.file(dir), 'utf8'))).sort(), ['apiKey', 'budgetWarnPercent', 'greeting', 'silenceSeconds']);
+    assert.equal(settings.update(dir, {lab: 'timing'}).errors.lab, 'Unknown setting.');
+    fs.writeFileSync(settings.file(dir), '{broken');
+    assert.match(settings.load(dir).broken, /JSON/);
+    assert.equal(settings.load(dir).secrets.apiKey, '');
+});
+
+test('ring refresh: every 500 ms by default, 0 leaves only the colour after each line', () => {
+    const field = settings.SCHEMA.find(f => f.key === 'ringRefreshMs');
+    assert.equal(field.default, 500);
+    assert.match(field.help, /besides after each line; 0: only after each line/);
+    assert.equal(settings.PORT, 8131);
 });

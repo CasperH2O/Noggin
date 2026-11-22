@@ -1,23 +1,10 @@
 // SPDX-License-Identifier: MIT
-// Noggin actions: the tools the realtime model may call, and how each one runs.
-//
-//   in Noggin:     about_jibo (persona/FACTS.md), dance, set_volume, check_clock (reads
-//                @be/clock's timer and alarm record, read-only)
-//   handed over: get_time (@be/clock's clock face or calendar page, and it says it),
-//                set_timer, set_alarm, cancel_timer, cancel_alarm (the cancels only when the
-//                record shows something to cancel), use_skill: another of Jibo's skills does it
-//                and speaks, by a local redirect carrying the NLU result its own code reads;
-//                open_app (Jibo's built-in apps plus the `openApps` setting, D38). Noggin comes
-//                back afterwards (lib/comeback.js).
-//   leaving:     play_music, play_radio: the conversation ends there.
-//   cloud:       weather, news, calendar, commute, personal_report, surprise, picture, each only
-//                when named in the `cloudSkills` setting (default: all): Jibo's cloud answers a
-//                fixed phrase through @be/nimbus, and Noggin comes back afterwards.
-//                joke is there but disabled (CLOUD.joke.disabled).
-//
-// A fixed, hand-made list; the settings page only suggests installed skills for `openApps` (D31).
-// The NLU payloads follow what BEam 13.0.11's @be/be skills read in open(). Node 6 / Chrome 53: ES2015 only.
+// Noggin actions: the tools the realtime model may call, and how each one runs. Four kinds:
+// local (Noggin does it), handover (another of Jibo's skills does it, then Noggin comes back),
+// leaving (music, radio: the conversation ends) and cloud (Jibo's cloud answers a fixed phrase).
+// Each tool's details are at TOOLS. Node 6 / Chrome 53: ES2015 only.
 'use strict';
+const withTimeout = require('./http').withTimeout, strings = require('./text');
 
 const CLOCK = '@be/clock', OWN = '@be/noggin', NIMBUS = '@be/nimbus';
 const MIN_TIMER_S = 6, MAX_TIMER_S = 24 * 3600;    // @be/clock refuses 5 s or less and more than 24 h
@@ -29,8 +16,6 @@ const MAX_APPS = 8;
 // What an extra app does, for the model (D39): one short line each.
 const NOTE_MAX = 120;
 const MAX_FOUND = 50;
-const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const NO_ARGS = {type: 'object', properties: {}, additionalProperties: false};
 
 // Redirect options: the NLU result a skill's launch would get from the cloud. The domain is the
@@ -39,7 +24,6 @@ const NO_ARGS = {type: 'object', properties: {}, additionalProperties: false};
 function launch(intent, domain, entities) {
     return {nlu: {intent: intent, entities: Object.assign(domain ? {domain: domain} : {}, entities || {})}, match: {skipSurprises: true}};
 }
-const clock = launch;
 
 // Jibo's built-in apps for open_app; Noggin comes back when the app is done (D38).
 const APPS = {
@@ -67,25 +51,20 @@ const RADIO = {'alternative': 'Alternative', 'blues': 'Blues', 'christian and go
     'eighties and nineties hits': 'EightiesAndNinetiesHits', 'hip hop': 'HipHop', 'jazz': 'Jazz', 'latin': 'Latin',
     'news and talk': 'NewsAndTalk', 'npr': 'NPR', 'oldies': 'Oldies', 'pop': 'Pop', 'reggae': 'ReggaeAndIsland', 'soft rock': 'SoftRock', 'sports': 'Sports'};
 
-// Jibo's cloud features, each asked with the fixed phrase BEam's main menu sends for it
-// (@be/be skills/main-menu/index.js, BEam 13.0.11): the cloud hears it as if the person had
-// said it after "Hey Jibo", Be switches to @be/nimbus, which speaks the answer and goes back
-// to @be/idle. Only the phrase goes to the cloud, never the model's words; the one exception is
-// picture's subject, cleaned by pictureSubject(). By name (the `cloudSkills` setting).
-// The simulator loses the phrase before the cloud.
+// Jibo's cloud features, each asked with the fixed phrase Be's main menu sends for it: the cloud
+// hears it as if said after "Hey Jibo", and @be/nimbus speaks the answer. Only the phrase goes to
+// the cloud, never the model's words, except picture's subject (pictureSubject()).
 const CLOUD = {
     weather: {phrase: 'tell me about the weather', topic: 'weather'},
     news: {phrase: 'tell me about the news', topic: 'news'},
     calendar: {phrase: 'tell me about my calendar', topic: 'your calendar'},
     commute: {phrase: 'what does my commute look like', topic: 'commute'},
     personal_report: {phrase: 'personal report', topic: 'a personal report'},
-    // Disabled: the AI tells its own jokes, with far more variety
-    // than the cloud's small fixed set. Remove `disabled` to offer it again.
+    // The AI's own jokes are more varied than the cloud's small fixed set.
     joke: {phrase: 'tell me a joke', topic: 'a joke', disabled: 'the AI tells its own jokes'},
     surprise: {phrase: 'surprise me', topic: 'a surprise'},
-    // Newer BEefy only, not on the main menu: "show me a picture of ___" puts the top
-    // SafeSearch-Strict web image on Jibo's face while he says "Here's a picture of ___.", and
-    // holds it ~5 s. BEefy matches the whole sentence, so the phrase is exactly this form.
+    // Not on the main menu: a family-safe web image of the subject on Jibo's face. The cloud
+    // matches the whole sentence, so the phrase is exactly this form.
     picture: {phrase: 'show me a picture of', topic: 'pictures of things', subject: true}
 };
 
@@ -110,7 +89,7 @@ function pictureSubject(text) {
     if (s.length > PICTURE_MAX) s = s.slice(0, PICTURE_MAX + 1).replace(/ [^ ]*$/, '').trim();
     return /[a-z0-9\u00c0-\u024f]/.test(s) ? s : '';
 }
-// One `openApps` entry as {pkg, about}: a package name alone (older settings) or {pkg, about}.
+// One `openApps` entry as {pkg, about}, from a package name alone or {pkg, about}.
 function appEntry(value) {
     if (typeof value === 'string') return {pkg: value, about: ''};
     if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.pkg !== 'string') return null;
@@ -145,20 +124,12 @@ function extras(config) {
     extraList(config).forEach(app => { out[app.name] = app.pkg; });
     return out;
 }
-// Accented Latin letters for runtimes whose normalize() cannot decompose (Node 6.9.2's small ICU).
-const PLAIN_LETTERS = {a: 'àáâãäåā', c: 'çćč', e: 'èéêëēėęě', i: 'ìíîïīį', n: 'ñńň', o: 'òóôõöøō', u: 'ùúûüūů', y: 'ýÿ', s: 'śš', z: 'źżž', l: 'ł', d: 'ð', g: 'ğ', r: 'ř'};
-const PLAIN = {ß: 'ss', æ: 'ae', œ: 'oe', þ: 'th'};
-Object.keys(PLAIN_LETTERS).forEach(plain => PLAIN_LETTERS[plain].split('').forEach(letter => { PLAIN[letter] = plain; }));
 // A label cut to the `openApps` name rule (D34): accents dropped, anything else a space, starting
 // with a letter, at most 32 characters cut at a word. '' when nothing is left.
-function spokenName(text) {
-    let s = String(text || '');
+function spokenName(label) {
+    let s = String(label || '');
     try { s = s.normalize('NFD'); } catch (_) {}
-    s = s.replace(/[^\x00-\x7f]/g, letter => {
-        const lower = letter.toLowerCase(), plain = PLAIN[lower];
-        return plain === undefined ? letter : lower === letter ? plain : plain.charAt(0).toUpperCase() + plain.slice(1);
-    });
-    s = s.replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9]+/g, ' ').replace(/^[^A-Za-z]+/, '').trim();
+    s = strings.plainLetters(s).replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9]+/g, ' ').replace(/^[^A-Za-z]+/, '').trim();
     if (s.length > 32) {
         const cut = s.slice(0, 33).replace(/ [^ ]*$/, '');
         s = (cut.length <= 32 ? cut : s.slice(0, 32)).trim();
@@ -225,13 +196,9 @@ function apps(config) {
     return out;
 }
 
-// Who speaks when a tool runs. Each speak costs ~2 s on the robot (more with a body
-// animation), so the rule is: whoever performs the action does the talking, and Noggin never
-// says it again.
-//   talk:   Noggin does it and the result goes back to the model, which says it once, after.
-//   skill:  another Jibo skill takes over and speaks; the model says nothing before, and when
-//           Noggin comes back it says the fixed comebackLine; the skill's words reach the model
-//           as background only.
+// Who speaks when a tool runs: whoever performs the action, once (D118).
+//   talk:   Noggin does it; the model says the result once, after.
+//   skill:  another Jibo skill takes over and speaks; Noggin comes back with comebackLine.
 //   leaves: opens something else for good; a short goodbye, and the conversation ends.
 const VOICES = {
     talk: {tool: 'Call it without saying anything first, then say the result once, briefly.',
@@ -412,11 +379,11 @@ function alarmTime(args) {
 }
 function setTimerOptions(length) {
     // The clock parses each part with parseInt and treats "null" as absent.
-    return clock('start', 'timer', {hours: String(length.hours), minutes: String(length.minutes),
+    return launch('start', 'timer', {hours: String(length.hours), minutes: String(length.minutes),
         seconds: length.seconds ? String(length.seconds) : 'null', time: 'null', ampm: 'null'});
 }
 function setAlarmOptions(at) {
-    return clock('set', 'alarm', {time: at.time, ampm: at.ampm, hours: 'null', minutes: 'null', seconds: 'null'});
+    return launch('set', 'alarm', {time: at.time, ampm: at.ampm, hours: 'null', minutes: 'null', seconds: 'null'});
 }
 // An app from the `openApps` setting: the generic launch (BEam's Agent Mode), unless it is one of
 // the built-in ones.
@@ -426,11 +393,11 @@ function openAppOptions(pkg) {
 }
 // check_clock's fallback: the clock answers out loud, so it comes back like a `skill` tool.
 function clockQuery() {
-    return {kind: 'handover', target: CLOCK, options: clock('query', 'timer'), comeback: true, args: {}};
+    return {kind: 'handover', target: CLOCK, options: launch('query', 'timer'), comeback: true, args: {}};
 }
 // cancel_timer / cancel_alarm once the record shows something to cancel (or can't be read).
 function clockCancel(domain) {
-    return {kind: 'handover', target: CLOCK, options: clock('stop', domain), comeback: true, args: {}};
+    return {kind: 'handover', target: CLOCK, options: launch('stop', domain), comeback: true, args: {}};
 }
 function parseArgs(text) {
     if (text && typeof text === 'object') return text;
@@ -555,16 +522,15 @@ function localTime(jibo, ms) {
                 return {year: t.year, monthNum: t.monthNum, date: t.date, dayOfWeek: t.dayOfWeek || null, hour: t.hour, minute: t.minute, zone: zone.id || null};
         }
     } catch (_) {}
-    const d = new Date(ms);
-    return {year: d.getFullYear(), monthNum: d.getMonth(), date: d.getDate(), dayOfWeek: DAYS[d.getDay()], hour: d.getHours(), minute: d.getMinutes(), zone: null};
+    return strings.systemTime(ms);
 }
 // Date or localTime() -> {time: "7:30 PM", date: "Thursday, November 12, 2026", timezone}
 function describeTime(t) {
-    if (t && typeof t.getDay === 'function') t = {year: t.getFullYear(), monthNum: t.getMonth(), date: t.getDate(), dayOfWeek: DAYS[t.getDay()], hour: t.getHours(), minute: t.getMinutes(), zone: null};
+    if (t && typeof t.getDay === 'function') t = strings.systemTime(t.getTime());
     const time = ((t.hour % 12) || 12) + ':' + (t.minute < 10 ? '0' : '') + t.minute + ' ' + (t.hour < 12 ? 'AM' : 'PM');
     // Jibo's DateTime gives the weekday in lower case ("sunday").
-    const named = t.dayOfWeek || DAYS[new Date(t.year, t.monthNum, t.date).getDay()], day = named.charAt(0).toUpperCase() + named.slice(1);
-    return {time: time, date: day + ', ' + MONTHS[t.monthNum] + ' ' + t.date + ', ' + t.year, timezone: t.zone || null};
+    const named = t.dayOfWeek || strings.DAYS[new Date(t.year, t.monthNum, t.date).getDay()], day = named.charAt(0).toUpperCase() + named.slice(1);
+    return {time: time, date: day + ', ' + strings.MONTHS[t.monthNum] + ' ' + t.date + ', ' + t.year, timezone: t.zone || null};
 }
 
 // @be/clock's record in the knowledge base (read-only): its `data`, or null if it can't be read in time.
@@ -574,8 +540,7 @@ function clockRecord(jibo, timeoutMs) {
     const read = Promise.resolve().then(() => kb.onInit ? kb.onInit() : null)
         .then(() => kb.createModel('/jibo/clock/alarm_timer').loadRoot())
         .then(root => root && root.data || {});
-    const late = new Promise(resolve => setTimeout(() => resolve(null), timeoutMs || 2000));
-    return Promise.race([read, late]).catch(() => null);
+    return withTimeout(read, timeoutMs || 2000, () => null).catch(() => null);
 }
 function timerState(data, at) {
     const timer = data.timer;

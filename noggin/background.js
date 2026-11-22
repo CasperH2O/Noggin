@@ -7,7 +7,6 @@
 'use strict';
 const path = require('path');
 const createLog = require('./lib/log');
-const PORT = 8131;
 const HOST = '0.0.0.0';
 // An update stops the old revision and starts the new one at once; the old socket may still
 // hold the port for a moment.
@@ -67,8 +66,8 @@ function startBudget(log, owner) {
         const settings = require('./lib/settings');
         budgetWatch = require('./lib/budget').watch({
             readConfig: () => {
-                const dir = settings.dataDir();
-                return {budgetWarnPercent: settings.publicView(dir).values.budgetWarnPercent, adminKey: !!settings.secrets(dir).adminKey};
+                const loaded = settings.load(settings.dataDir());
+                return {budgetWarnPercent: loaded.config.budgetWarnPercent, adminKey: !!loaded.secrets.adminKey};
             },
             report: () => owner.usage(),
             log: log
@@ -96,10 +95,10 @@ function startRecap(log) {
 }
 
 function listen(log, attempt) {
-    const current = server;
+    const current = server, port = require('./lib/settings').PORT;
     if (!current || stopped) return;
-    current.listen(PORT, HOST).then(() => {
-        log.info('settings page on port ' + PORT);
+    current.listen(port, HOST).then(() => {
+        log.info('settings page on port ' + port);
     }, error => {
         if (stopped || server !== current) return;
         if (error.code === 'EADDRINUSE' && attempt < RETRIES) {
@@ -120,4 +119,4 @@ function stop() {
     return current ? current.close() : Promise.resolve();
 }
 
-module.exports = {start: start, stop: stop, PORT: PORT};
+module.exports = {start: start, stop: stop};

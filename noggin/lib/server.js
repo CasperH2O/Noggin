@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: MIT
 // The settings page's HTTP server: the page itself (web/) and a small JSON API over Noggin's
 // settings, persona and conversation logs, plus the custom skills BEacon has installed (read-only,
-// fetched here so the page never talks to BEacon) and what Jibo's OpenAI use costs (lib/usage.js). It runs inside Be's process (background.js), so every
-// handler is short, never blocks for long and never throws into Be.
+// fetched here so the page never talks to BEacon, D33) and what Jibo's OpenAI use costs
+// (lib/usage.js). It runs inside Be's process (background.js), so every handler is short, never
+// blocks for long and never throws into Be.
 // Open on the local network like BEacon (D6), with BEacon's guards: a request that changes
 // something must come from this page (Origin/Referer), be JSON and stay small; the key is write-only.
 // Node 6: ES2015 only.
 'use strict';
 const fs = require('fs'), path = require('path');
-const settings = require('./settings'), core = require('./core'), actions = require('./actions');
+const settings = require('./settings'), realtime = require('./realtime-session'), actions = require('./actions');
 const openai = require('./openai'), ConversationLog = require('./conversation-log'), describe = require('./describe');
-const memory = require('./memory'), usage = require('./usage');
+const memory = require('./memory'), usage = require('./usage'), strings = require('./text');
+const {requestJson, withTimeout} = require('./http');
 
 const BODY_MAX = 128 * 1024;
 const REQUEST_TIMEOUT_MS = 15000;
@@ -94,7 +96,7 @@ function create(options) {
     const now = options.now || (() => new Date());
     // Jibo's local time ({year, monthNum, date, ...}), as the skill sees it (background.js passes
     // actions.localTime with Jibo's home timezone).
-    const local = options.local || (ms => { const d = new Date(ms); return {year: d.getFullYear(), monthNum: d.getMonth(), date: d.getDate(), hour: d.getHours()}; });
+    const local = options.local || strings.systemTime;
     const http = options.http || require('http');
     const beacon = Object.assign({host: '127.0.0.1', port: Number(process.env.BEACON_PORT) || BEACON_PORT, timeoutMs: BEACON_TIMEOUT_MS}, options.beacon);
     let server = null, inventory = null;
@@ -108,7 +110,7 @@ function create(options) {
         const dir = dataDir(), view = settings.publicView(dir), persona = settings.persona(dir);
         const config = Object.assign({}, view.values);
         const abilities = config.actions ? {apps: Object.keys(actions.apps(config)), config: config} : null;
-        const chars = core.instructions(persona.soul, persona.identity, now(), abilities).length;
+        const chars = realtime.instructions(persona.soul, persona.identity, now(), abilities).length;
         const limits = {}, packaged = {};
         Object.keys(settings.PERSONA).forEach(name => { limits[name] = settings.PERSONA[name].max; packaged[name] = settings.packaged(name); });
         return {version: version, schema: settings.schemaView(), values: view.values, key: view.key, adminKey: view.adminKey, problems: view.problems, broken: view.broken,
@@ -123,7 +125,7 @@ function create(options) {
         if (typeof adminKey !== 'string' || !adminKey.trim()) return saveNow(body);
         const checked = saveNow(body, {dryRun: true});
         if (checked) return checked;
-        return costs.check(adminKey.trim()).then(verdict => {
+        return costs.check(cleanSecret('adminKey', adminKey)).then(verdict => {
             if (verdict.state === 'read-only') return saveNow(body);
             log.warn('settings: admin key not saved (' + verdict.state + ')');
             return {httpStatus: 400, body: {ok: false, errors: {values: {adminKey: verdict.error + ' It was not saved.'}, persona: {}}}};
@@ -156,49 +158,37 @@ function create(options) {
         return 'Paste the API key again with a new address, so the key only goes where you chose.';
     }
 
+    // A key as it would be saved (quotes and spaces dropped), or the trimmed text when it is not one.
+    function cleanSecret(name, value) {
+        const field = settings.SCHEMA.filter(f => f.key === name)[0];
+        return settings.check(field, value).value || String(value).trim();
+    }
     // POST /api/test-key {key?}: the given key, or the saved one.
     function testKey(body) {
-        const dir = dataDir();
-        const config = settings.publicView(dir).values;
-        let key = typeof body.key === 'string' ? body.key.trim() : '';
-        if (!key) { try { key = settings.read(dir).apiKey; } catch (_) { key = ''; } }
+        const loaded = settings.load(dataDir());
+        let key = typeof body.key === 'string' && body.key.trim() ? cleanSecret('apiKey', body.key) : '';
+        if (!key) key = loaded.secrets.apiKey;
+        const config = loaded.config;
         if (!key) return Promise.resolve({ok: false, error: 'no key saved yet'});
         return checkKey({apiBase: config.apiBase, apiKey: key});
     }
 
     // GET from BEacon: the parsed JSON, or an Error with a short reason. close() aborts it.
     function fromBeacon(pathname) {
-        return new Promise((resolve, reject) => {
-            let done = false, timer = null, req = null;
-            const finish = (error, value) => {
-                if (done) return;
-                done = true;
-                clearTimeout(timer);
-                fetches.delete(abort);
-                if (error) reject(error); else resolve(value);
-            };
-            const abort = reason => { try { if (req) req.abort(); } catch (_) {} finish(Error(reason)); };
-            fetches.add(abort);
-            timer = setTimeout(() => abort('no answer in ' + beacon.timeoutMs / 1000 + ' s'), beacon.timeoutMs);
-            req = http.get({host: beacon.host, port: beacon.port, path: pathname, headers: {Accept: 'application/json'}}, res => {
-                if (res.statusCode !== 200) { res.resume(); finish(Error('status ' + res.statusCode)); return; }
-                const parts = [];
-                let size = 0;
-                res.on('data', chunk => {
-                    if (done) return;
-                    size += chunk.length;
-                    if (size > BEACON_MAX) abort('answer too large');
-                    else parts.push(chunk);
-                });
-                res.on('end', () => {
-                    if (done) return;
-                    try { finish(null, JSON.parse(Buffer.concat(parts).toString('utf8'))); }
-                    catch (_) { finish(Error('not JSON')); }
-                });
-                res.on('error', error => finish(error));
+        let abort = null;
+        const untrack = () => { if (abort) fetches.delete(abort); };
+        return requestJson({target: {protocol: 'http:', hostname: beacon.host, port: beacon.port, path: pathname}, transport: http,
+            timeoutMs: beacon.timeoutMs, timeoutMessage: 'no answer in ' + beacon.timeoutMs / 1000 + ' s', maxBytes: BEACON_MAX,
+            track: cancel => { abort = cancel; fetches.add(cancel); }})
+            .then(r => {
+                untrack();
+                if (r.status !== 200) throw Error('status ' + r.status);
+                if (r.json === null) throw Error('not JSON');
+                return r.json;
+            }, error => {
+                untrack();
+                throw error.code === 'ECONNREFUSED' ? Error('not running') : error;
             });
-            req.on('error', error => finish(Error(error.code === 'ECONNREFUSED' ? 'not running' : error.message)));
-        });
     }
 
     // BEacon's list of installed custom skills; requests during a fetch share it.
@@ -238,16 +228,16 @@ function create(options) {
             if (!skill) return fail(404, 'not installed through BEacon');
             if (!String(skill.readme || '').trim()) return fail(422, 'it has no README to describe');
             const name = skill.manifest && typeof skill.manifest.name === 'string' ? skill.manifest.name : pkg;
-            return new Promise((resolve, reject) => {
-                let abort = null;
-                const timer = setTimeout(() => {
-                    const reason = 'no answer in ' + describeTimeoutMs / 1000 + ' s';
-                    if (abort) abort(reason); else reject(Error(reason));
-                }, describeTimeoutMs);
-                const untrack = () => { clearTimeout(timer); if (abort) fetches.delete(abort); };
-                post(config, '/responses', describe.request(config.fallbackModel, name, skill.readme), describeTimeoutMs, cancel => { abort = cancel; fetches.add(cancel); })
-                    .then(r => { untrack(); resolve(r); }, error => { untrack(); reject(error); });
-            }).then(r => {
+            let abort = null;
+            const untrack = () => { if (abort) fetches.delete(abort); };
+            const asked = Promise.resolve().then(() => post(config, '/responses', describe.request(config.fallbackModel, name, skill.readme), describeTimeoutMs,
+                cancel => { abort = cancel; fetches.add(cancel); }));
+            const late = () => {
+                const reason = 'no answer in ' + describeTimeoutMs / 1000 + ' s';
+                if (abort) abort(reason);
+                throw Error(reason);
+            };
+            return withTimeout(asked, describeTimeoutMs, late).then(r => { untrack(); return r; }, error => { untrack(); throw error; }).then(r => {
                 if (r.status !== 200) return fail(502, r.status === 401 ? 'OpenAI does not accept the key' : 'OpenAI answered ' + r.status);
                 const line = describe.result(r.json);
                 if (line.refused) log.warn('describe ' + pkg + ': refused "' + line.refused.slice(0, 120) + '"');
@@ -260,7 +250,7 @@ function create(options) {
     // ---- usage (the Usage tab, D60-D68) ----
     // GET /api/usage[?refresh=1]: from the robot's memory when fresh, else from OpenAI (D64).
     function usageView(refresh) {
-        const dir = dataDir(), keys = settings.secrets(dir), config = settings.publicView(dir).values;
+        const dir = dataDir(), loaded = settings.load(dir), keys = loaded.secrets, config = loaded.config;
         if (!keys.adminKey) return Promise.resolve({ok: false, state: removedAdminKey ? 'removed' : 'no-key'});
         return costs.report({adminKey: keys.adminKey, apiKey: keys.apiKey, config: config,
             conversations: config.log ? since => ConversationLog.started(dir, since) : null,

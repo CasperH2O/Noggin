@@ -6,8 +6,7 @@
 // Adapted from BEam's Agent Mode, @be/be skills/agent/comeback.js (BSD-3-Clause,
 // Copyright (c) 2026, Zane V): the polling watcher, the speech recording and the relaunch.
 // Added here: no relaunch while privacy is on, an own-skill name, and a reason on giving up.
-// Keep the 1.5 s of quiet: with 0.8 s, Noggin came back while Jibo's speech was still waiting
-// for an earlier listen to finish, and its first line was 3.5 s late.
+// QUIET_MS is long enough for Jibo's speech to settle before Noggin comes back (D120).
 // Node 6 / Chrome 53: ES2015 only.
 'use strict';
 
@@ -24,9 +23,7 @@ function plain(esml) {
 // Calls back(said) once Jibo has left `own` for another skill, is back on @be/idle and has
 // been quiet for QUIET_MS. Gives up (onGiveUp(reason)) on "Hey Jibo" once he is back on
 // idle (a new request), after `timeoutMs`, if privacy is on, or on cancel(). With `leaveMs`,
-// also when no other skill took over within that time ('never_left'): after a cloud request
-// Noggin has already ended, and an answer that never came must not let a later skill bring
-// Noggin back.
+// also when no other skill took over within that time ('never_left', D42).
 function watch(jibo, be, back, options) {
     options = options || {};
     const own = options.own, clock = options.clock || {setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: id => clearInterval(id), now: () => Date.now()};

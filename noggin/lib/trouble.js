@@ -3,6 +3,7 @@
 // says it (D70). OpenAI's refusal of the realtime WebSocket only shows as "closed (1006)" in the
 // page, so the cause is asked again over plain HTTPS (D71). Node 6: ES2015 only.
 'use strict';
+const withTimeout = require('./http').withTimeout;
 
 // screen: show the setup screen with the QR code to the settings page (lib/setup-screen.js).
 const CAUSES = {
@@ -93,10 +94,8 @@ function diagnose(config, ask, options) {
             .then(p => ({cause: p.status === 200 || p.status === 400 && !fromCode(p.json && p.json.error && p.json.error.code) ? 'unknown' : fromStatus(p) || 'unknown',
                 detail: 'responses ' + p.status}));
     }).catch(failed);
-    let timer = null;
-    const late = new Promise(resolve => { timer = setTimeout(() => resolve({cause: 'openai_down', detail: 'no answer in time'}), options.timeoutMs || CHECK_MS); });
-    return Promise.race([checks, late]).then(result => {
-        clearTimeout(timer);
+    const late = () => ({cause: 'openai_down', detail: 'no answer in time'});
+    return withTimeout(checks, options.timeoutMs || CHECK_MS, late).then(result => {
         aborts.forEach(abort => { try { abort('done'); } catch (_) {} });
         return result;
     });

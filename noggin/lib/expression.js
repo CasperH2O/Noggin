@@ -1,24 +1,13 @@
 // SPDX-License-Identifier: MIT
-// Noggin: plays an expression next to Jibo's speech instead of inside it, through
-// Jibo's animation database (jibo.animDB: getAnimByName -> createFromConfig -> play).
-//
-// - The animation's LED channels are taken out (dofs ALL minus LED), so it can never turn
-//   Noggin's ring off, and the ring refresh can't get it rejected.
-// - It plays under animDB's own owner name. A body part that speech already holds rejects
-//   the whole animation, and the other way round, so the result (STOPPED, CANCELLED,
-//   REJECTED) is logged.
-// - Animations that don't end in Jibo's neutral pose are centred afterwards, without the
-//   LED and without the base and eye position (as animDB's own return to idle, minus LED).
-//
-// Each animation is logged once, when it ends: name, load/start/end ms since Noggin opened,
-// result. Text only. Node 6 / Chrome 53: ES2015 only.
+// Noggin: plays expressions next to Jibo's speech through his animation database, with their LED
+// channels taken out so they never turn the ring off. A clip that does not end neutral is centred
+// afterwards. Each clip is logged once, when it ends. Also Jibo's thinking eye and his eye view.
+// Node 6 / Chrome 53: ES2015 only.
 'use strict';
 
-const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+const delay = require('./http').delay;
 // A platform call that never answers must not leave Noggin "busy" for good: loading may take
-// LOAD_MS, playing the animation's own length plus SLACK_MS. Then it counts as done
-// (load_timeout / play_timeout in the log) and is stopped if it ever starts
-// (ExpressionPlayer.LOAD_MS, ExpressionPlayer.SLACK_MS).
+// LOAD_MS, playing the clip's own length plus SLACK_MS; then it counts as done and is stopped.
 
 const FPS = 30;
 // The frames to ask for, or 0 when the animation has no hold frame or is long enough already.
@@ -71,11 +60,9 @@ class ExpressionPlayer {
         // One at a time: the newest replaces the one still playing (that one is not centred).
         this.stopCurrent('replaced');
         this.current = entry;
-        // A named loader cache is required: without one the load never finishes on the robot
-        // (BEam's Agent Mode thinking eye says so; its music dance uses the active cache, as here).
+        // Without a named loader cache the load never finishes on the robot.
         const config = {cache: (jibo.loader && jibo.loader.activeCache) || 'global'}, dofs = jibo.expression && jibo.expression.dofs;
-        // info.keepLed (the lab): the animation as it is, to tell a dofs problem from a loading one.
-        try { if (!info.keepLed && dofs && dofs.ALL && dofs.LED && typeof dofs.ALL.minus === 'function') config.dofs = dofs.ALL.minus(dofs.LED); } catch (_) {}
+        try { if (dofs && dofs.ALL && dofs.LED && typeof dofs.ALL.minus === 'function') config.dofs = dofs.ALL.minus(dofs.LED); } catch (_) {}
         entry.ledStripped = !!config.dofs;
         entry.endsNeutral = !(asset.meta && asset.meta.endsNeutral === false);
         let frames = asset.meta && typeof asset.meta.duration === 'number' ? asset.meta.duration : 150;
@@ -120,9 +107,10 @@ class ExpressionPlayer {
         return handle;
     }
     // Back to neutral, except the base, the eye position and the LED.
-    centre() {
-        const expression = this.jibo.expression, dofs = expression && expression.dofs;
-        if (!dofs || typeof expression.centerRobot !== 'function' || !this.allowed()) return Promise.resolve(false);
+    // options.force: also when playing is no longer allowed (Noggin closing mid-clip).
+    centre(options) {
+        const expression = this.jibo.expression, dofs = expression && expression.dofs, force = !!(options && options.force);
+        if (!dofs || typeof expression.centerRobot !== 'function' || !(force || this.allowed())) return Promise.resolve(false);
         let set;
         try { set = dofs.ALL.minus(dofs.BASE).minus(dofs.EYE_TRANSLATE).minus(dofs.LED); } catch (_) { return Promise.resolve(false); }
         return Promise.race([Promise.resolve().then(() => expression.centerRobot({requestor: 'AnimDB', dofs: set, centerGlobally: false})).then(() => true, () => false),
@@ -183,7 +171,49 @@ function watchEye(eye) {
         }
     };
 }
+// Jibo's native thinking loop on the eye, as BEam's Agent Mode plays it. Each start/stop is
+// written once through write(cycle) as a `thinking_eye` entry (D78).
+class ThinkingEye {
+    constructor(jibo, allowed, since, write) { this.jibo = jibo; this.allowed = allowed; this.since = since; this.write = write; }
+    start(turn) {
+        if (!this.allowed() || !this.jibo.animDB || this.token) return;
+        const token = this.token = {}, cycle = this.cycle = {turn: turn === undefined ? null : turn, asked: this.since()};
+        Promise.resolve().then(() => {
+            if (this.token !== token || !this.allowed()) return null;
+            const asset = this.jibo.animDB.getAnimByName('Thinking_Eye_Loop_01');
+            return asset ? asset.createFromConfig({loops: 0, cache: 'global'}) : null;
+        }).then(playback => {
+            if (!playback) return;
+            cycle.loaded = this.since();
+            if (this.token !== token || !this.allowed()) return playback.stop();
+            this.playback = playback;
+            return playback.play({disableSetFaceAnim: false, screenCenterOverride: true, ownerInformation: 'Behavior'});
+        }).catch(() => {});
+    }
+    stop() {
+        this.token = null;
+        const playback = this.playback, cycle = this.cycle; this.playback = null; this.cycle = null;
+        if (cycle) cycle.stop = this.since();
+        if (!playback) { if (cycle) this.write(cycle); return Promise.resolve(); }
+        return Promise.resolve().then(() => playback.stop()).catch(() => {}).then(() => {
+            cycle.stopped = this.since();
+            const jibo = this.jibo, expression = jibo.expression;
+            if ((jibo.privacyController && jibo.privacyController.enabled) || !expression || !expression.centerRobot) return;
+            return Promise.resolve(expression.centerRobot({requestor: 'Behavior', centerGlobally: false, dofs: expression.dofs.EYE})).then(() => { cycle.centred = this.since(); });
+        }).catch(() => {}).then(() => this.write(cycle));
+    }
+}
+// Jibo's own eye instead of the menu view, at most EYE_VIEW_MS: 'shown', 'timeout', 'error' or 'none'.
+const EYE_VIEW_MS = 1500;
+function showEye(jibo) {
+    const views = jibo.face && jibo.face.views;
+    if (!views || typeof views.forceEyeView !== 'function') return Promise.resolve('none');
+    const shown = new Promise(resolve => { try { views.forceEyeView(() => resolve('shown')); } catch (_) { resolve('error'); } });
+    return Promise.race([shown, delay(EYE_VIEW_MS).then(() => 'timeout')]);
+}
 ExpressionPlayer.LOAD_MS = 3000;
 ExpressionPlayer.SLACK_MS = 3000;
 ExpressionPlayer.watchEye = watchEye;
+ExpressionPlayer.ThinkingEye = ThinkingEye;
+ExpressionPlayer.showEye = showEye;
 module.exports = ExpressionPlayer;

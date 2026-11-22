@@ -38,11 +38,11 @@ The page has seven tabs. Changes apply to the next conversation.
 - **Usage:** what Jibo costs on your OpenAI account: this month and what is left of your OpenAI budget, a forecast, the cost per conversation, the last 7 days per day and per model (with what Noggin uses each model for), what caching saved, and when Jibo is used. It needs an OpenAI admin key with **Read only** permission from the same organization as Jibo's key; Jibo checks that the key cannot change anything and refuses any other. Jibo asks OpenAI only when you open the tab or press Refresh.
 - **History:** recent conversations as text, to read or download. Never audio, never the key.
 
-The settings page has no password, like BEacon: anyone on your home network can open it, the Usage tab too. The keys are never shown again once saved.
+The settings page has no password, like BEacon: anyone on your home network can open it. They can read the conversation history and what Jibo remembers, change settings and make him forget, and see the Usage tab. The keys are never shown again once saved.
 
 ## Privacy
 
-What you say goes to OpenAI to be answered, with your key. Noggin keeps conversation logs on Jibo as text (you can turn this off on the History tab); the logs themselves are sent nowhere.
+What you say goes to OpenAI to be answered, with your key. Noggin keeps conversation logs on Jibo as text, readable by anyone on your home network through the settings page; turn them off on the History tab if that is not what you want. The logs themselves are sent nowhere.
 
 With **Learn from conversations** on (the default), each finished conversation's text and the facts Jibo keeps go to OpenAI once more, so a small model can write the note and pick out facts. The notes and facts stay on Jibo. With conversation logs off, Jibo keeps only what was said until that note is written. Turn learning off on the Memory tab and Jibo only remembers what you ask him to; turn memory off and he remembers nothing.
 

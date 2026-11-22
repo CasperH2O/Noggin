@@ -275,7 +275,7 @@ test('who speaks: every tool declares it, and its description, the instructions 
     assert.equal(actions.clockCancel('alarm').comeback, actions.voiceOf('cancel_alarm') === 'skill');
 });
 
-// ---- Jibo's cloud features (0.10.0) ----
+// ---- Jibo's cloud features ----
 // The phrases BEam 13.0.11's main menu sends (@be/be skills/main-menu/index.js:345-394).
 const MENU_PHRASES = {joke: 'tell me a joke', surprise: 'surprise me', personal_report: 'personal report', weather: 'tell me about the weather',
     news: 'tell me about the news', calendar: 'tell me about my calendar', commute: 'what does my commute look like'};
@@ -360,7 +360,7 @@ test('comeback after the cloud with leaveMs: no skill took over in time -> give 
     assert.deepEqual(got, {said: ''});
 });
 
-// ---- "show me a picture of ___" (0.11.4; BEefy 5e229b1) ----
+// ---- "show me a picture of ___" ----
 // BEefy's own regex (JiboInteractionService.DecisionDispatch.cs PictureRequest, run on the
 // lower-cased transcript): the phrase Noggin sends must match it whole, and the subject it
 // captures is what Jibo says ("Here's a picture of <subject>.").
@@ -401,7 +401,7 @@ test('cloud turn: disableOnce is cleared whenever the pretend "Hey Jibo" did not
     const turn = cloudTurn.create(jibo, () => dialog);
     await turn.ask('tell me about the news');
     assert.deepEqual(asked, ['tell me about the news']);
-    assert.equal(turn.held(), true);
+    assert.equal(dialog._embodied.listen._disableOnce, true, 'held for the pretend turn');
     turn.release();   // the cloud never answered (the comeback gave up, or the handover failed)
     assert.equal(dialog._embodied.listen._disableOnce, false);
     turn.release();   // a second give-up path is harmless
@@ -451,10 +451,10 @@ test('cloud turn: turning to "Hey Jibo" is off for the pretend turn and back on 
     const b = orientJibo(), bNotes = [];
     const timed = cloudTurn.create(b.jibo, dialog, {settleMs: 20, maxMs: 60});
     await timed.ask('what is the weather', entry => bNotes.push(entry));
-    assert.equal(timed.orienting(), true);
+    assert.deepEqual(b.configured, [false], 'still off while no direction came');
     await sleep(90);
     assert.deepEqual(b.configured, [false, true]); assert.equal(bNotes[0].on, 'timeout'); assert.equal(bNotes[0].events, 0); assert.equal(bNotes[0].heard, undefined);
-    assert.equal(b.listeners.length, 0); assert.equal(timed.orienting(), false);
+    assert.equal(b.listeners.length, 0);
     // The handover failed or gave up first: back on at once.
     const c = orientJibo();
     const failed = cloudTurn.create(c.jibo, dialog, {settleMs: 20, maxMs: 500});
@@ -480,7 +480,7 @@ test('cloud turn: turning to "Hey Jibo" that something else switched off is left
     delete bare.jibo.action;
     const plain = cloudTurn.create(bare.jibo, dialog, {settleMs: 5, maxMs: 30});
     await plain.ask('tell me a joke');
-    assert.equal(plain.orienting(), false); assert.deepEqual(bare.asked, ['tell me a joke']);
+    assert.equal(bare.listeners.length, 0, 'nothing to turn back on'); assert.deepEqual(bare.asked, ['tell me a joke']);
 });
 
 test('extras: at most MAX_APPS extra apps reach open_app, the first ones in the setting', () => {

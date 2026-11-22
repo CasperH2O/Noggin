@@ -4,9 +4,11 @@
 // Keeps the newest KEEP logs of at most MAX_BYTES each, and at most TOTAL_BYTES together.
 // With logs off but memory learning on, it keeps only what the recap needs (who said what, and
 // how the conversation ended) in a hidden recap-*.jsonl, which the recap deletes once done (D55).
-// Node 6: ES2015 only.
+// Lines go to disk together every FLUSH_MS; a line that ends or hands over the conversation goes
+// at once, before Be may close the skill. Node 6: ES2015 only.
 'use strict';
 const fs = require('fs'), path = require('path');
+const files = require('./files'), strings = require('./text');
 const KEEP = 200;
 const MAX_BYTES = 2 * 1024 * 1024;
 const TOTAL_BYTES = 20 * 1024 * 1024;
@@ -18,9 +20,14 @@ const RECAP_TOTAL_BYTES = 4 * 1024 * 1024;
 const RECAP_MS = 2 * 86400000;      // a recap transcript never kept longer than this
 // What a recap transcript keeps of each entry, by kind.
 const RECAP_FIELDS = {startup: ['resumed'], you: ['text'], jibo: ['text'], handover: ['comeback'], comeback: ['ok', 'reason'], session_end: ['reason']};
+const FLUSH_MS = 300;
+// Entries written at once: the recap needs them to tell how a conversation ended (D54), and a
+// `speak` shows what played if Be dies mid-speech.
+const AT_ONCE = {handover: true, comeback: true, session_end: true, speak: true};
+const STAMP = /^(?:conversation|recap)-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})\.jsonl$/;
 
 function stamp(date) {
-    const two = n => (n < 10 ? '0' : '') + n;
+    const two = strings.pad2;
     return date.getFullYear() + two(date.getMonth() + 1) + two(date.getDate()) + '-' + two(date.getHours()) + two(date.getMinutes()) + two(date.getSeconds());
 }
 function folder(dataDir) { return path.join(dataDir, 'logs'); }
@@ -29,10 +36,11 @@ class ConversationLog {
     // options.recap: keep a recap transcript when the log itself is off.
     constructor(dataDir, enabled, options) {
         this.dir = folder(dataDir); this.file = null; this.bytes = 0; this.enabled = enabled !== false;
+        this.queue = []; this.timer = null; this.written = false;
         this.recapOnly = !this.enabled && !!(options && options.recap);
         if (!this.enabled && !this.recapOnly) return;
         try {
-            makeDir(this.dir);
+            files.makeDir(this.dir);
             this.file = path.join(this.dir, (this.recapOnly ? 'recap-' : 'conversation-') + stamp(new Date()) + '.jsonl');
             prune(this.dir);
             pruneRecap(this.dir, Date.now());
@@ -48,12 +56,28 @@ class ConversationLog {
             entry = kept;
         }
         let line = JSON.stringify(Object.assign({t: new Date().toISOString()}, entry)) + '\n';
+        // Counted here, before the write, so the cap holds for what is still queued.
         const full = this.bytes + Buffer.byteLength(line, 'utf8') > (this.recapOnly ? RECAP_MAX_BYTES : MAX_BYTES);
         if (full) line = JSON.stringify({t: new Date().toISOString(), kind: 'log_full', bytes: this.bytes}) + '\n';
-        try { fs.appendFileSync(this.file, line, {mode: 384}); this.bytes += Buffer.byteLength(line, 'utf8'); }
-        catch (_) { this.file = null; }
+        this.queue.push(line);
+        this.bytes += Buffer.byteLength(line, 'utf8');
+        // The first line creates the file at once, so the log shows on the settings page.
+        if (full || !this.written || AT_ONCE[entry && entry.kind]) this.flush();
+        else if (!this.timer) this.timer = setTimeout(() => { this.timer = null; this.flush(); }, FLUSH_MS);
         if (full) this.file = null;
     }
+    // Everything queued, in one append.
+    flush() {
+        clearTimeout(this.timer);
+        this.timer = null;
+        const text = this.queue.join('');
+        this.queue = [];
+        if (!this.file || !text) return;
+        try { fs.appendFileSync(this.file, text, {mode: 384}); this.written = true; }
+        catch (_) { this.file = null; }
+    }
+    // The last lines, written before the conversation lets go of the log.
+    close() { this.flush(); }
 }
 
 // Make room for one more log: the oldest go until there are fewer than KEEP and a full new
@@ -87,22 +111,14 @@ function pruneRecap(dir, now) {
 }
 function remove(dir, name) { try { fs.unlinkSync(path.join(dir, name)); } catch (_) {} }
 
-function makeDir(dir) {
-    try { fs.mkdirSync(dir, 448); }
-    catch (error) {
-        if (error.code === 'ENOENT') { makeDir(path.dirname(dir)); fs.mkdirSync(dir, 448); }
-        else if (error.code !== 'EEXIST') throw error;
-    }
-}
-
-// The logs, newest first: [{name, bytes}].
+// The logs, newest first: [{name, bytes, started}].
 function list(dataDir) {
     let names = [];
     try { names = fs.readdirSync(folder(dataDir)).filter(n => NAME.test(n)).sort().reverse(); } catch (_) {}
     return names.map(name => {
         let bytes = 0;
         try { bytes = fs.statSync(path.join(folder(dataDir), name)).size; } catch (_) {}
-        return {name: name, bytes: bytes};
+        return {name: name, bytes: bytes, started: startedAt(name)};
     });
 }
 // One log's text, or null for a name that is not a log.
@@ -123,22 +139,14 @@ function dropRecap(dataDir, names) {
     names.filter(n => RECAP_NAME.test(n)).forEach(n => remove(folder(dataDir), n));
 }
 
-// When a log started (its name, in this process's local time), or NaN.
+// When a log or recap transcript started (its name, in this process's local time): ms, or NaN.
 function startedAt(name) {
-    const m = /^conversation-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/.exec(name);
+    const m = STAMP.exec(String(name));
     return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime() : NaN;
 }
 // The start of a log: enough for its startup entry.
 const HEAD_BYTES = 8192;
-function head(dir, name) {
-    const file = path.join(dir, name);
-    if (typeof fs.openSync !== 'function') return fs.readFileSync(file, 'utf8').slice(0, HEAD_BYTES);
-    const fd = fs.openSync(file, 'r');
-    try {
-        const buffer = Buffer.alloc ? Buffer.alloc(HEAD_BYTES) : new Buffer(HEAD_BYTES);
-        return buffer.toString('utf8', 0, fs.readSync(fd, buffer, 0, HEAD_BYTES, 0));
-    } finally { fs.closeSync(fd); }
-}
+function head(dir, name) { return files.readPart(path.join(dir, name), 0, HEAD_BYTES); }
 // Conversations started since sinceMs, for the Usage tab (D66): a log whose startup says `resumed`
 // continues the one before it, so it is not counted. {count, since}: since is the oldest log's
 // start when the logs kept do not reach back to sinceMs, else null.
@@ -167,6 +175,8 @@ function started(dataDir, sinceMs) {
 
 ConversationLog.list = list;
 ConversationLog.started = started;
+ConversationLog.startedAt = startedAt;
+ConversationLog.FLUSH_MS = FLUSH_MS;
 ConversationLog.transcripts = transcripts;
 ConversationLog.dropRecap = dropRecap;
 ConversationLog.pruneRecap = (dataDir, now) => { try { pruneRecap(folder(dataDir), now); } catch (_) {} };

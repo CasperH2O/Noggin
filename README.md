@@ -123,15 +123,39 @@ The tests and tools run on a current Node.
 | `manifest.json`, `icon.png`, `banner.png` | the store entry (icon 330x300, banner 1600x900) |
 | `store/README.md` | the store text, shipped as the ZIP's README.md |
 | `noggin/index.js` | the skill: opening it starts a conversation; coming back after another skill |
-| `noggin/background.js` | starts and stops the settings page with BEam |
-| `noggin/lib/controller.js` | one conversation: microphone, realtime model, speech, expressions, tools |
+| `noggin/background.js` | starts and stops the settings page, the memory recap and the budget check with BEam |
+| **Conversation** | |
+| `noggin/lib/controller.js` | one conversation: start, the realtime events, a turn's flow, failures and close |
+| `noggin/lib/conversation-lines.js` | what Jibo says: lines, their expressions and emoji, the speak itself |
+| `noggin/lib/conversation-mic.js` | the microphone during a conversation, and the timing probes in the log |
+| `noggin/lib/conversation-tools.js` | running the model's tool calls: in Noggin, a handover, or Jibo's cloud |
+| `noggin/lib/realtime-session.js` | what the realtime model is told: session settings, instructions, resume notes |
+| `noggin/lib/openai.js` | the OpenAI connections: the realtime WebSocket and HTTPS requests |
+| `noggin/lib/labels.js` | the expression classifier's requests and how its answers are read |
+| `noggin/lib/catalog.js`, `catalog.json` | moods and their animations, dances, eye emoji (built by `tools/expression-catalog.mjs`) |
+| `noggin/lib/expression.js` | plays expressions next to speech; the thinking eye; Jibo's eye view |
+| `noggin/lib/tts-text.js` | reply text as plain words and ESML for Jibo's speech; stop phrases |
+| `noggin/lib/mic.js`, `audio.js` | the microphone (arecord on the robot) and its samples as PCM16 at 24 kHz |
+| `noggin/lib/audio-clock.js` | when each part of the sent audio left, for the timing log |
+| `noggin/lib/conversation-log.js` | the conversation logs and recap transcripts, with their caps |
+| `noggin/lib/log.js` | the system log lines, cut to a length |
+| **Tools and coming back** | |
+| `noggin/lib/actions.js` | the tools the model may call and how each one is planned; Jibo's local time |
+| `noggin/lib/comeback.js`, `cloud-turn.js` | coming back to Noggin after another skill or Jibo's cloud answered |
+| **Memory** | |
+| `noggin/lib/memory.js` | the facts and notes Jibo keeps, and the memory tools |
+| `noggin/lib/recap.js` | after each conversation: a note and new facts, written by a small model |
+| **Settings page** | |
 | `noggin/lib/settings.js` | every setting (schema, defaults, checks) and the persona overrides |
 | `noggin/lib/server.js` | the settings page's HTTP server and API |
-| `noggin/lib/actions.js` | the tools the model may call and how each one runs |
+| `noggin/lib/describe.js` | Describe with AI: a line on what an extra app does |
 | `noggin/lib/usage.js` | the Usage tab: the read-only check, Jibo's key, costs, usage and limits from OpenAI |
+| `noggin/lib/budget.js` | the budget check in the background and the heads-up |
+| **When something is wrong** | |
 | `noggin/lib/trouble.js` | what went wrong when Noggin cannot talk, and how Jibo says it |
 | `noggin/lib/setup-screen.js` | the QR code screen to the settings page |
-| `noggin/lib/budget.js` | the budget check in the background and the heads-up |
+| **Shared** | |
+| `noggin/lib/http.js`, `files.js`, `text.js` | JSON over HTTP with a timeout and size cap; safe file writes; small text and time helpers |
 | `noggin/vendor/qrcode.js` | qrcode-generator 1.4.4 (MIT), with its licence |
 | `noggin/web/` | the settings page: plain HTML, CSS and JavaScript |
 | `noggin/persona/` | the default persona: SOUL, IDENTITY and FACTS |

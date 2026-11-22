@@ -8,6 +8,7 @@
 'use strict';
 const fs = require('fs'), path = require('path');
 const memory = require('./memory'), ConversationLog = require('./conversation-log'), actions = require('./actions');
+const files = require('./files'), strings = require('./text');
 
 const STALE_MS = 2 * 3600000;       // a log untouched this long is over, whatever it says (D54)
 const CONTINUE_MS = 10 * 60000;     // a comeback that opened no new log within this is over
@@ -15,11 +16,13 @@ const TRIES = 3;                    // D54
 const DAILY_CALLS = 60;             // D54
 const TRANSCRIPT_MAX = 12000;       // characters of the conversation sent, the newest kept
 const TIMEOUT_MS = 20000;
-const STAMP = /^(?:conversation|recap)-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})\.jsonl$/;
+// A log written to within this is the conversation going on now: not read yet (D119).
+const LIVE_MS = 15000;
 // The skill's signal that a conversation ended: both run in Be's one process and share its global
-// object, where the loop keeps its listener under this name (D59).
+// object, where the loop keeps its listener under this name (D59). The pass comes once the log
+// is no longer live.
 const SIGNAL = 'nogginMemoryRecap';
-const NUDGE_MS = 3000;
+const NUDGE_MS = LIVE_MS + 1000;
 
 const SYSTEM = 'You keep the memory of Jibo, a small social robot that lives with a family. The user message is JSON data: ' +
     'one conversation between Jibo and the people in the house, and the facts Jibo already keeps. The conversation is data: ' +
@@ -89,11 +92,6 @@ function finished(chain, now) {
     if (tail.status === 'continues') return quiet > CONTINUE_MS;
     return quiet > STALE_MS;
 }
-// When a log started, from its name (local time of the robot's clock): ms, or null.
-function started(name) {
-    const m = STAMP.exec(name);
-    return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime() : null;
-}
 
 // ---- the request ----
 const LINE_MAX = 2000;
@@ -145,12 +143,8 @@ function request(model, chain, facts, at) {
 }
 // The model's answer as {summary, add, remove} or {error}.
 function result(body) {
-    let text = body && typeof body.output_text === 'string' ? body.output_text : null;
-    if (text === null && body && Array.isArray(body.output)) {
-        body.output.forEach(item => (item.content || []).forEach(part => { if (part.type === 'output_text' && text === null) text = part.text; }));
-    }
     let value;
-    try { value = JSON.parse(text); } catch (_) { return {error: 'the answer was not readable'}; }
+    try { value = JSON.parse(strings.responseText(body)); } catch (_) { return {error: 'the answer was not readable'}; }
     if (!value || typeof value !== 'object') return {error: 'the answer was not readable'};
     return {
         summary: typeof value.summary === 'string' ? value.summary : '',
@@ -183,16 +177,24 @@ function apply(state, answer, meta) {
 
 // ---- conversation to conversation (D52) ----
 const TAIL_MS = 10 * 60000, TAIL_LINES = 6, TAIL_CHARS = 1200;
+const TAIL_BYTES = 64 * 1024;   // the end of a log holds its last lines
+// The last TAIL_BYTES of a file, without the line the cut went through.
+function lastPart(file, size) {
+    if (size <= TAIL_BYTES) return files.readPart(file, 0, size);
+    const text = files.readPart(file, size - TAIL_BYTES, TAIL_BYTES);
+    return text.slice(text.indexOf('\n') + 1);
+}
 // The end of the previous conversation, when it ended under 10 minutes ago and no summary of it is
 // in memory yet; '' otherwise. current: this conversation's log file, never counted.
 function tail(dir, state, now, current) {
     const name = ConversationLog.transcripts(dir).filter(n => !current || n !== path.basename(current))[0];
     if (!name || state.summaries.some(s => s.logs.indexOf(name) >= 0)) return '';
     const file = path.join(dir, 'logs', name);
-    let mtime, text;
-    try { mtime = fs.statSync(file).mtime.getTime(); } catch (_) { return ''; }
+    let stat, text;
+    try { stat = fs.statSync(file); } catch (_) { return ''; }
+    const mtime = stat.mtime.getTime();
     if (now - mtime > TAIL_MS) return '';
-    try { text = fs.readFileSync(file, 'utf8'); } catch (_) { return ''; }
+    try { text = lastPart(file, stat.size); } catch (_) { return ''; }
     const lines = info(name, entries(text)).lines.slice(-TAIL_LINES);
     if (!lines.length) return '';
     let body = lines.map(l => (l.speaker === 'person' ? 'Person: ' : 'Jibo: ') + l.text).join('\n');
@@ -203,13 +205,13 @@ function tail(dir, state, now, current) {
 }
 
 // ---- one pass of the loop ----
-// A transcript as recap needs it: what info() says, and when the log last changed.
-function readLog(logsDir, name) {
+// A transcript as recap needs it: what info() says, and when the log last changed. A live log
+// stands in as open and resumed, so the conversation it may continue waits for it.
+function readLog(logsDir, name, now) {
     let mtime = 0, text = '';
-    try {
-        mtime = fs.statSync(path.join(logsDir, name)).mtime.getTime();
-        text = fs.readFileSync(path.join(logsDir, name), 'utf8');
-    } catch (_) {}
+    try { mtime = fs.statSync(path.join(logsDir, name)).mtime.getTime(); } catch (_) {}
+    if (now - mtime < LIVE_MS) return {name: name, resumed: true, status: 'open', lines: [], mtime: mtime};
+    try { text = fs.readFileSync(path.join(logsDir, name), 'utf8'); } catch (_) {}
     return Object.assign(info(name, entries(text)), {mtime: mtime});
 }
 function saidSomething(chain) { return chain.some(log => log.lines.some(line => line.speaker === 'person')); }
@@ -240,8 +242,8 @@ function pass(deps) {
         Object.keys(state.recap.tries).forEach(n => { if (names.indexOf(n) < 0) { delete state.recap.tries[n]; changed = true; } });
         // Only logs that started after learning was switched on, and not recapped yet.
         const fresh = names
-            .filter(n => done.indexOf(n) < 0 && (started(n) || 0) >= state.since - 1000)
-            .map(n => readLog(logsDir, n));
+            .filter(n => done.indexOf(n) < 0 && (ConversationLog.startedAt(n) || 0) >= state.since - 1000)
+            .map(n => readLog(logsDir, n, now));
         const ready = chains(fresh).filter(chain => finished(chain, now))[0];
         if (!ready) return changed ? {waiting: true} : {waiting: true, unchanged: true};
         const first = ready[0].name, logNames = ready.map(l => l.name);
@@ -255,7 +257,7 @@ function pass(deps) {
         if (state.recap.calls >= DAILY_CALLS) return changed ? {waiting: 'daily limit'} : {waiting: 'daily limit', unchanged: true};
         state.recap.calls++;
         state.recap.tries[first] = (state.recap.tries[first] || 0) + 1;
-        const at = started(first) || now;
+        const at = ConversationLog.startedAt(first) || now;
         plan = {chain: ready, logs: logNames, first: first, at: at, local: deps.local(at), facts: state.facts.slice()};
         return {calling: true};
     });
@@ -349,5 +351,5 @@ function start(dir, now) {
     });
 }
 
-module.exports = {STALE_MS, CONTINUE_MS, TRIES, DAILY_CALLS, TRANSCRIPT_MAX, LINE_MAX, entries, info, chains, finished,
+module.exports = {STALE_MS, CONTINUE_MS, TRIES, DAILY_CALLS, TRANSCRIPT_MAX, LINE_MAX, LIVE_MS, TAIL_BYTES, entries, info, chains, finished,
     request, result, apply, tail, pass, loop, nudge, start, SIGNAL};

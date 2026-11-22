@@ -2,13 +2,12 @@
 // Noggin: Jibo's live microphone as PCM16 24 kHz blocks for the realtime API.
 // Nothing is recorded or stored; blocks go to `onBlock(pcm16, levelDb)` only.
 //
-// ProcessMicrophone (the robot): `arecord` in a child process. An ALSA failure then ends
-// that child, not BE: Web Audio capture inside BE's Electron once aborted the whole skill
-// process on an alsa-lib assertion (pcm.c snd_pcm_area_copy), leaving Jibo's screen black.
+// ProcessMicrophone (the robot): `arecord` in a child process, so an ALSA failure ends that
+// child, not Be's own process with Jibo's screen in it.
 // Microphone (the simulator): BEam's jibo.media.getUserMedia through Web Audio.
 // Node 6 / Chrome 53: ES2015 only.
 'use strict';
-const core = require('./core');
+const audio = require('./audio');
 
 const DEVICE = /^[A-Za-z0-9_:,.=-]{1,64}$/;
 const BLOCK = 4096, RATE = 48000;
@@ -19,7 +18,7 @@ class ProcessMicrophone {
         this.options = options || {};
         this.device = this.options.device || 'default';
         this.label = 'arecord ' + this.device; this.rate = RATE; this.kind = 'arecord';
-        this.child = null; this.blocks = 0;
+        this.child = null;
     }
     start(onBlock) {
         const options = this.options;
@@ -70,8 +69,7 @@ class ProcessMicrophone {
         return ready;
     }
     emit(onBlock, samples, state) {
-        this.blocks++;
-        onBlock(core.toPcm24(samples, RATE, state), core.levelDb(samples));
+        onBlock(audio.toPcm24(samples, RATE, state), audio.levelDb(samples));
     }
     stop() {
         const child = this.child;
@@ -84,7 +82,7 @@ class Microphone {
     constructor(jibo, options) {
         this.jibo = jibo; this.options = options || {};
         this.stream = this.context = this.source = this.processor = null;
-        this.rate = null; this.blocks = 0; this.kind = 'webaudio';
+        this.rate = null; this.kind = 'webaudio';
     }
     // Resolves once the track is live. `onBlock(pcm16, levelDb)` runs for every block.
     start(onBlock) {
@@ -101,8 +99,7 @@ class Microphone {
             this.processor = context.createScriptProcessor(4096, 1, 1);
             this.processor.onaudioprocess = event => {
                 const samples = event.inputBuffer.getChannelData(0);
-                this.blocks++;
-                onBlock(core.toPcm24(samples, context.sampleRate, state), core.levelDb(samples));
+                onBlock(audio.toPcm24(samples, context.sampleRate, state), audio.levelDb(samples));
             };
             this.source.connect(this.processor); this.processor.connect(context.destination);
             const track = stream.getAudioTracks && stream.getAudioTracks()[0];

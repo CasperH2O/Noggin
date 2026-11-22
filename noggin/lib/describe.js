@@ -6,7 +6,7 @@
 // an answer that looks like instructions, a link or markup is refused.
 // Node 6: ES2015 only.
 'use strict';
-const actions = require('./actions');
+const actions = require('./actions'), strings = require('./text');
 
 // The start of a README is enough to say what a skill does; BEacon allows up to 1 MB.
 const README_MAX = 12000;
@@ -42,12 +42,8 @@ function request(model, name, readme) {
 
 // The model's answer as {about} or {error}.
 function result(body) {
-    let text = body && typeof body.output_text === 'string' ? body.output_text : null;
-    if (text === null && body && Array.isArray(body.output)) {
-        body.output.forEach(item => (item.content || []).forEach(part => { if (part.type === 'output_text' && text === null) text = part.text; }));
-    }
     let line;
-    try { line = JSON.parse(text).line; } catch (_) { return {error: 'the answer was not readable'}; }
+    try { line = JSON.parse(strings.responseText(body)).line; } catch (_) { return {error: 'the answer was not readable'}; }
     let about = actions.cleanNote(line).replace(/^["']+|["']+$/g, '').trim();
     if (!about) return {error: 'the README does not say what it does'};
     if (about.length > actions.NOTE_MAX) about = actions.cutNote(about);

@@ -82,9 +82,7 @@ function create(jibo, dialog, options) {
                 const embodied = dialog()._embodied;
                 if (embodied && embodied.listen) embodied.listen._disableOnce = false;
             } catch (_) {}
-        },
-        held: () => held,
-        orienting: () => !!orient
+        }
     };
 }
 

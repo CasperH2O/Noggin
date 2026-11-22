@@ -6,6 +6,7 @@
 // (D64). Names and emails in OpenAI's answers never reach the page. Node 6: ES2015 only.
 'use strict';
 const https = require('https'), crypto = require('crypto');
+const {requestJson, withTimeout} = require('./http'), strings = require('./text');
 
 const HOST = 'api.openai.com';
 const BASE = '/v1/organization';
@@ -38,33 +39,9 @@ function isAdminKey(key) { return typeof key === 'string' && key.indexOf(ADMIN_P
 let agent = null;
 function request(method, pathname, key, timeoutMs, track) {
     agent = agent || new https.Agent({keepAlive: true, maxSockets: 4});
-    return new Promise((resolve, reject) => {
-        let done = false;
-        const finish = (error, value) => { if (done) return; done = true; if (error) reject(error); else resolve(value); };
-        let req;
-        try {
-            req = https.request({method: method, host: HOST, path: pathname, agent: agent,
-                headers: {Authorization: 'Bearer ' + key, Accept: 'application/json'}}, res => {
-                const parts = [];
-                let size = 0;
-                res.on('data', chunk => {
-                    size += chunk.length;
-                    if (size > ANSWER_MAX) { try { req.abort(); } catch (_) {} finish(Error('answer too large')); }
-                    else parts.push(chunk);
-                });
-                res.on('end', () => {
-                    let json = null;
-                    try { json = JSON.parse(Buffer.concat(parts).toString('utf8')); } catch (_) {}
-                    finish(null, {status: res.statusCode, json: json});
-                });
-                res.on('error', error => finish(error));
-            });
-        } catch (error) { return finish(error); }
-        req.on('error', error => finish(error));
-        req.setTimeout(timeoutMs || REQUEST_TIMEOUT_MS, () => { try { req.abort(); } catch (_) {} finish(Error('no answer in time')); });
-        if (track) track(reason => { try { req.abort(); } catch (_) {} finish(Error(reason || 'stopped')); });
-        req.end();
-    });
+    return requestJson({target: {protocol: 'https:', hostname: HOST, path: pathname}, method: method, agent: agent,
+        headers: {Authorization: 'Bearer ' + key}, timeoutMs: timeoutMs || REQUEST_TIMEOUT_MS, timeoutMessage: 'no answer in time',
+        maxBytes: ANSWER_MAX, track: track});
 }
 
 // The OpenAI error text, cut short.
@@ -259,7 +236,7 @@ function hourGrid(buckets, now, local) {
         const t = local(now - i * DAY_MS), key = dayKey(t);
         if (index[key] !== undefined) continue;
         index[key] = rows.length;
-        rows.push({day: t.year + '-' + pad(t.monthNum + 1) + '-' + pad(t.date), counts: new Array(24).fill(0)});
+        rows.push({day: t.year + '-' + strings.pad2(t.monthNum + 1) + '-' + strings.pad2(t.date), counts: new Array(24).fill(0)});
     }
     let max = 0;
     buckets.forEach(bucket => {
@@ -272,7 +249,6 @@ function hourGrid(buckets, now, local) {
     });
     return {rows: rows, max: max};
 }
-function pad(n) { return (n < 10 ? '0' : '') + n; }
 
 // The conversation key matched against the project keys' redacted values (D63).
 function redactedParts(value) {
@@ -293,7 +269,7 @@ function create(options) {
     options = options || {};
     const send = options.request || request;
     const now = options.now || (() => Date.now());
-    const local = options.local || (ms => { const d = new Date(ms); return {year: d.getFullYear(), monthNum: d.getMonth(), date: d.getDate(), hour: d.getHours()}; });
+    const local = options.local || strings.systemTime;
     const log = options.log || {info() {}, warn() {}, error() {}};
     const aborts = new Set();
     let cache = null, running = null, closed = false;
@@ -329,13 +305,10 @@ function create(options) {
     // The read-only check alone, for saving a new key; it ends within CHECK_TIMEOUT_MS.
     function check(adminKey) {
         const own = new Set();
-        return new Promise(resolve => {
-            const timer = setTimeout(() => {
-                own.forEach(abort => abort('no answer in time'));
-                resolve({state: 'unknown', error: 'OpenAI did not answer the check in time.'});
-            }, CHECK_TIMEOUT_MS);
-            probe(adminKey, own).then(verdict => { clearTimeout(timer); resolve(verdict); });
-        });
+        return withTimeout(Promise.resolve().then(() => probe(adminKey, own)), CHECK_TIMEOUT_MS, () => {
+            own.forEach(abort => abort('no answer in time'));
+            return {state: 'unknown', error: 'OpenAI did not answer the check in time.'};
+        }).catch(error => ({state: 'unknown', error: 'Could not check the key (' + String(error && error.message || error).slice(0, 80) + ').'}));
     }
 
     // Jibo's key among the project keys: {id, name, hint, project} or an Error with a reason.
@@ -411,13 +384,11 @@ function create(options) {
         }
         if (running && running.fp === fp) return running.promise;
         const own = new Set(), current = {fp: fp};
-        const promise = new Promise(resolve => {
-            const timer = setTimeout(() => {
-                own.forEach(abort => abort('no answer in time'));
-                resolve(failed(Error('no answer in time')));
-            }, FETCH_TIMEOUT_MS);
-            fetchAll(input, own).then(view => { clearTimeout(timer); resolve(view); }, error => { clearTimeout(timer); resolve(failed(error)); });
-        }).then(view => {
+        const late = () => {
+            own.forEach(abort => abort('no answer in time'));
+            throw Error('no answer in time');
+        };
+        const promise = withTimeout(Promise.resolve().then(() => fetchAll(input, own)), FETCH_TIMEOUT_MS, late).catch(failed).then(view => {
             if (view.state === 'write' && input.onWriteKey) {
                 try { input.onWriteKey(input.adminKey); }
                 catch (error) {

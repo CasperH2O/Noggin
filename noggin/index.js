@@ -10,13 +10,14 @@
 const BeSkill = require('@be/be-framework').BeSkill;
 const jibo = require('jibo');
 const settings = require('./lib/settings'), Conversation = require('./lib/controller'), Microphone = require('./lib/mic');
-const openai = require('./lib/openai'), core = require('./lib/core'), ConversationLog = require('./lib/conversation-log');
+const openai = require('./lib/openai'), ttsText = require('./lib/tts-text'), realtime = require('./lib/realtime-session'), ConversationLog = require('./lib/conversation-log');
 const actions = require('./lib/actions'), comeback = require('./lib/comeback'), createLog = require('./lib/log');
 const memory = require('./lib/memory'), recap = require('./lib/recap'), trouble = require('./lib/trouble'), budget = require('./lib/budget');
-const SetupScreen = require('./lib/setup-screen');
+const SetupScreen = require('./lib/setup-screen'), ExpressionPlayer = require('./lib/expression');
 const fs = require('fs');
 const OWN = require('./package.json').name, VERSION = require('./package.json').version;
 const RESUME_MS = 15000;
+const SAY_MS = 20000;   // the longest a trouble or setup line may take
 // After any handover the other skill (or @be/nimbus for the cloud) takes over within seconds; if
 // none has by then, the comeback gives up, so a later unrelated skill never brings Noggin back.
 const LEAVE_MS = 30000;
@@ -46,17 +47,23 @@ class Noggin extends BeSkill {
             if (current()) this.exit({noElementsOfSurprise: true});
         });
     }
-    // Opened from the menu, the menu view would stay; the emoji needs Jibo's eye (at most 1.5 s).
-    eye() {
-        const views = jibo.face && jibo.face.views;
-        if (!views || typeof views.forceEyeView !== 'function') return Promise.resolve();
-        return Promise.race([new Promise(resolve => { try { views.forceEyeView(() => resolve()); } catch (_) { resolve(); } }),
-            new Promise(resolve => setTimeout(resolve, 1500))]);
-    }
-    // anim: an eye emoji played with the words (D70).
+    // Opened from the menu, the menu view would stay; the emoji needs Jibo's eye.
+    eye() { return ExpressionPlayer.showEye(jibo); }
+    // anim: an eye emoji played with the words (D70). Stopped after SAY_MS, as a conversation line (D114).
     say(text, anim) {
         const speech = jibo.embodied && jibo.embodied.speech;
-        return speech && speech.speak ? Promise.resolve(speech.speak((anim ? core.animEsml(anim) : '') + core.speechText(text))).catch(() => {}) : Promise.resolve();
+        if (!speech || !speech.speak) return Promise.resolve();
+        // A stop after this open() was closed would cut the next skill's speech.
+        const generation = this.generation;
+        let timer = null;
+        const spoken = Promise.resolve().then(() => speech.speak((anim ? ttsText.animEsml(anim) : '') + ttsText.speechText(text))).catch(() => {});
+        const late = new Promise(resolve => {
+            timer = setTimeout(() => {
+                try { if (speech.stop && generation === this.generation) speech.stop(); } catch (_) {}
+                resolve();
+            }, SAY_MS);
+        });
+        return Promise.race([spoken, late]).then(() => clearTimeout(timer));
     }
     talk(dataDir, back, openedAt, startup) {
         const generation = this.generation;
@@ -77,7 +84,7 @@ class Noggin extends BeSkill {
             : new Microphone(jibo, {onTrack: name => log.write({kind: 'microphone_track', event: name})});
         const abilities = config.actions ? {apps: Object.keys(actions.apps(config)), config: config} : null;
         const notes = this.memoryNotes(dataDir, config, back, log, openedAt);
-        const instructions = core.instructions(persona.soul, persona.identity, actions.localTime(jibo), abilities, notes);
+        const instructions = realtime.instructions(persona.soul, persona.identity, actions.localTime(jibo), abilities, notes);
         session = this.session = new Conversation({
             jibo: jibo, config: config, log: log, version: VERSION,
             instructions: instructions,

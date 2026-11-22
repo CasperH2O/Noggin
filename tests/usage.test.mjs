@@ -173,9 +173,10 @@ test('a write key that cannot be deleted: an error, and the next look asks again
 test('the save check ends within its own time limit; a fetch\'s timeout leaves other requests alone', async () => {
     const hang = (method, pathname, key, timeout, track) => new Promise((resolve, reject) => track(reason => reject(Error(reason))));
     const u = usage.create({request: hang, now: () => NOW});
-    const started = Date.now(), verdict = await u.check(READ);
+    // A monotonic clock: the wall clock can jump while the test machine is busy.
+    const started = performance.now(), verdict = await u.check(READ);
     assert.equal(verdict.state, 'unknown');
-    assert.ok(Date.now() - started < 11000);
+    assert.ok(performance.now() - started < 11000);
 });
 
 test('a write key: no data and onWriteKey with that key; never cached', async () => {

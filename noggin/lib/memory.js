@@ -6,7 +6,7 @@
 // read-modify-write (update) is never interleaved (D51). Node 6: ES2015 only.
 'use strict';
 const fs = require('fs'), path = require('path');
-const settings = require('./settings');
+const files = require('./files'), strings = require('./text');
 
 const FILE = 'memory.json';
 const FACT_MAX = 160;           // characters in one fact (D51)
@@ -18,8 +18,6 @@ const LOADED_SUMMARIES = 3;
 const KEEP_DAYS = 14;           // D48
 const MAX_SUMMARIES = 300;
 const DAY_MS = 86400000;
-const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 // Text that speaks to the model or carries markup is not a memory: it would reach the
@@ -31,8 +29,6 @@ const SUSPECT = [
     /\b(remember|forget|recall|about_jibo|open_app|use_skill|play_music|play_radio|set_timer|set_alarm|get_time)_?\(/i,
     /https?:|www\.|[<>{}[\]`|\\]/i
 ];
-const PLAIN = {à: 'a', á: 'a', â: 'a', ã: 'a', ä: 'a', å: 'a', ç: 'c', è: 'e', é: 'e', ê: 'e', ë: 'e', ì: 'i', í: 'i', î: 'i', ï: 'i',
-    ñ: 'n', ò: 'o', ó: 'o', ô: 'o', õ: 'o', ö: 'o', ø: 'o', ù: 'u', ú: 'u', û: 'u', ü: 'u', ý: 'y', ÿ: 'y', ß: 'ss', æ: 'ae', œ: 'oe', ĳ: 'ij'};
 const STOP = ('the a an and or but of to in on at for with about from by is are was were be been am do does did have has had ' +
     'it its this that these those there here what when where who whom which how why can could would should will shall may might ' +
     'me my mine you your yours we our us they them their he him his she her i im ive id youre dont not no yes just very really ' +
@@ -104,7 +100,7 @@ function sane(value) {
     state.recap.calls = Number(recap.calls) || 0;
     return state;
 }
-function write(dir, state) { settings.atomic(file(dir), JSON.stringify(state)); }
+function write(dir, state) { files.atomic(file(dir), JSON.stringify(state)); }
 // Read, change with fn(state), write; returns what fn returned. Nothing is written when fn
 // returns {unchanged: true}.
 function update(dir, fn) {
@@ -114,11 +110,8 @@ function update(dir, fn) {
 }
 
 // ---- text ----
-function fold(text) {
-    return String(text || '').toLowerCase().replace(/[^\x00-\x7f]/g, letter => PLAIN[letter] !== undefined ? PLAIN[letter] : letter);
-}
 // The same fact however it is written: case, accents, punctuation and spacing do not count.
-function key(text) { return fold(text).replace(/[^a-z0-9]+/g, ' ').trim(); }
+function key(text) { return strings.fold(text).replace(/[^a-z0-9]+/g, ' ').trim(); }
 // The words a search compares: no stop words, a plural "s" dropped.
 function words(text) {
     const out = [];
@@ -141,8 +134,7 @@ function clean(text, max) {
 }
 
 // ---- dates (local to Jibo's home: a {year, monthNum, date, hour} from actions.localTime) ----
-const two = n => (n < 10 ? '0' : '') + n;
-function dayOf(t) { return t.year + '-' + two(t.monthNum + 1) + '-' + two(t.date); }
+function dayOf(t) { return t.year + '-' + strings.pad2(t.monthNum + 1) + '-' + strings.pad2(t.date); }
 function partOf(t) {
     if (t.hour < 5) return 'night';
     if (t.hour < 12) return 'morning';
@@ -155,8 +147,8 @@ function when(day, today) {
     const ago = dayNumber(today) - dayNumber(day), p = day.split('-');
     if (ago <= 0) return 'Today';
     if (ago === 1) return 'Yesterday';
-    if (ago < 7) return 'On ' + DAYS[new Date(Date.UTC(+p[0], +p[1] - 1, +p[2])).getUTCDay()];
-    return 'On ' + MONTHS[+p[1] - 1] + ' ' + +p[2];
+    if (ago < 7) return 'On ' + strings.DAYS[new Date(Date.UTC(+p[0], +p[1] - 1, +p[2])).getUTCDay()];
+    return 'On ' + strings.MONTHS[+p[1] - 1] + ' ' + +p[2];
 }
 function label(summary, today) {
     const day = when(summary.day, today), part = summary.part;

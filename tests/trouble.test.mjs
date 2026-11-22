@@ -169,7 +169,7 @@ test('budget: low only with a limit and at most the share left; the watch waits,
     assert.equal(budget.notice('2026-11-21', 10), null);
     delete global[budget.HUB];
     assert.equal(budget.notice('2026-11-21', 10), null);
-    assert.equal(settings.DEFAULTS.budgetWarnPercent, 10);
+    assert.equal(settings.SCHEMA.find(f => f.key === 'budgetWarnPercent').default, 10);
 });
 
 test('setup screen content and layout: link to the Brain tab, steps per cause, inside the safe area, QR fits the plate', () => {

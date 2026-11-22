@@ -7,7 +7,7 @@
 // An animation qualifies when it has no sound of its own (it would clash with Jibo's voice),
 // starts in the neutral pose, lasts at most MAX_FRAMES and is not a sound-only clip. One that
 // ends off-neutral is fine: Noggin returns Jibo to neutral afterwards. One with an LED layer is
-// marked: Noggin plays it only with its LED channels removed (expressionPlay animdb).
+// marked: Noggin plays it only with its LED channels removed (lib/expression.js).
 // Size: `small` is eye-only or at most SMALL_FRAMES long; `big` is a body move.
 // It also holds an emoji index: word -> the eye emoji (pictures on Jibo's eye, no body move)
 // that show it, from each emoji's meta terms and name. Noggin shows one when Jibo says the word.
@@ -21,7 +21,7 @@ const MAX_FRAMES = 120, SMALL_FRAMES = 40;
 
 // mood -> the animation database categories it draws from, extra animations by name, and names left out by hand (posture shifts, slow "no" headshakes,
 // near-duplicates that belong to another mood). What each mood means for the decision model
-// is in noggin/lib/core.js (EXPRESSIONS).
+// is in noggin/lib/catalog.js (MOODS).
 export const MOODS = {
     happy: {categories: ['happy', 'excited'], exclude: ['content_01', 'shift_15', 'success_01']},
     content: {names: ['content_01', 'eye_happy_00', 'eye_happy_01', 'eye_happy_02']},
@@ -57,7 +57,7 @@ export const MOODS = {
 
 // Dance styles: the dances with their own music (category dance, hasAudio), grouped by style,
 // each with the words that ask for it ("do the robot", "a slow dance"). Noggin plays a dance of the
-// style the person names, otherwise any of them (core.danceChoice / pickDance). A dance may sit in
+// style the person names, otherwise any of them (catalog.danceChoice / pickDance). A dance may sit in
 // more than one style; every dance with music must sit in at least one. Words are lower case and
 // matched as whole words or phrases; keep them specific ("house" alone would catch "around the house").
 export const DANCES = {

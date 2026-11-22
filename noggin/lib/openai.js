@@ -1,17 +1,27 @@
 // SPDX-License-Identifier: MIT
-// Noggin: the OpenAI connections. The realtime session uses the page's own
-// WebSocket with the key in the subprotocol (proven on the robot: Chrome 53's TLS
-// reaches api.openai.com). The expression classifier uses Node https with a
-// keep-alive agent (Node's own CAs work on the robot) to OpenAI's Decisions API, falling back to the page's
-// fetch; the settings page's "Describe with AI" uses the same Node https (post). Node 6 / Chrome 53: ES2015 only.
+// Noggin: the OpenAI connections. The realtime session uses the page's own WebSocket with the
+// key in the subprotocol. The expression classifier, the recap and "Describe with AI" use Node
+// https with keep-alive agents, falling back to the page's fetch where Node's TLS fails (the
+// simulator). Node 6 / Chrome 53: ES2015 only.
 'use strict';
 const https = require('https'), http = require('http'), url = require('url');
-const core = require('./core');
+const labels = require('./labels'), web = require('./http');
+
+const ANSWER_MAX = 1024 * 1024;
+const CLASSIFY_TIMEOUT_MS = 10000;
 
 function realtimeUrl(config) {
     return config.apiBase.replace(/^http/, 'ws') + '/realtime?model=' + encodeURIComponent(config.realtimeModel);
 }
-// Resolves {send, listen, close, buffered} once session.created arrives.
+// An error text never carries the key: the conversation log keeps error texts.
+function withoutKey(error, key) {
+    const text = String(error && error.message || error);
+    if (!key || text.indexOf(key) < 0) return error;
+    const safe = Error(text.split(key).join(key.slice(0, 3) + '…' + key.slice(-4)));
+    if (error && error.code) safe.code = error.code;
+    return safe;
+}
+// Resolves {send, listen, close, timing} once session.created arrives.
 function connect(config, WebSocketClass) {
     const Socket = WebSocketClass || (typeof WebSocket === 'function' ? WebSocket : null);
     return new Promise((resolve, reject) => {
@@ -20,16 +30,14 @@ function connect(config, WebSocketClass) {
         const api = {
             listen(fn) { listeners.push(fn); return () => { listeners = listeners.filter(l => l !== fn); }; },
             send(event) { if (socket.readyState === 1) socket.send(JSON.stringify(event)); },
-            buffered() { return socket.bufferedAmount || 0; },
             close() { try { socket.close(); } catch (_) {} },
-            session: null,
             // Startup timing (Date.now()): asked, socket open, session.created.
             timing: {start: Date.now(), open: null, created: null}
         };
         const timer = setTimeout(() => fail(Error('no session from OpenAI within 15 s')), 15000);
         function fail(error) {
             if (settled) return;
-            settled = true; clearTimeout(timer); api.close(); reject(error);
+            settled = true; clearTimeout(timer); api.close(); reject(withoutKey(error, config.apiKey));
         }
         try { socket = new Socket(realtimeUrl(config), ['realtime', 'openai-insecure-api-key.' + config.apiKey]); }
         catch (error) { return fail(error); }
@@ -38,7 +46,7 @@ function connect(config, WebSocketClass) {
             let event;
             try { event = JSON.parse(message.data); } catch (_) { return; }
             if (!settled) {
-                if (event.type === 'session.created') { settled = true; clearTimeout(timer); api.timing.created = Date.now(); api.session = event.session || {}; resolve(api); }
+                if (event.type === 'session.created') { settled = true; clearTimeout(timer); api.timing.created = Date.now(); resolve(api); }
                 else if (event.type === 'error') fail(Error('OpenAI: ' + (event.error && (event.error.code || event.error.message) || 'error')));
                 return;
             }
@@ -90,88 +98,73 @@ function watchConnections(fn) {
     closeWatcher = fn;
     return () => { if (closeWatcher === fn) closeWatcher = null; };
 }
+function agentFor(protocol) {
+    const transport = protocol === 'https:' ? https : http;
+    return agents[protocol] || (agents[protocol] = new transport.Agent({keepAlive: true, maxSockets: 3}));
+}
+// -> {status, json, ms, conn}. method: POST (default, with the JSON body) or GET (no body).
 // track(abort), when given, receives a function that cancels the request.
 function nodeJson(config, route, body, timeoutMs, track, method) {
-    try { return nodeRequest(config, route, body, timeoutMs, track, method); }
-    catch (error) { return Promise.reject(error); }
-}
-// method: POST (default, with the JSON body) or GET (no body).
-function nodeRequest(config, route, body, timeoutMs, track, method) {
     method = method || 'POST';
-    const target = url.parse(config.apiBase + route), started = Date.now(), data = method === 'GET' ? null : JSON.stringify(body);
-    const module_ = target.protocol === 'https:' ? https : http;
-    const agent = agents[target.protocol] || (agents[target.protocol] = new module_.Agent({keepAlive: true, maxSockets: 3}));
-    const headers = {Authorization: 'Bearer ' + config.apiKey, Accept: 'application/json'};
-    if (data !== null) { headers['Content-Type'] = 'application/json'; headers['Content-Length'] = Buffer.byteLength(data); }
-    const options = {method: method, protocol: target.protocol, hostname: target.hostname, port: target.port, path: target.path, agent: agent, headers: headers};
     const conn = {};
-    return new Promise((resolve, reject) => {
-        const request = module_.request(options, response => {
-            const parts = [];
-            response.on('data', c => parts.push(c));
-            response.on('end', () => {
-                let json = null;
-                try { json = JSON.parse(Buffer.concat(parts).toString('utf8')); } catch (_) {}
-                resolve({status: response.statusCode, json: json, ms: Date.now() - started, conn: conn});
-            });
-        });
-        watchConnection(request, started, conn);
-        request.on('error', reject);
-        request.setTimeout(timeoutMs || 10000, () => { request.abort(); reject(Error('timeout')); });
-        if (track) track(reason => { request.abort(); reject(Error(reason || 'stopped')); });
-        if (data === null) request.end(); else request.end(data);
-    });
+    let target;
+    try { target = url.parse(config.apiBase + route); } catch (error) { return Promise.reject(error); }
+    return web.requestJson({target: target, method: method, body: method === 'GET' ? null : body, agent: agentFor(target.protocol),
+        headers: {Authorization: 'Bearer ' + config.apiKey}, timeoutMs: timeoutMs, maxBytes: ANSWER_MAX, track: track,
+        watch: (request, started) => watchConnection(request, started, conn)})
+        .then(r => Object.assign(r, {conn: conn}));
+}
+function keyProblem(status) {
+    if (status === 401) return 'OpenAI does not accept this key';
+    if (status === 429) return 'no credit or too many requests';
+    return 'OpenAI answered ' + status;
 }
 // Does this key work? GET /models, for the settings page: {ok, status, ms, error}.
 function checkKey(config, timeoutMs) {
-    const target = url.parse(config.apiBase + '/models'), started = Date.now();
-    const module_ = target.protocol === 'https:' ? https : http;
-    return new Promise(resolve => {
-        let settled = false;
-        const finish = result => { if (!settled) { settled = true; resolve(Object.assign({ms: Date.now() - started}, result)); } };
-        let request;
-        try {
-            request = module_.request({method: 'GET', protocol: target.protocol, hostname: target.hostname, port: target.port, path: target.path,
-                headers: {Authorization: 'Bearer ' + config.apiKey, Accept: 'application/json'}}, response => {
-                response.resume();
-                response.on('end', () => {
-                    const status = response.statusCode;
-                    finish(status === 200 ? {ok: true, status: status}
-                        : {ok: false, status: status, error: status === 401 ? 'OpenAI does not accept this key' : status === 429 ? 'no credit or too many requests' : 'OpenAI answered ' + status});
-                });
-            });
-        } catch (error) { return finish({ok: false, status: null, error: String(error.message || error)}); }
-        request.on('error', error => finish({ok: false, status: null, error: String(error.message || error)}));
-        request.setTimeout(timeoutMs || 8000, () => { request.abort(); finish({ok: false, status: null, error: 'no answer from OpenAI'}); });
-        request.end();
-    });
+    const started = Date.now(), finish = result => Object.assign({ms: Date.now() - started}, result);
+    return Promise.resolve().then(() => web.requestJson({url: config.apiBase + '/models', headers: {Authorization: 'Bearer ' + config.apiKey},
+        timeoutMs: timeoutMs || 8000, timeoutMessage: 'no answer from OpenAI', maxBytes: 4 * ANSWER_MAX}))
+        .then(r => finish(r.status === 200 ? {ok: true, status: r.status} : {ok: false, status: r.status, error: keyProblem(r.status)}),
+            error => finish({ok: false, status: null, error: String(error && error.message || error)}));
 }
-function pageJson(config, route, body, method) {
+// The page's fetch, ended after timeoutMs (Chrome 53 has no AbortController).
+function pageJson(config, route, body, method, timeoutMs) {
     const started = Date.now(), get = method === 'GET';
     if (typeof fetch !== 'function') return Promise.reject(Error('no fetch'));
     const headers = {Authorization: 'Bearer ' + config.apiKey, Accept: 'application/json'};
     if (!get) headers['Content-Type'] = 'application/json';
-    return fetch(config.apiBase + route, get ? {method: 'GET', headers: headers} : {method: 'POST', body: JSON.stringify(body), headers: headers})
-        .then(response => response.json().catch(() => null).then(json => ({status: response.status, json: json, ms: Date.now() - started})));
+    const asked = fetch(config.apiBase + route, get ? {method: 'GET', headers: headers} : {method: 'POST', body: JSON.stringify(body), headers: headers})
+        .then(response => response.text().then(text => {
+            // The same cap as Node's path; characters, which are never more than the bytes.
+            if (text.length > web.MAX_BYTES) throw Error('answer too large');
+            let json = null;
+            try { json = JSON.parse(text); } catch (_) {}
+            return {status: response.status, json: json, ms: Date.now() - started};
+        }));
+    return web.withTimeout(asked, timeoutMs || web.TIMEOUT_MS);
+}
+// Only Node's own HTTPS failing (the simulator's TLS) moves a caller to the page's fetch. Being
+// offline, a timeout, a stop or an oversized answer fails just that call.
+const OFFLINE = ['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ECONNRESET', 'ENETUNREACH', 'EHOSTUNREACH', 'ETIMEDOUT'];
+function switchesToPage(error) {
+    if (typeof fetch !== 'function' || !error) return false;
+    return OFFLINE.indexOf(error.code) < 0 && !/^(timeout|stopped|done|answer too large)$/.test(error.message);
 }
 // post(route, body, timeoutMs) -> {status, json, ms}: Node https, and the page's fetch from the
-// first time Node's TLS fails (the simulator). Being offline is not a reason to switch: those errors
-// just fail this call. Either way the call ends within timeoutMs, and abort() ends it at once.
-const OFFLINE = ['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ECONNRESET', 'ENETUNREACH', 'EHOSTUNREACH', 'ETIMEDOUT'];
+// first time Node's TLS fails. Either way the call ends within timeoutMs, and abort() ends it at once.
 function poster(config) {
     let usePage = false, cancel = null;
     function timed(promise, timeoutMs) {
-        return new Promise((resolve, reject) => {
-            const end = error => { clearTimeout(timer); cancel = null; reject(error); };
-            const timer = setTimeout(() => end(Error('timeout')), timeoutMs || 20000);
-            cancel = reason => end(Error(reason || 'stopped'));
-            promise.then(value => { clearTimeout(timer); cancel = null; resolve(value); }, end);
-        });
+        const stopped = new Promise((resolve, reject) => { cancel = reason => reject(Error(reason || 'stopped')); });
+        const done = () => { cancel = null; };
+        return web.withTimeout(Promise.race([promise, stopped]), timeoutMs || 20000)
+            .then(value => { done(); return value; }, error => { done(); throw error; });
     }
     function viaNode(route, body, timeoutMs) {
         let abortNode = null;
         const request = nodeJson(config, route, body, timeoutMs, abort => { abortNode = abort; }).then(r => {
-            if (r.json === null) throw Error('unreadable response');
+            // A success Node could not read is its HTTPS failing; an error page (a 502) is just that call's answer.
+            if (r.json === null && r.status >= 200 && r.status < 300) throw Error('unreadable response');
             return r;
         });
         return timed(request, timeoutMs).catch(error => {
@@ -179,27 +172,24 @@ function poster(config) {
             throw error;
         });
     }
+    const viaPage = (route, body, timeoutMs) => timed(pageJson(config, route, body, 'POST', timeoutMs), timeoutMs);
     const post = (route, body, timeoutMs) => {
-        if (usePage) return timed(pageJson(config, route, body), timeoutMs);
+        if (usePage) return viaPage(route, body, timeoutMs);
         return viaNode(route, body, timeoutMs).catch(error => {
-            const offline = error && (OFFLINE.indexOf(error.code) >= 0 || /^(timeout|stopped)$/.test(error.message));
-            if (offline) throw error;
+            if (!switchesToPage(error)) throw error;
             usePage = true;
-            return timed(pageJson(config, route, body), timeoutMs);
+            return viaPage(route, body, timeoutMs);
         });
     };
     post.abort = () => { if (cancel) cancel('stopped'); };
     return post;
 }
 // ask(method, route, body, timeoutMs, track) -> {status, json}, for the trouble check (lib/trouble.js):
-// Node https, or the page's fetch when Node's TLS fails (the simulator). An offline error is
-// the answer itself, never a reason to switch.
+// Node https, or the page's fetch when Node's TLS fails. An offline error is the answer itself.
 function asker(config) {
     return (method, route, body, timeoutMs, track) => nodeJson(config, route, body, timeoutMs, track, method).catch(error => {
-        if (OFFLINE.indexOf(error && error.code) >= 0 || /^(timeout|stopped|done)$/.test(error && error.message) || typeof fetch !== 'function') throw error;
-        let timer = null;
-        const late = new Promise((resolve, reject) => { timer = setTimeout(() => reject(Error('timeout')), timeoutMs || 10000); });
-        return Promise.race([pageJson(config, route, body, method), late]).then(r => { clearTimeout(timer); return r; }, e => { clearTimeout(timer); throw e; });
+        if (!switchesToPage(error)) throw error;
+        return pageJson(config, route, body, method, timeoutMs);
     });
 }
 // A result with the request's connection timing, when Node's agent made it (D87).
@@ -219,26 +209,27 @@ const WARM = [
 // The size question (small/big) is asked unless config.expressionSize is false; if the
 // Decisions API refuses two questions, the rest of the session asks only the expression.
 function classifier(config, post) {
-    let usePage = false, api = config.classifierApi === 'responses' ? 'responses' : 'decisions', withSize = config.expressionSize !== false;
-    post = post || ((route, body) => usePage ? pageJson(config, route, body) : nodeJson(config, route, body).then(r => {
-        if (r.json === null) throw Error('unreadable response');
-        return r;
-    }).catch(() => {
-        usePage = true; // Node's HTTPS failed once: stay on the page's fetch.
-        return pageJson(config, route, body);
-    }));
+    let api = config.classifierApi === 'responses' ? 'responses' : 'decisions', withSize = config.expressionSize !== false;
+    if (!post) {
+        const send = poster(config);
+        post = (route, body) => send(route, body, CLASSIFY_TIMEOUT_MS);
+    }
     function failure(r) { return r.json && r.json.error && (r.json.error.code || r.json.error.message) || 'HTTP ' + r.status; }
+    function responsesResult(r, sized) {
+        const answer = labels.classifierAnswer(r.json);
+        return {label: answer.label, size: sized ? answer.size : null, confidence: null, ms: r.ms, api: 'responses'};
+    }
     function viaResponses(personSaid, jiboSays, kind) {
         const model = api === 'responses' && config.classifierApi === 'responses' ? config.classifierModel : config.fallbackModel;
-        return post('/responses', core.classifierRequest(model, personSaid, jiboSays, config.classifierReasoning, kind))
-            .then(r => withConn(r, r.status === 200 ? {label: core.classifierLabel(r.json), size: withSize ? core.classifierSize(r.json) : null, confidence: null, ms: r.ms, api: 'responses'}
+        return post('/responses', labels.classifierRequest(model, personSaid, jiboSays, config.classifierReasoning, kind))
+            .then(r => withConn(r, r.status === 200 ? responsesResult(r, withSize)
                 : {label: null, ms: r.ms, status: r.status, api: 'responses', error: failure(r)}));
     }
     const classify = (personSaid, jiboSays, kind) => {
         if (api === 'responses') return viaResponses(personSaid, jiboSays, kind);
         const sized = withSize;
-        return post('/decisions', core.decisionsRequest(config.classifierModel, personSaid, jiboSays, kind, sized)).then(r => {
-            if (r.status === 200) return withConn(r, Object.assign(core.decisionLabel(r.json, config.minConfidence), {ms: r.ms, api: 'decisions'}));
+        return post('/decisions', labels.decisionsRequest(config.classifierModel, personSaid, jiboSays, kind, sized)).then(r => {
+            if (r.status === 200) return withConn(r, Object.assign(labels.decisionLabel(r.json, config.minConfidence), {ms: r.ms, api: 'decisions'}));
             const error = failure(r);
             // A request error with the size question: try once more without it, and keep it off.
             if (sized && r.status === 400) {
@@ -252,12 +243,8 @@ function classifier(config, post) {
             return withConn(r, {label: null, ms: r.ms, status: r.status, api: 'decisions', error: error});
         });
     };
-    // Before the first real question: ask what a first sentence will ask, the reaction and two line
-    // labels at once with the real choices. OpenAI answers the first requests after a quiet spell
-    // slowly (about 1.5 s), whatever the words or the connection; this takes that wait while Jibo
-    // greets, and opens the three connections (D93). Goes through classify(), so a refused API or
-    // size question switches to the fallback now, not during the first turn. Resolves {ms, requests}
-    // for the log, or null when nothing was sent (the Responses API is not slow this way).
+    // Before the first real question: the reaction and two line labels, as a first sentence asks
+    // them, while Jibo greets (D93). Resolves {ms, requests} for the log, or null when nothing was sent.
     classify.warm = () => {
         if (api !== 'decisions') return Promise.resolve(null);
         const started = Date.now();
@@ -270,4 +257,4 @@ function classifier(config, post) {
     return classify;
 }
 
-module.exports = {connect, classifier, checkKey, post: nodeJson, poster, asker};
+module.exports = {connect, classifier, checkKey, post: nodeJson, poster, asker, switchesToPage};
