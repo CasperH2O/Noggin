@@ -30,6 +30,7 @@ class ExpressionPlayer {
         this.current = null;
     }
     // Starts `name` and returns at once: {started: Promise<boolean>, done: Promise<result>}.
+    // info: {via, turn, line, holdMs, keep, ...} for the log and how it plays.
     // started is true when Jibo began playing it, false when it never will (missing, failed,
     // stopped first). Never throws.
     play(name, info) {
@@ -52,6 +53,8 @@ class ExpressionPlayer {
         };
         const handle = {name: name, started: entry.started, playing: entry.playing, done: entry.done, body: null};
         if (!this.allowed()) { finish('not_allowed'); return handle; }
+        // info.keep: nothing else replaces this clip while it plays (a petting clip, D144).
+        if (this.current && this.current.info.keep && !info.keep) { finish('kept'); return handle; }
         let asset = null;
         try { asset = animDB && typeof animDB.getAnimByName === 'function' ? animDB.getAnimByName(name) : null; } catch (_) {}
         if (!asset || typeof asset.createFromConfig !== 'function') { finish('missing'); return handle; }

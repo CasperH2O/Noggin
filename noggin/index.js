@@ -88,7 +88,7 @@ class Noggin extends BeSkill {
             : new Microphone(jibo, {onTrack: name => log.write({kind: 'microphone_track', event: name})});
         const abilities = config.actions ? {apps: Object.keys(actions.apps(config)), config: config} : null;
         const notes = this.memoryNotes(dataDir, config, back, log, openedAt);
-        const instructions = realtime.instructions(persona.soul, persona.identity, actions.localTime(jibo), abilities, notes);
+        const instructions = realtime.instructions(persona.soul, persona.identity, actions.localTime(jibo), abilities, notes, {presence: config.presence !== false});
         session = this.session = new Conversation({
             jibo: jibo, config: config, log: log, version: VERSION,
             instructions: instructions,
@@ -154,7 +154,7 @@ class Noggin extends BeSkill {
             if (config.memoryLearn) recap.start(dataDir, openedAt);
             const state = memory.read(dataDir), today = memory.dayOf(actions.localTime(jibo));
             const tail = back ? '' : recap.tail(dataDir, state, Date.now(), log.file);
-            return {learn: config.memoryLearn !== false, block: memory.block(state, today, tail)};
+            return {learn: config.memoryLearn !== false, block: memory.block(state, today, tail, config.presence !== false)};
         } catch (error) {
             this.tagged.warn('memory left out: ' + error.message);
             return null;

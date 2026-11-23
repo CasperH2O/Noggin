@@ -110,7 +110,7 @@ function create(options) {
         const dir = dataDir(), view = settings.publicView(dir), persona = settings.persona(dir);
         const config = Object.assign({}, view.values);
         const abilities = config.actions ? {apps: Object.keys(actions.apps(config)), config: config} : null;
-        const chars = realtime.instructions(persona.soul, persona.identity, now(), abilities).length;
+        const chars = realtime.instructions(persona.soul, persona.identity, now(), abilities, null, {presence: config.presence !== false}).length;
         const limits = {}, packaged = {};
         Object.keys(settings.PERSONA).forEach(name => { limits[name] = settings.PERSONA[name].max; packaged[name] = settings.packaged(name); });
         return {version: version, schema: settings.schemaView(), values: view.values, key: view.key, adminKey: view.adminKey, problems: view.problems, broken: view.broken,

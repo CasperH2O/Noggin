@@ -18,6 +18,15 @@ On the robot: BEacon, Store, Upload ZIP, and choose `Noggin.zip` from a release.
   on the robot, Web Audio elsewhere) and says the greeting. The model answers in text; Jibo speaks
   it in his own voice, one sentence at a time. A fast model (OpenAI's Decisions API) picks an
   expression for each line. The microphone is closed while Jibo speaks.
+- **Touch and sight** (`noggin/lib/conversation-senses.js`, `noggin/lib/touch.js`,
+  `noggin/lib/presence.js`). A touch on Jibo's head (`jibo.system.events.touchOn`) plays the
+  petting clip his idle skill would pick (the emotion system's query, then the animation database),
+  at once while he listens or thinks and after the current line while he speaks, with the
+  microphone closed while it plays. Noggin never listens to the global `touchStop`: the action
+  system's hold to quit needs it; while Noggin is open the hold takes 3 s instead of 1 s, so a
+  stroke does not end the conversation. Whom Jibo recognises by face is read once a second from
+  `jibo.lps.identity` and named through his family list. Both reach the model as short system
+  notes without a reply; the setting `presence` switches names off.
 - **Tools** (`noggin/lib/actions.js`). The model may call tools. Some run inside Noggin (facts,
   dance, volume, reading the clock); others hand over to one of Jibo's skills (the clock, photos,
   apps) or ask Jibo's cloud a fixed phrase. When that skill is done, Noggin opens again and carries

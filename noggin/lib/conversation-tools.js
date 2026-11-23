@@ -90,7 +90,8 @@ const methods = {
             const speech = this.jibo.embodied && this.jibo.embodied.speech;
             if (!speech || typeof speech.speak !== 'function') return Promise.resolve({ok: false, error: 'Jibo cannot move right now'});
             this.speaking = true; this.state = 'acting';
-            return Promise.resolve().then(() => this.dance(turn ? turn.transcript || '' : this.heard, turn ? turn.n : null))
+            // A petting clip still playing keeps the body until it ends (D144).
+            return this.petDone().then(() => this.dance(turn ? turn.transcript || '' : this.heard, turn ? turn.n : null))
                 .then(played => Object.assign({ok: true, done: 'Jibo danced', dance: catalog.danceName(played.style)},
                     played.announced ? {announced: 'Jibo named the dance before it: do not name it again'} : {}),
                 () => ({ok: false, error: 'the dance did not play'}))

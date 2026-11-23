@@ -65,6 +65,8 @@ const methods = {
         const reaction = turn.reaction;
         if (!this.active || turn.skipped || turn.reactionDone || !reaction || turn.firstSpeechAt !== undefined) return;
         turn.reactionDone = true;
+        // A petting clip keeps the body (D144).
+        if (this.petting) { if (reaction.label && reaction.label !== 'none') reaction.played = 'pet'; return; }
         if (!this.policy.allow(reaction.label, this.now(), turn.transcript)) { if (reaction.label && reaction.label !== 'none') reaction.played = 'limit'; return; }
         this.policy.used(reaction.label, this.now()); reaction.played = 'before';
         this.thinking.stop();
@@ -73,13 +75,17 @@ const methods = {
         // Only a clip known to leave the body still keeps the microphone open (D89).
         if (played.body !== false) this.holdMic(played.done);
     },
-    // A moving reaction while Jibo thinks: his motors are noise, so the microphone is closed until
-    // `until` settles, at most HOLD_MAX_MS. The hold outlives the turn (D89, D90).
-    holdMic(until) {
-        if (this.state !== 'thinking') return;
-        const closed = this.now();
+    // A moving reaction while Jibo thinks, or a petting clip (also between lines, so listening
+    // that starts during it stays closed): his motors are noise, so the microphone is closed until
+    // `until` settles, at most HOLD_MAX_MS (or options.maxMs). The hold outlives the turn (D89,
+    // D90). options.fresh: reopened while listening, the audio so far is dropped and the silence
+    // timer starts again (D144).
+    holdMic(until, options) {
+        if (this.state !== 'thinking' && this.state !== 'listening' && this.state !== 'speaking') return;
+        const closed = this.now(), maxMs = options && options.maxMs || HOLD_MAX_MS, fresh = !!(options && options.fresh);
         this.held++; this.gate = false;
-        Promise.race([Promise.resolve(until).catch(() => {}), delay(HOLD_MAX_MS)]).then(() => {
+        if (this.state === 'listening') this.listeningRing();
+        Promise.race([Promise.resolve(until).catch(() => {}), delay(maxMs)]).then(() => {
             this.held--;
             // Failing: Jibo is about to say what went wrong, and the microphone stays closed.
             if (!this.active || this.failing || this.held) return;
@@ -87,7 +93,10 @@ const methods = {
             const open = this.state === 'listening' || (this.state === 'thinking' && turn && !turn.skipped && !turn.followUp && this.thinkingGate());
             if (!open) return;
             this.gate = true;
-            if (this.state === 'listening') this.listeningRing();
+            if (this.state === 'listening') {
+                this.listeningRing();
+                if (fresh) { if (this.rt) this.rt.send({type: 'input_audio_buffer.clear'}); this.armSilence(); }
+            }
             this.log.write({kind: 'mic_reopened', state: this.state, turn: turn ? turn.n : null, ms: this.now() - closed});
         });
     },
@@ -245,7 +254,8 @@ const methods = {
         this.state = 'speaking'; this.gate = false; this.busyRing();
         if (!speech || typeof speech.speak !== 'function') return Promise.resolve();
         this.speaking = true;
-        let chain = Promise.resolve();
+        // A petting clip still playing ends before the words (D144).
+        let chain = this.petDone();
         // The dance has its own music: play it before the words, not under them.
         if (expression === 'dance') {
             chain = chain.then(() => this.dance(this.heard, turn));
@@ -294,7 +304,12 @@ const methods = {
                     throw error;
                 });
             });
-        }).catch(() => {}).then(() => { this.speaking = false; if (this.marks.first_speech !== undefined) this.mark('first_speech_done'); });
+        }).catch(() => {}).then(() => {
+            this.speaking = false; if (this.marks.first_speech !== undefined) this.mark('first_speech_done');
+            // A touch during the line: its petting clip plays now, before the next line or listening (D144).
+            this.playPendingPet('line_end');
+            return this.petDone();
+        });
     },
     // The first line's clip goes before its words, so it holds Jibo's body before speech's own
     // gestures ask for it: the words follow once a body clip was handed over (D80) or a clip of

@@ -56,8 +56,12 @@ function memoryNotes(memory, tools) {
     else if (!memory.learn) text += 'You cannot keep anything new yourself. ';
     return text;
 }
-function voiceSetup(now, abilities, memory) {
+// senses: {presence} when notes say whom Jibo sees (lib/presence.js, D145). Each note says itself
+// what it is (touchNote, presenceNote), so the instructions stay within their budget (D28).
+function voiceSetup(now, abilities, memory, senses) {
     const at = actions.describeTime(now);
+    const seeing = !!(senses && senses.presence);
+    const unseen = seeing ? 'You see only who the notes name' : 'You cannot see the room yet';
     const memoryTools = !!(memory && abilities && abilities.config && abilities.config.memory === true);
     const notes = memory ? memoryNotes(memory, memoryTools) : '';
     const none = memory ? 'tools or files: never claim to look something up or do something you cannot. '
@@ -68,19 +72,19 @@ function voiceSetup(now, abilities, memory) {
           'Never say something is done unless a tool result says so. For the time or date, always use get_time; ' +
           'for a question about yourself that the facts above do not answer, use about_jibo. ' + notes +
           'Apart from these you have no ' + none
-        : notes + 'You cannot see the room yet, and in this voice mode you have no ' + none;
+        : notes + unseen + ', and in this voice mode you have no ' + none;
     return 'Your current setup:\n' +
         'You are in a spoken conversation on your physical Jibo body. You hear your person through your microphone, ' +
         'and every word you write is spoken aloud in your own voice, so write only words meant to be heard: ' +
         'no markdown, lists, emoji, bracketed markers or stage directions. Your face and body react on their own while you speak. ' +
         'Keep replies short, as your personality says. ' +
         'You understand English and Dutch; always answer in English. ' +
-        (abilities ? 'You cannot see the room yet. ' : '') + tools +
+        (abilities ? unseen + '. ' : '') + tools +
         'When the session started it was ' + at.date + ', ' + at.time + ' local time on the robot (the clock may be off if Jibo was offline). ' +
         'Your person ends the conversation by saying goodbye.';
 }
-function instructions(soul, identity, now, abilities, memory) {
-    return personaText(soul, identity) + '\n\n' + voiceSetup(now, abilities, memory) + (memory && memory.block ? '\n\n' + memory.block : '');
+function instructions(soul, identity, now, abilities, memory, senses) {
+    return personaText(soul, identity) + '\n\n' + voiceSetup(now, abilities, memory, senses) + (memory && memory.block ? '\n\n' + memory.block : '');
 }
 
 // The conversation so far as "Person:" / "Jibo:" lines, the last 6,000 characters.
@@ -121,4 +125,23 @@ function reconnectNote(pairs) {
         '\n\nCarry on from there: do not greet again and do not mention the connection unless asked.';
 }
 
-module.exports = {LANGUAGES, transcription, sessionUpdate, textDelta, personaText, voiceSetup, instructions, resumeNote, reconnectNote};
+// Petting since the last note (D144): touches {pets, tickles}.
+function touchNote(touches) {
+    const pets = touches && touches.pets || 0, tickles = touches && touches.tickles || 0, parts = [];
+    if (pets) parts.push('someone petted your head' + (pets > 1 ? ' ' + pets + ' times' : ''));
+    if (tickles) parts.push('someone tickled the back of your head' + (tickles > 1 ? ' ' + tickles + ' times' : ''));
+    if (!parts.length) return '';
+    return '[A note, not speech: ' + parts.join(', and ') + '. You may mention it; never answer this note alone.]';
+}
+// Whom Jibo sees now (D145): here {names, unknown} from lib/presence.js.
+function presenceNote(here) {
+    const names = here && Array.isArray(here.names) ? here.names : [], unknown = here && here.unknown || 0;
+    const parts = names.slice();
+    if (unknown) parts.push(unknown === 1 ? "someone you don't recognise" : unknown + " people you don't recognise");
+    const about = '[A note, not speech: your camera ';
+    if (!parts.length) return about + 'sees no one now.]';
+    const list = parts.length === 1 ? parts[0] : parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1];
+    return about + 'now sees ' + list + '. Who you see is not always who is talking. Never answer this note alone.]';
+}
+
+module.exports = {LANGUAGES, transcription, sessionUpdate, textDelta, personaText, voiceSetup, instructions, resumeNote, reconnectNote, touchNote, presenceNote};

@@ -6,8 +6,9 @@
 //   listening --(speech stopped)--> thinking --(first line)--> speaking --> listening
 //   thinking --(the person goes on, D89, D90)--> listening
 //
-// Half-duplex: no audio goes out while Jibo speaks, nor for `echoTailMs` after. Ends on a goodbye,
-// silence, swipe down, privacy, a skill switch, a handover or a lost connection (D73); when it
+// Half-duplex: no audio goes out while Jibo speaks, nor for `echoTailMs` after. Petting and whom
+// Jibo sees reach the model as notes (conversation-senses.js). Ends on a goodbye, silence, swipe
+// down, a 3 s hold on his head, privacy, a skill switch, a handover or a lost connection (D73); when it
 // cannot go on, Jibo says why (lib/trouble.js, D70). Session patterns follow BEam's Agent Mode
 // (BSD-3-Clause, @be/be skills/agent). Node 6 / Chrome 53: ES2015 only.
 'use strict';
@@ -17,6 +18,7 @@ const delay = require('./http').delay;
 const AudioClock = require('./audio-clock'), heyJibo = require('./hey-jibo');
 // Conversation's methods, by topic; mixed into the class below.
 const micMethods = require('./conversation-mic'), lineMethods = require('./conversation-lines'), toolMethods = require('./conversation-tools');
+const senseMethods = require('./conversation-senses');
 
 // Ring: blue while Jibo listens, orange while he thinks and speaks. Speech's hot-word glances can
 // key the ring to black, so it is re-sent after each line and every ringRefreshMs (D113).
@@ -122,6 +124,7 @@ class Conversation {
                 this.unwatch.push(() => { try { gestures.removeStageGesture(gesture); } catch (_) {} });
             } catch (_) {}
         }
+        this.watchSenses();
         // Opened from the menu, the menu view would stay: Jibo's own eye for the conversation.
         const eye = ExpressionPlayer.showEye(jibo).then(result => { this.mark('eye'); this.boot.eye = result; });
         // The rest starts side by side; Jibo listens when all of it is done. "Hey Jibo" goes off
@@ -231,6 +234,7 @@ class Conversation {
         return this.connect().then(() => {
             if (!this.active || !this.rt) return;
             this.log.write({kind: 'reconnected'});
+            this.forgetSeen();
             // After what is still being said, so a complete reply is in the note.
             this.speechChain = this.speechChain.then(() => {
                 this.reconnecting = false;
@@ -264,11 +268,15 @@ class Conversation {
         const now = this.now();
         this.log.write({kind: 'listen', at: this.since(now), after_speech: this.spokenAt === null ? null : now - this.spokenAt, anim_playing: this.player.busy(),
             sent_ms: this.clock ? Math.round(this.clock.sentMs) : undefined});
-        this.state = 'listening'; this.listeningRing(); this.zeroMs = 0; this.listenStart = true;
+        this.state = 'listening'; this.personTalking = false;
+        // A touch that waited plays first: its hold keeps the microphone closed and the ring orange.
+        this.playPendingPet('listen');
+        this.listeningRing(); this.zeroMs = 0; this.listenStart = true;
         if (!this.startupLogged) { this.mark('listening'); this.logStartup(); }
         this.rt.send({type: 'input_audio_buffer.clear'});
         this.gate = !this.held;
         this.armSilence();
+        this.sendNotes();
     }
     armSilence() {
         clearTimeout(this.silence);
@@ -286,11 +294,13 @@ class Conversation {
             this.log.write(Object.assign({kind: 'rt', type: type, state: this.state, status: event.response && event.response.status || undefined,
                 details: event.response && event.response.status_details || undefined}, this.vadTiming(event)));
         if (type === 'input_audio_buffer.speech_started') {
+            this.personTalking = true;
             if (this.state === 'listening') { clearTimeout(this.silence); this.silence = null; if (this.now() - this.lastClassify > QUIET_WARM_MS) this.warm('quiet'); }
             // The person goes on before Jibo says anything: drop the reply and keep listening (D90).
             // Not for a follow-up after a tool, which is Jibo's own turn.
             else if (this.state === 'thinking' && turn && !turn.skipped && !turn.followUp) this.carryOn(turn);
         } else if (type === 'input_audio_buffer.speech_stopped') {
+            this.personTalking = false;
             if (this.state === 'listening') this.startTurn();
         } else if (type === 'input_audio_buffer.committed') {
             // Which conversation item holds this turn's words: its transcript is matched by it.
@@ -383,6 +393,8 @@ class Conversation {
         turn.waitTimer = setTimeout(() => this.pump(), this.config.transcriptWaitMs);
         this.guardReply(turn);
         this.thinking.start(turn.n);
+        // A touch that waited while the person talked plays now.
+        this.playPendingPet('turn');
     }
     // A reply that never comes (a half-open connection, an error instead of a response) must not
     // leave Jibo thinking with the hotword off: drop the turn and listen again.
@@ -521,6 +533,7 @@ class Conversation {
         const wasActive = this.active, jibo = this.jibo, cleanup = [];
         this.active = false; this.gate = false; this.state = 'closed';
         clearInterval(this.monitor); clearInterval(this.ringTimer); clearInterval(this.lagTimer); clearTimeout(this.silence);
+        this.stopSenses();
         if (this.audioTimer) { clearInterval(this.audioTimer); if (wasActive) this.audioReport(); }
         if (this.turn) { clearTimeout(this.turn.waitTimer); clearTimeout(this.turn.guard); }
         this.unwatch.splice(0).forEach(off => off());
@@ -558,5 +571,5 @@ const QUIET_MS = 6000;   // the longest fail() waits for a line already playing
 Conversation.MIC_START_MS = 8000;   // a microphone that never starts ends the conversation (D16)
 Conversation.FINISH_MS = 2000;      // the longest a goodbye waits for the last expression
 Conversation.SPEAK_BASE_MS = 10000; // the longest a line may take, plus 120 ms per character (D114)
-Object.assign(Conversation.prototype, micMethods, lineMethods, toolMethods);
+Object.assign(Conversation.prototype, micMethods, lineMethods, toolMethods, senseMethods);
 module.exports = Conversation;

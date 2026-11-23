@@ -19,7 +19,9 @@ No key yet? Open Noggin anyway: Jibo shows a QR code on his screen that takes yo
 - Open Noggin from the menu, or switch on **Open on "Hey Jibo"** (Behaviour tab, off by default): then "Hey Jibo" opens Noggin whenever Jibo is idle, and everything you ask goes through Noggin. Say "Hey Jibo": his ring turns orange while Noggin starts, then blue when he listens. Then talk.
 - Jibo says hi as soon as Noggin opens. His ring is **blue** while he listens and **orange** while he thinks and talks.
 - Talk normally and wait for his answer. He does not hear you while he speaks.
-- Say **goodbye** to end, swipe down, or stay quiet for a minute.
+- Say **goodbye** to end, swipe down, stay quiet for a minute, or hold his head for 3 seconds.
+- Pet his head and he reacts the way he does when idle, and knows you petted him. He chimes at each touch; a short stroke never ends the conversation. While he talks, he finishes his sentence first.
+- When Jibo recognises you by face, Noggin is told who he sees, so he can greet you by name. Switch **Tell Noggin who Jibo sees** off on the Behaviour tab to keep names on Jibo.
 - When something is wrong, Jibo tells you in his own words: no internet, OpenAI not answering, no credit left on your OpenAI account, or a key or setting that needs a look (then he shows the QR code to his settings page). If the connection drops for a moment, he reconnects once and carries on.
 - With an admin key saved, Jibo gives you a heads-up after his greeting, once a day, when only 10% of your OpenAI spend limit is left (change or switch it off on the Usage tab).
 
@@ -33,7 +35,7 @@ The page has seven tabs. Changes apply to the next conversation.
 
 - **Brain:** your OpenAI key and the models Noggin uses.
 - **Persona:** who Jibo is: his soul, his identity and more facts about him. Everything can be changed, and **Reset to default** brings back Noggin's own text. The default persona keeps every answer right for a young child.
-- **Behaviour:** opening on "Hey Jibo", the greeting, when a conversation ends, expressions and dances. Advanced settings for the microphone are folded away.
+- **Behaviour:** opening on "Hey Jibo", the greeting, telling Noggin who Jibo sees, when a conversation ends, expressions and dances. Advanced settings for the microphone are folded away.
 - **Skills:** which of Jibo's skills and cloud features Noggin may use, and up to 8 extra apps it may open by name, each with a line on what it does so Noggin knows when to open it. Scan finds the skills you installed through BEacon and fills in that line from their description; add each with one click.
 - **Memory:** the facts Jibo keeps and his notes of recent conversations: add, change or delete them, export them, or make him forget everything. Switch memory, or learning from conversations, off here.
 - **Usage:** what Jibo costs on your OpenAI account: this month and what is left of your OpenAI budget, a forecast, the cost per conversation, the last 7 days per day and per model (with what Noggin uses each model for), what caching saved, and when Jibo is used. It needs an OpenAI admin key with **Read only** permission from the same organization as Jibo's key; Jibo checks that the key cannot change anything and refuses any other. Jibo asks OpenAI only when you open the tab or press Refresh.

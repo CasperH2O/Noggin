@@ -64,6 +64,9 @@ const SCHEMA = [
     // Opening on the hotword (lib/hey-jibo.js, D132).
     {key: 'heyJibo', type: 'bool', default: false, tab: 'behaviour', group: 'Conversation', label: 'Open on "Hey Jibo"',
         help: 'When Jibo is idle, "Hey Jibo" opens Noggin instead of Jibo\'s own listening, so everything you ask goes through Noggin. Words said right after "Hey Jibo" are not heard: wait until his ring turns blue. Needs the API key.'},
+    // Notes to the model about whom Jibo recognises by face (lib/presence.js, D145).
+    {key: 'presence', type: 'bool', default: true, tab: 'behaviour', group: 'Conversation', label: 'Tell Noggin who Jibo sees',
+        help: 'When Jibo recognises someone of his family by face, their name goes to OpenAI as a note, so he can greet them by name. Off: no names leave Jibo.'},
     {key: 'silenceSeconds', type: 'number', min: 5, max: 3600, unit: 's', default: 60, tab: 'behaviour', group: 'Conversation', label: 'End after silence',
         help: 'The conversation ends after this many seconds of quiet.'},
     {key: 'expressions', type: 'bool', default: true, tab: 'behaviour', group: 'Expressions', label: 'Expressions',
