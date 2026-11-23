@@ -34,8 +34,8 @@ test('supported is 3.2.0 or newer, permissions are known and unique, versions ag
     assert.equal(manifest.version, pkg.version);
 });
 
-test('the store text and the README name the version BEam needs', () => {
-    for (const file of ['store/README.md', 'README.md']) {
+test('the store text and the developer README name the version BEam needs', () => {
+    for (const file of ['README.md', 'DEVELOPMENT.md']) {
         const content = fs.readFileSync(path.join(source, file), 'utf8');
         assert.match(content, new RegExp('BEam\\s+' + manifest.supported.replace(/\./g, '\\.') + ' or newer'), file);
     }
@@ -138,6 +138,17 @@ test('launch phrases: a valid list in the manifest, all of it in the store text'
         assert.ok(!seen.has(phrase), 'listed twice: ' + phrase);
         seen.add(phrase);
     }
-    const store = fs.readFileSync(path.join(source, 'store/README.md'), 'utf8').toLowerCase();
+    const store = fs.readFileSync(path.join(source, 'README.md'), 'utf8').toLowerCase();
     for (const phrase of phrases) assert.ok(store.includes('"' + phrase + '"'), 'the store text lists "' + phrase + '"');
+});
+
+// The 5x1 Store shows the repository's README.md and BEacon the same file from the ZIP; BEacon's
+// Markdown has no tables or code blocks.
+test('README.md is plain store text: no tables, no code blocks, a reason for each permission', () => {
+    const readme = fs.readFileSync(path.join(source, 'README.md'), 'utf8');
+    assert.ok(!/^\s*\|/m.test(readme), 'a table row');
+    assert.ok(!/^```/m.test(readme), 'a code block');
+    for (const name of ['Run in the background', 'Microphone', 'Run programs', 'Reach Jibo\'s own services', 'Read Jibo\'s knowledge base'])
+        assert.ok(readme.includes('**' + name + ':**'), name);
+    assert.equal(manifest.permissions.length, 5, 'one line per permission');
 });

@@ -13,7 +13,7 @@ function files(dir) {
 }
 
 test('no other product\'s names in what ships or in the docs', () => {
-    const shipped = files(path.join(source, 'noggin')).concat(['README.md', 'store/README.md', 'manifest.json'].map(f => path.join(source, f)))
+    const shipped = files(path.join(source, 'noggin')).concat(['README.md', 'DEVELOPMENT.md', 'manifest.json'].map(f => path.join(source, f)))
         .filter(f => /\.(js|json|md|html|css|rule)$/.test(f) && fs.existsSync(f));
     const bad = /zeroclaw|zero claw|jibo talk\b|talk-set|talk-setup|talk\.json|\bssh\b/i;
     for (const file of shipped) {

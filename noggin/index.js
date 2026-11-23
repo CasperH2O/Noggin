@@ -43,7 +43,12 @@ class Noggin extends BeSkill {
         if (hey) startup.since_hey_jibo_ms = openedAt - hey.heardAt;
         // A voice launch while Noggin is open makes Be call open() again without close() (D160).
         const released = this.release();
-        released.then(() => { settings.adoptOldData(log); }).then(() => this.talk(settings.dataDir(), back, openedAt, startup, hey)).then(reason => {
+        // Closed while the old conversation was still ending: start nothing (D166).
+        released.then(() => {
+            if (!current()) return 'closed';
+            settings.adoptOldData(log);
+            return this.talk(settings.dataDir(), back, openedAt, startup, hey);
+        }).then(reason => {
             if (current()) log.info('conversation ended: ' + reason);
         }, error => {
             if (current()) log.error('conversation failed: ' + (error && error.stack || error));
@@ -191,7 +196,8 @@ class Noggin extends BeSkill {
         this.generation = (this.generation || 0) + 1;
         this.release().then(() => done && done());
     }
-    destroy(done) { this.close(done); }
+    // Removal: a comeback still waiting would outlive the skill (D162).
+    destroy(done) { stopWatching(); resume = null; this.close(done); }
 }
 // settings.json's size and time: a save changes it ('' when there is none yet).
 function stamp(file) {

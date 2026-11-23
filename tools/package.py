@@ -4,8 +4,9 @@
     python3 tools/package.py [--output dist/<Name>.zip]
 
 Layout (original-assets/BEam/docs/custom-skills.md): manifest.json, icon.png, an optional
-banner.png and README.md at the root, where README.md is the store text from store/README.md
-(BEacon's simple Markdown: headings, paragraphs, flat lists, bold; no tables), and one package
+banner.png and README.md at the root, where README.md is the store text that the 5x1 Store reads from
+the repository (BEacon's simple Markdown: headings, paragraphs, flat lists, bold; no tables;
+DEVELOPMENT.md stays out), and one package
 folder holding the @be/<skill> asset-pack with its JavaScript main. Nothing is built on the robot,
 so the ZIP carries everything. The ZIP is deterministic (sorted entries, fixed timestamps, no exec
 bits) and checked against BEacon's limits: 32 MB compressed, 64 MB expanded, 1,024 entries.
@@ -26,8 +27,8 @@ STAMP = (2026, 1, 1, 0, 0, 0)
 PERMISSIONS = {'microphone', 'camera', 'background', 'local-network', 'jibo-apis',
                'read-jibo-files', 'edit-jibo-files', 'read-kb', 'edit-kb', 'run-programs'}
 MIN_SUPPORTED = (3, 2, 0)
-ICON_SIZE = (330, 300)                   # BEacon centres the icon unscaled in a 330x300 menu button
-STORE_FILES = {'manifest.json': 'manifest.json', 'icon.png': 'icon.png', 'README.md': 'store/README.md'}
+ICON_SIZE = (330, 330)                   # docs.5x1.com: square; the menu centres it unscaled on its 330x300 button
+STORE_FILES = {'manifest.json': 'manifest.json', 'icon.png': 'icon.png', 'README.md': 'README.md'}
 OPTIONAL_FILES = {'banner.png': 'banner.png'}
 
 

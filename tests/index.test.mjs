@@ -58,9 +58,11 @@ test('opened by "Hey Jibo" through background.js: the conversation gets when it 
     s.talk = (...args) => { calls.push(args); return Promise.resolve('test'); };
     s.exit = () => {};
     s.open({nlu: {intent: 'background', entities: {reason: 'hey_jibo', heardAt: Date.now() - 400}}});
+    await sleep(10);
     s.open({nlu: {intent: 'menu'}});
+    await sleep(10);
     s.open();
-    await sleep(20);
+    await sleep(10);
     assert.equal(calls.length, 3);
     assert.ok(calls[0][4] && typeof calls[0][4].heardAt === 'number');
     assert.ok(calls[0][3].since_hey_jibo_ms >= 400, 'in the startup log');
@@ -81,4 +83,26 @@ test('opened again without a close (a voice launch while Noggin is up): the old 
     assert.ok(events.includes('screen closed'));
     assert.equal(s.session, null);
     assert.equal(s.screen, null);
+});
+
+test('removal (destroy) ends a comeback still waiting: the speech wrapper is undone and it gives up (D162)', async () => {
+    const s = skill(), original = jibo.embodied.speech.speak, writes = [];
+    s.watchHandover({comeback: true, pairs: [], tool: 'clock', args: {}}, {comebackMinutes: 5}, {write: entry => writes.push(entry)});
+    assert.notEqual(jibo.embodied.speech.speak, original, 'watching what Jibo says');
+    await new Promise(done => s.destroy(done));
+    assert.equal(jibo.embodied.speech.speak, original);
+    assert.ok(writes.some(entry => entry.kind === 'comeback' && entry.ok === false && entry.reason === 'cancelled'));
+});
+
+test('closed while a voice launch is still ending the old conversation: no new conversation starts (D166)', async () => {
+    const events = [];
+    const s = skill();
+    s.session = {close: async () => { await sleep(30); events.push('session closed'); }};
+    s.talk = () => { events.push('talk'); return Promise.resolve('test'); };
+    s.exit = () => { events.push('exit'); };
+    s.open({nlu: {intent: 'menu', entities: {}}});
+    await sleep(5);
+    await new Promise(done => s.close(done));          // Be switches away meanwhile
+    await sleep(60);
+    assert.deepEqual(events, ['session closed'], 'no talk and no exit for a skill that is gone: ' + events);
 });

@@ -110,9 +110,9 @@ const SCHEMA = [
         help: 'Re-send the ring colour this often, besides after each line; 0: only after each line.', advanced: true},
 
     {key: 'actions', type: 'bool', default: true, tab: 'skills', group: 'Jibo\'s skills', label: 'Use Jibo\'s skills',
-        help: 'Timers, alarms, the clock, volume, music, radio, photos, dances, apps, sleep and looking away. Off: conversation only.'},
+        help: 'Timers, alarms, the clock, volume, music, radio, photos, dances, apps, sleep and looking away. When Noggin comes back after one, what Jibo said meanwhile goes to OpenAI so he can carry on. Off: conversation only.'},
     {key: 'cloudSkills', type: 'set', default: ['weather', 'news', 'calendar', 'commute', 'personal_report', 'surprise', 'picture'],
-        tab: 'skills', group: 'Jibo\'s skills', label: 'Cloud features', help: 'Jibo\'s cloud answers these, then Noggin comes back.', options: cloudOptions},
+        tab: 'skills', group: 'Jibo\'s skills', label: 'Cloud features', help: 'Jibo\'s cloud answers these, then Noggin comes back. What Jibo said meanwhile (for example your calendar or commute) goes to OpenAI so he can carry on.', options: cloudOptions},
     {key: 'openApps', type: 'map', max: actions.MAX_APPS, noteMax: actions.NOTE_MAX, default: {}, tab: 'skills', group: 'Jibo\'s skills', label: 'Extra apps',
         help: 'Apps Jibo may open by name, next to his own. Say what each one does, so Noggin knows when to open it.'},
     {key: 'comebackMinutes', type: 'number', min: 1, max: 60, unit: 'min', default: 5, tab: 'skills', group: 'Jibo\'s skills', label: 'Come back within',
@@ -121,7 +121,7 @@ const SCHEMA = [
         help: 'How long another skill may take to open.', advanced: true},
 
     {key: 'memory', type: 'bool', default: true, tab: 'memory', group: 'Memory', label: 'Memory',
-        help: 'Jibo keeps facts about the household and short notes of recent conversations, and uses them when he talks.'},
+        help: 'Jibo keeps facts about the household and short notes of recent conversations, and uses them when he talks: they go to OpenAI at the start of every conversation. Off: none of it goes.'},
     {key: 'memoryLearn', type: 'bool', default: true, tab: 'memory', group: 'Memory', label: 'Learn from conversations',
         help: 'After each conversation, the fallback model writes a short note and picks out facts. This sends what was said to OpenAI once more. With conversation logs off, Jibo keeps only what was said until the note is written. Off: Jibo only remembers what you ask him to.'},
 
