@@ -37,6 +37,7 @@ function localTime() {
 function start(api) {
     const log = logger(api);
     stopped = false;
+    adoptOldData(log);
     startRecap(log);
     startHeyJibo(log, api);
     let http;
@@ -62,6 +63,11 @@ function start(api) {
     }
     startBudget(log, server);
     listen(log, 0);
+}
+
+// Before anything reads the data folder: an earlier version's data moves to the skill's own folder (D151).
+function adoptOldData(log) {
+    try { require('./lib/settings').adoptOldData(log); } catch (error) { log.warn('data folder: ' + error.message); }
 }
 
 function startBudget(log, owner) {

@@ -1,8 +1,9 @@
 {
   "name": "Noggin",
-  "version": "0.5.24",
-  "supported": "3.1.9",
+  "version": "0.5.25",
+  "supported": "3.2.0",
   "type": "skill",
   "themes": false,
-  "buttonColor": "#2C3B5E #0F1626"
+  "buttonColor": "#2C3B5E #0F1626",
+  "permissions": ["background", "microphone", "run-programs", "jibo-apis", "read-kb"]
 }

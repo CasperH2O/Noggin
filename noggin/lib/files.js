@@ -14,14 +14,22 @@ function makeDir(dir) {
 }
 function removeQuietly(file) { try { fs.unlinkSync(file); } catch (_) {} }
 
+// Every byte of `data` to an open file. Not writeFileSync(fd): BEam 3.2.0 checks that call's first
+// argument as a path, and a file number is none (D153).
+function writeAll(fd, data) {
+    const buffer = Buffer.isBuffer(data) ? data : Buffer.from(String(data), 'utf8');
+    let at = 0;
+    while (at < buffer.length) at += fs.writeSync(fd, buffer, at, buffer.length - at, null);
+}
+
 function writeTemporary(temporary, data) {
-    if (typeof fs.fsyncSync !== 'function' || typeof fs.openSync !== 'function') {
+    if (typeof fs.fsyncSync !== 'function' || typeof fs.openSync !== 'function' || typeof fs.writeSync !== 'function') {
         // The simulator's fs has no file descriptors: write, then rename, without the fsync.
         fs.writeFileSync(temporary, data, {mode: 384});
         return;
     }
     const fd = fs.openSync(temporary, 'wx', 384);
-    try { fs.writeFileSync(fd, data); fs.fsyncSync(fd); }
+    try { writeAll(fd, data); fs.fsyncSync(fd); }
     finally { fs.closeSync(fd); }
 }
 // Write via a temporary file and a rename, so a power cut never leaves half a file. A failed

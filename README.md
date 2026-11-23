@@ -9,7 +9,7 @@ settings page on port 8131 holds the key, the models, the persona and everything
 ## Install
 
 On the robot: BEacon, Store, Upload ZIP, and choose `Noggin.zip` from a release. It needs BEam
-3.1.9 or newer. Then open `http://<jibo>:8131` and save an OpenAI API key on the Brain tab.
+3.2.0 or newer, and BEacon asks you to agree to the permissions below. Then open `http://<jibo>:8131` and save an OpenAI API key on the Brain tab.
 
 ## How it works
 
@@ -95,10 +95,41 @@ On the robot: BEacon, Store, Upload ZIP, and choose `Noggin.zip` from a release.
   said right after "Hey Jibo" are not heard. The simulator cancels turns differently, so check this
   on the robot.
 
+## Permissions
+
+`manifest.json` declares what BEam 3.2.0 asks the owner to agree to at install (`supported` is
+`3.2.0`). Each one is used for a reason, and a blocked call throws an error that names it. When the
+microphone program or the realtime connection is refused, Jibo says he is not allowed to do that and
+ends the conversation, and nothing is left running. A refused hotword mode, timer check or family
+list is left out without a message, and the conversation goes on without it.
+
+| Permission | Why |
+|---|---|
+| `background` | `noggin/background.js`: the settings page, the memory recap, the budget check and "Hey Jibo" opening Noggin |
+| `microphone` | `jibo.jetstream.setHotwordMode` while Noggin has the microphone; the page's `getUserMedia({audio})` in the simulator. Works only while Noggin's own screen is open |
+| `run-programs` | the `arecord` child process that captures the microphone on the robot (`noggin/lib/mic.js`) |
+| `jibo-apis` | the settings page asks BEacon on `127.0.0.1` for the installed skills (`noggin/lib/server.js`) |
+| `read-kb` | the clock's timer record (`/jibo/clock/alarm_timer`) and Jibo's family list, for names (`noggin/lib/actions.js`, `noggin/lib/presence.js`) |
+
+Not needed, so not declared: `camera`, `local-network`, `edit-kb`, `read-jibo-files`,
+`edit-jibo-files`. The internet (OpenAI) needs no permission. `tests/package.test.mjs` keeps the
+list and the code in step.
+
+Without `local-network`, BEam 3.2.0 refuses an API address on the home network (a proxy on a private
+address, a `.local` or `.lan` name, a name without a dot), and BEacon cannot grant it afterwards. On
+Jibo the API address must be public or `localhost`; the settings page refuses another one when you
+save it, and Jibo says he is not allowed to reach the address if one gets through.
+
 ## Data on the robot
 
-`/opt/jibo/Knowledge/beacon/custom-skills/noggin/` (in a development checkout,
+`/opt/jibo/Knowledge/noggin/`, the skill's own Knowledge folder (in a development checkout,
 `/tmp/beam-beacon/custom-skills/noggin/`). BEam leaves this folder alone on updates and removal.
+Data an earlier version kept in `/opt/jibo/Knowledge/beacon/custom-skills/noggin/` is copied here
+once, when Noggin first starts (`noggin/lib/migrate.js`): the settings, the memory, the persona, the
+newest 30 conversation logs and the newest 10 memory-recap transcripts, and only files that are not
+there yet, so a copy that was cut short can be finished. The old folder is not removed: Noggin cannot
+delete it (that needs `edit-kb`), so it still holds the previous API key, memory and logs after the
+update. Once the update works you can delete it yourself.
 
 | Path | What |
 |---|---|
@@ -107,6 +138,7 @@ On the robot: BEacon, Store, Upload ZIP, and choose `Noggin.zip` from a release.
 | `logs/conversation-*.jsonl` | one text log per conversation, the newest 200, at most 2 MB each and 20 MB together |
 | `memory.json` | facts (at most 60 and 2,400 characters), conversation notes (14 days, at most 300) and the recap's bookkeeping (mode 0600, written through `memory.json.new` and a rename) |
 | `memory.json.bad` | a `memory.json` that could not be read, kept aside once |
+| `migrated.json` | written once the old folder's data was copied |
 | `logs/recap-*.jsonl` | only with logs off and learning on: who said what, until the recap is done; not shown in History; at most 50, 256 KB each, 4 MB together, 2 days |
 
 ## Settings API
@@ -189,6 +221,7 @@ The tests and tools run on a current Node.
 | `noggin/lib/setup-screen.js` | the QR code screen to the settings page |
 | **Shared** | |
 | `noggin/lib/http.js`, `files.js`, `text.js` | JSON over HTTP with a timeout and size cap; safe file writes; small text and time helpers |
+| `noggin/lib/migrate.js` | copies an earlier version's data folder into the skill's own Knowledge folder, once |
 | `noggin/vendor/qrcode.js` | qrcode-generator 1.4.4 (MIT), with its licence |
 | `noggin/web/` | the settings page: plain HTML, CSS and JavaScript |
 | `noggin/persona/` | the default persona: SOUL, IDENTITY and FACTS |

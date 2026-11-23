@@ -17,6 +17,9 @@ const CAUSES = {
     no_internet: {line: 'I can\'t reach the internet right now. Is the Wi-Fi okay?', emoji: 'Emoji_StormCloud'},
     openai_down: {line: 'My brain is out of reach right now. Let\'s try again in a bit.', emoji: 'Emoji_Clouds'},
     rate_limited: {line: 'I need a minute to catch my breath.', emoji: 'Emoji_Clock'},
+    permission: {line: 'I\'m not allowed to do that. A grown-up can install me again in BEacon and agree to what I need.', emoji: 'Emoji_Lock'},
+    // An API address on the home network needs a permission Noggin does not ask for (D154).
+    permission_network: {line: 'I\'m not allowed to reach that address. A grown-up can change the address on my settings page.', emoji: 'Emoji_Lock'},
     unknown: {line: 'Sorry, I can\'t think straight right now. Let\'s talk again a bit later.', emoji: null}
 };
 // Said on the setup screen's ends (D72), after a reconnect that lost a reply (D73), and the budget heads-up (D74).
@@ -46,10 +49,14 @@ function fromCode(code) {
     if (/^(model_not_found|invalid_model)$/.test(code)) return 'settings';
     return null;
 }
-// "OpenAI: insufficient_quota" (lib/openai.js, lib/controller.js) -> cause name, or null.
+// "OpenAI: insufficient_quota" (lib/openai.js, lib/controller.js) or a refused permission -> cause name, or null.
 function fromMessage(message) {
     const found = /^OpenAI: ([a-z_]+)$/.exec(String(message || ''));
-    return found ? fromCode(found[1]) : null;
+    if (found) return fromCode(found[1]);
+    // BEam's refusal of a call the manifest did not declare (D152).
+    const refused = /\bneeds the ([a-z-]+) permission\b/.exec(String(message || ''));
+    if (!refused) return null;
+    return refused[1] === 'local-network' ? 'permission_network' : 'permission';
 }
 function fromStatus(r) {
     const known = fromCode(r.json && r.json.error && r.json.error.code) || fromCode(r.json && r.json.error && r.json.error.type);

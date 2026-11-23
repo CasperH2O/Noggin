@@ -2,7 +2,7 @@
 
 Noggin is a new AI brain for Jibo. Open it and talk with Jibo: he listens, answers in his own voice, moves with what he says, and uses skills along the way: his native skills, server skills from Jibo's cloud, and custom skills you add.
 
-Noggin needs BEam 3.1.9 or newer, an internet connection and your own OpenAI API key.
+Noggin needs BEam 3.2.0 or newer, an internet connection and your own OpenAI API key. When you install it, BEacon asks you to agree to what Noggin may do: run in the background (for its settings page), use the microphone while it is open, start the microphone program, reach BEacon on Jibo (to list the skills you installed), and read Jibo's knowledge base (his timers and the names in his family list).
 
 ![Noggin: a white brain with a blue and an orange glow](banner.png)
 
@@ -50,3 +50,7 @@ What you say goes to OpenAI to be answered, with your key. Noggin keeps conversa
 With **Learn from conversations** on (the default), each finished conversation's text and the facts Jibo keeps go to OpenAI once more, so a small model can write the note and pick out facts. The notes and facts stay on Jibo. With conversation logs off, Jibo keeps only what was said until that note is written. Turn learning off on the Memory tab and Jibo only remembers what you ask him to; turn memory off and he remembers nothing.
 
 With an admin key saved, Jibo reads your account's costs, usage and spend limits from OpenAI when you open the Usage tab, and twice a day for the budget heads-up, and keeps them in memory for 15 minutes. He never keeps or shows the account's users, and never sees other keys' secrets.
+
+## Updating from an earlier Noggin
+
+The first time the new Noggin starts, it copies your key, settings, memory, persona and the latest conversations from its old folder on Jibo (`/opt/jibo/Knowledge/beacon/custom-skills/noggin`). Noggin is not allowed to delete that old folder, so it still holds your previous API key, memory and logs after the update. Once the update works, you can delete the old folder yourself.

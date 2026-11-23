@@ -22,6 +22,10 @@ HERE = Path(__file__).resolve().parents[1]
 SKILL = 'noggin'                       # the package folder, and @be/<SKILL>
 MAX_ZIP, MAX_EXPANDED, MAX_ENTRIES = 32 * 1024 * 1024, 64 * 1024 * 1024, 1024
 STAMP = (2026, 1, 1, 0, 0, 0)
+# BEam 3.2.0's skill permissions (lib/skill-permissions.js) and the first version that has them.
+PERMISSIONS = {'microphone', 'camera', 'background', 'local-network', 'jibo-apis',
+               'read-jibo-files', 'edit-jibo-files', 'read-kb', 'edit-kb', 'run-programs'}
+MIN_SUPPORTED = (3, 2, 0)
 ICON_SIZE = (330, 300)                   # BEacon centres the icon unscaled in a 330x300 menu button
 STORE_FILES = {'manifest.json': 'manifest.json', 'icon.png': 'icon.png', 'README.md': 'store/README.md'}
 OPTIONAL_FILES = {'banner.png': 'banner.png'}
@@ -39,6 +43,14 @@ def check_package():
     package = json.loads((HERE / SKILL / 'package.json').read_text())
     if manifest.get('type') != 'skill' or not manifest.get('supported'):
         sys.exit('manifest.json needs type "skill" and a "supported" jibo-tbd version')
+    supported = tuple(int(part) for part in str(manifest['supported']).split('-')[0].split('.')[:3])
+    if supported < MIN_SUPPORTED:
+        sys.exit('"supported" must be 3.2.0 or newer: BEam turns older skills off')
+    permissions = manifest.get('permissions', [])
+    if len(set(permissions)) != len(permissions) or not set(permissions) <= PERMISSIONS:
+        sys.exit('"permissions" must list each of ' + ', '.join(sorted(PERMISSIONS)) + ' at most once')
+    if bool(package['jibo'].get('background')) != ('background' in permissions):
+        sys.exit('a background script needs exactly the "background" permission')
     if manifest['version'] != package['version']:
         sys.exit('manifest.json and package.json versions differ')
     if package['name'] != '@be/' + SKILL or package['jibo']['type'] != 'asset-pack':

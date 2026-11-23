@@ -326,3 +326,14 @@ test('review: a covered screen is disposed as a hidden view and unlinked from th
 test('setup screen: without a view system it reports so at once', async () => {
     assert.equal(await new SetupScreen({face: {}}, {}).show(trouble.cause('no_key'), null), 'unavailable');
 });
+
+test('a call BEam refuses for a missing permission is its own cause, whichever permission it names (D152)', () => {
+    for (const name of ['run-programs', 'microphone', 'jibo-apis', 'read-kb'])
+        assert.equal(trouble.fromMessage('@be/noggin needs the ' + name + ' permission to do this'), 'permission', name);
+    assert.equal(trouble.fromMessage('@be/noggin needs the microphone permission and its screen open to do this'), 'permission');
+    assert.equal(trouble.fromMessage('@be/noggin needs the local-network permission to do this'), 'permission_network', 'a grown-up can act on the address (D154)');
+    assert.match(trouble.cause('permission_network').line, /change the address/);
+    assert.equal(trouble.cause('permission_network').screen, undefined);
+    assert.equal(trouble.fromMessage('permission denied'), null);
+    assert.equal(trouble.cause('permission').screen, undefined, 'said, no setup screen');
+});

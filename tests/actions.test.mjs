@@ -621,3 +621,10 @@ test('comeback: what the other skill says is recorded up to 2000 characters, how
     w.be.currentSkill = {assetPack: '@be/idle'}; w.step(); w.step(2000);
     assert.ok(said.length <= 2000 && said.startsWith('line number 0 of'), said.length);
 });
+
+test('readClock: a record the permissions refuse (no read-kb) is "cannot be read", not a failure', async () => {
+    const jibo = {kb: {createModel: () => { throw Error('@be/noggin needs the read-kb permission to do this'); }}};
+    assert.equal(await actions.readClock(jibo), null);
+    const rejecting = {kb: {createModel: () => ({loadRoot: () => Promise.reject(Error('@be/noggin needs the read-kb permission to do this'))})}};
+    assert.equal(await actions.readClock(rejecting), null);
+});

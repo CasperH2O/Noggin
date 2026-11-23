@@ -133,6 +133,7 @@ test('field checks: numbers, enums, sets, apps, urls, keys', () => {
     assert.equal(settings.schemaView().find(x => x.key === 'openApps').max, 8, 'the page knows the cap');
     assert.equal(settings.check(f('apiBase'), 'http://127.0.0.1:38111/v1/').value, 'http://127.0.0.1:38111/v1');
     assert.ok(settings.check(f('apiBase'), 'ftp://x').error);
+    assert.match(settings.schemaView().find(x => x.key === 'apiBase').help, /public or localhost/);
     assert.ok(settings.check(f('apiKey'), 'has space').error);
     assert.ok(settings.check(f('greeting'), 'x'.repeat(201)).error);
 });
@@ -281,4 +282,18 @@ test('ring refresh: every 500 ms by default, 0 leaves only the colour after each
     assert.equal(field.default, 500);
     assert.match(field.help, /besides after each line; 0: only after each line/);
     assert.equal(settings.PORT, 8131);
+});
+
+test('on the robot an API address on the home network is refused when saved (BEam 3.2.0 without local-network, D154)', () => {
+    const robot = '/opt/jibo/Knowledge/noggin';
+    const refused = ['http://192.168.1.20:8080/v1', 'http://10.0.0.5/v1', 'http://172.16.0.9/v1', 'http://proxy.local/v1', 'http://nas.lan:9000', 'http://proxy/v1', 'http://100.64.1.2/v1', 'http://169.254.1.1/v1', 'http://[fd12::1]/v1'];
+    for (const address of refused) {
+        const result = settings.update(robot, {apiBase: address}, {dryRun: true});
+        assert.equal(result.ok, false, address);
+        assert.match(result.errors.apiBase, /public address or localhost/, address);
+    }
+    for (const address of ['https://api.openai.com/v1', 'https://proxy.example.com/v1', 'http://localhost:38111/v1', 'http://127.0.0.1:38111/v1', 'http://172.32.0.1/v1'])
+        assert.equal(settings.update(robot, {apiBase: address}, {dryRun: true}).ok, true, address);
+    const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'noggin-settings-'));
+    assert.equal(settings.update(elsewhere, {apiBase: 'http://192.168.1.20:8080/v1'}).ok, true, 'a development checkout has no such guard');
 });

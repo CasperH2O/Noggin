@@ -584,3 +584,16 @@ test('GET /api/usage: no key, the dashboard from memory on a second look, a save
         assert.equal(view.perConversation, null, 'logs off: no cost per conversation');
     } finally { await r.stop(); }
 });
+
+test('GET /api/skills/found: BEacon refused for a missing jibo-apis permission is a 502 that says so, not a crash', async () => {
+    const refusing = {createServer: http.createServer, request: () => { throw Error('@be/noggin needs the jibo-apis permission to do this'); }};
+    const r = await running({http: refusing});
+    try {
+        const res = await r.call('GET', '/api/skills/found');
+        assert.equal(res.status, 502);
+        const body = await res.json();
+        assert.equal(body.ok, false);
+        assert.match(body.error, /BEacon did not answer \(.*jibo-apis permission/);
+        assert.equal((await r.call('GET', '/api/settings')).status, 200, 'the rest of the page works');
+    } finally { await r.stop(); }
+});

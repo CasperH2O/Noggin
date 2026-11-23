@@ -4,11 +4,14 @@
 // persona: the packaged SOUL, IDENTITY and FACTS, each replaced by an edited copy when there is one.
 // Node 6: ES2015 only.
 'use strict';
-const fs = require('fs'), path = require('path');
-const catalog = require('./catalog'), realtime = require('./realtime-session'), actions = require('./actions'), files = require('./files');
+const fs = require('fs'), path = require('path'), url = require('url');
+const catalog = require('./catalog'), realtime = require('./realtime-session'), actions = require('./actions'), files = require('./files'), migrate = require('./migrate');
 
 const ROBOT_SKILLS = '/opt/jibo/Jibo/Skills';
-const ROBOT_DATA = '/opt/jibo/Knowledge/beacon/custom-skills/noggin';
+// The skill's own Knowledge folder, where BEam 3.2.0 allows files without a permission (D151).
+const ROBOT_DATA = '/opt/jibo/Knowledge/noggin';
+// The folder earlier versions used; copied once (lib/migrate.js).
+const OLD_ROBOT_DATA = '/opt/jibo/Knowledge/beacon/custom-skills/noggin';
 const DEV_DATA = '/tmp/beam-beacon/custom-skills/noggin';
 const FILE = 'settings.json';
 const PACKAGED_PERSONA = path.join(__dirname, '../persona');
@@ -30,7 +33,7 @@ const SCHEMA = [
     {key: 'apiKey', type: 'secret', default: '', tab: 'brain', group: 'OpenAI', label: 'API key',
         help: 'Your OpenAI API key. It stays on Jibo and is never shown again.'},
     {key: 'apiBase', type: 'url', default: 'https://api.openai.com/v1', tab: 'brain', group: 'OpenAI', label: 'API address',
-        help: 'Change only for a compatible proxy.', advanced: true},
+        help: 'Change only for a compatible proxy. On Jibo (BEam 3.2.0) the address must be public or localhost: a device on the home network is refused.', advanced: true},
     {key: 'realtimeModel', type: 'text', pattern: MODEL, default: 'gpt-realtime-2.1', tab: 'brain', group: 'Models', label: 'Conversation model',
         help: 'Hears Jibo\'s microphone and writes what he says.', suggestions: ['gpt-realtime-2.1', 'gpt-realtime-2.1-mini', 'gpt-realtime']},
     // gpt-transcribe is the default transcription model (D108).
@@ -210,8 +213,25 @@ function check(field, value) {
     }
 }
 
+// BEam 3.2.0 lets a skill without `local-network` reach only public hosts and this robot (its hostNeeds).
+// Noggin does not declare it, so a home-network address would be refused (D154).
+function needsLocalNetwork(address) {
+    let host;
+    try { host = String(url.parse(address).hostname || '').toLowerCase().replace(/^\[|\]$/g, ''); } catch (_) { return false; }
+    if (!host || host === 'localhost' || /^127\./.test(host) || host === '::1' || host === '0.0.0.0' || host === '::') return false;
+    return /^(10|192\.168|169\.254)\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host) || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host) ||
+        /^f[cd][0-9a-f]{2}:/.test(host) || /^fe[89ab][0-9a-f]:/.test(host) || /\.(local|lan|home|internal)$/.test(host) || !/[.:]/.test(host);
+}
+
 function dataDir() { return fs.existsSync(ROBOT_SKILLS) ? ROBOT_DATA : DEV_DATA; }
 function file(dir) { return path.join(dir, FILE); }
+// Copies an older version's data into the data folder, once; only on the robot.
+// options (tests): {robot, from, to} instead of the robot's own folders.
+function adoptOldData(log, options) {
+    const o = options || {};
+    const robot = o.robot !== undefined ? o.robot : dataDir() === ROBOT_DATA;
+    return robot ? migrate.run({from: o.from || OLD_ROBOT_DATA, to: o.to || ROBOT_DATA, log: log}) : null;
+}
 
 // What settings.json holds, or {} when it is missing. A broken file throws.
 function stored(dir) {
@@ -281,6 +301,10 @@ function update(dir, patch, options) {
         if (value === null) { delete next[key]; return; }
         const result = check(field, value);
         if (result.error) { errors[key] = result.error; return; }
+        if (key === 'apiBase' && dir === ROBOT_DATA && needsLocalNetwork(result.value)) {
+            errors[key] = 'On Jibo this must be a public address or localhost, not a device on the home network.';
+            return;
+        }
         if (JSON.stringify(result.value) === JSON.stringify(field.default)) delete next[key];
         else next[key] = result.value;
     });
@@ -363,5 +387,5 @@ function updatePersona(dir, patch, options, packagedDir) {
     return {ok: true, errors: {}};
 }
 
-module.exports = {SCHEMA, PERSONA, SECRETS, PORT, dataDir, file, read, load, update, publicView, secrets, schemaView, check,
+module.exports = {SCHEMA, PERSONA, SECRETS, PORT, dataDir, adoptOldData, file, read, load, update, publicView, secrets, schemaView, check,
     persona, updatePersona, packaged};

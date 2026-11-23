@@ -41,7 +41,7 @@ class Noggin extends BeSkill {
         if (back) startup.since_comeback_ms = openedAt - back.at;
         const hey = heyJibo.fromResult(result);
         if (hey) startup.since_hey_jibo_ms = openedAt - hey.heardAt;
-        Promise.resolve().then(() => this.talk(settings.dataDir(), back, openedAt, startup, hey)).then(reason => {
+        Promise.resolve().then(() => { settings.adoptOldData(log); }).then(() => this.talk(settings.dataDir(), back, openedAt, startup, hey)).then(reason => {
             if (current()) log.info('conversation ended: ' + reason);
         }, error => {
             if (current()) log.error('conversation failed: ' + (error && error.stack || error));

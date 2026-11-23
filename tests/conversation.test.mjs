@@ -3297,3 +3297,56 @@ test('whom Jibo sees: after a reconnect the new session is told again; after clo
     await sleep(1100);
     assert.equal(looks, after, 'the 1 s look stopped with the conversation');
 });
+
+// ---- BEam 3.2.0 permissions: a blocked call throws an error that names the permission ----
+const BLOCKED = name => Error('@be/noggin needs the ' + name + ' permission to do this');
+
+test('the microphone program refused (no run-programs): Jibo says he is not allowed, ends, and the hotword is given back', async () => {
+    let stopped = 0;
+    const h = harness({mic: {start: () => { throw BLOCKED('run-programs'); }, stop: () => { stopped++; }, kind: 'arecord'}});
+    assert.equal(await h.talk.open(), 'trouble_permission');
+    assert.match(h.said.at(-1), /not allowed to do that/);
+    assert.equal(h.released(), 1, 'the hotword is back');
+    assert.ok(h.logs.some(e => e.kind === 'trouble' && e.cause === 'permission'));
+    assert.ok(stopped >= 1);
+    assert.equal(h.leds.at(-1), '0,0,0', 'the ring is off');
+});
+
+test('the hotword mode refused (no microphone permission): the conversation goes on with Jibo\'s own hotword', async () => {
+    const h = harness();
+    h.jibo.jetstream.setHotwordMode = () => { throw BLOCKED('microphone'); };
+    const ended = h.talk.open(); await untilListening(h);
+    assert.equal(h.talk.hotword, null);
+    h.talk.leave('test');
+    assert.equal(await ended, 'test');
+    assert.equal(h.released(), 0);
+});
+
+test('the realtime connection refused by the page (a private API address without local-network): the permission line, no network diagnosis', async () => {
+    let asked = 0;
+    const h = harness({connect: () => Promise.reject(BLOCKED('local-network')), diagnose: () => { asked++; return Promise.resolve({cause: 'no_internet'}); }});
+    assert.equal(await h.talk.open(), 'trouble_permission_network');
+    assert.match(h.said.at(-1), /change the address/);
+    assert.equal(asked, 0);
+});
+
+test('the web microphone asks the page for audio only, never BEam\'s camera-guarded jibo.media', async () => {
+    const calls = [];
+    const stream = {getAudioTracks: () => [], getTracks: () => []};
+    const node = () => ({connect() {}, disconnect() {}});
+    class Context {
+        constructor() { this.sampleRate = 48000; this.destination = {}; }
+        createMediaStreamSource() { return node(); }
+        createScriptProcessor() { return node(); }
+        close() { return Promise.resolve(); }
+    }
+    const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+    Object.defineProperty(globalThis, 'navigator', {configurable: true, value: {mediaDevices: {getUserMedia: c => { calls.push(c); return Promise.resolve(stream); }}}});
+    try {
+        const jibo = {media: {getUserMedia: () => { throw BLOCKED('camera'); }}};
+        const mic = new Microphone(jibo, {AudioContext: Context});
+        await mic.start(() => {});
+        mic.stop();
+        assert.deepEqual(calls, [{audio: true}]);
+    } finally { if (original) Object.defineProperty(globalThis, 'navigator', original); else delete globalThis.navigator; }
+});

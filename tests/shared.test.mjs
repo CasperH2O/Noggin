@@ -74,10 +74,10 @@ test('atomic: a failed write leaves the old file and no temporary file behind', 
     files.atomic(target, '{"v":1}');
     assert.equal(fs.statSync(target).mode & 0o777, 0o600);
     assert.equal(fs.statSync(path.dirname(target)).mode & 0o777, 0o700);
-    const writeFileSync = fs.writeFileSync;
-    fs.writeFileSync = () => { throw Object.assign(Error('no space left'), {code: 'ENOSPC'}); };
+    const writeSync = fs.writeSync;
+    fs.writeSync = () => { throw Object.assign(Error('no space left'), {code: 'ENOSPC'}); };
     try { assert.throws(() => files.atomic(target, '{"v":2}'), /no space left/); }
-    finally { fs.writeFileSync = writeFileSync; }
+    finally { fs.writeSync = writeSync; }
     assert.equal(fs.readFileSync(target, 'utf8'), '{"v":1}');
     assert.equal(fs.existsSync(target + '.new'), false);
     files.atomic(target, '{"v":3}');

@@ -4,7 +4,8 @@
 //
 // ProcessMicrophone (the robot): `arecord` in a child process, so an ALSA failure ends that
 // child, not Be's own process with Jibo's screen in it.
-// Microphone (the simulator): BEam's jibo.media.getUserMedia through Web Audio.
+// Microphone (the simulator): the page's own getUserMedia({audio}) through Web Audio. BEam's
+// jibo.media.getUserMedia counts as a camera call for a skill's permissions, so it is not used (D152).
 // Node 6 / Chrome 53: ES2015 only.
 'use strict';
 const audio = require('./audio');
@@ -78,6 +79,12 @@ class ProcessMicrophone {
     }
 }
 
+// The page's own audio capture, or null outside a page.
+function pageGetUserMedia() {
+    const devices = typeof navigator !== 'undefined' && navigator.mediaDevices;
+    return devices && typeof devices.getUserMedia === 'function' ? c => navigator.mediaDevices.getUserMedia(c) : null;
+}
+
 class Microphone {
     constructor(jibo, options) {
         this.jibo = jibo; this.options = options || {};
@@ -86,8 +93,8 @@ class Microphone {
     }
     // Resolves once the track is live. `onBlock(pcm16, levelDb)` runs for every block.
     start(onBlock) {
-        const jibo = this.jibo, options = this.options;
-        const getUserMedia = options.getUserMedia || (jibo.media && typeof jibo.media.getUserMedia === 'function' ? c => jibo.media.getUserMedia(c) : null);
+        const options = this.options;
+        const getUserMedia = options.getUserMedia || pageGetUserMedia();
         const Context = options.AudioContext || (typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext));
         if (!getUserMedia || !Context) return Promise.reject(Error('microphone_unavailable'));
         return Promise.resolve(getUserMedia({audio: true})).then(stream => {
