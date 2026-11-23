@@ -165,6 +165,8 @@ function newId(state, prefix) { return prefix + state.next++; }
 // The same fact again is {ok, fact, duplicate} (and becomes 'asked' when it was asked again). Saying
 // it again never changes when it ends, except that a later date moves the end.
 // When the facts are full, the oldest automatic facts give way; asked facts never do (D45).
+// options.noEvict: nothing gives way, a full memory refuses; options.noMerge: a fact already kept stays
+// as it is (an import never changes or pushes out what is kept, D156).
 function addFact(state, text, source, options) {
     options = options || {};
     source = source === 'asked' ? 'asked' : 'auto';
@@ -175,8 +177,10 @@ function addFact(state, text, source, options) {
     const now = options.now !== undefined ? options.now : Date.now(), k = key(cleaned.text);
     const same = state.facts.filter(f => key(f.text) === k)[0];
     if (same) {
-        if (source === 'asked' && same.source !== 'asked') { same.source = 'asked'; same.updated = now; }
-        if (expires && same.expires && expires > same.expires) same.expires = expires;
+        if (!options.noMerge) {
+            if (source === 'asked' && same.source !== 'asked') { same.source = 'asked'; same.updated = now; }
+            if (expires && same.expires && expires > same.expires) same.expires = expires;
+        }
         return {ok: true, fact: same, duplicate: true};
     }
     const fact = {id: newId(state, 'f'), text: cleaned.text, source: source, created: now};
@@ -184,7 +188,7 @@ function addFact(state, text, source, options) {
     const room = () => state.facts.length < MAX_FACTS && factChars(state.facts) + fact.text.length + 3 <= FACT_CHARS;
     const dropped = [];
     while (!room()) {
-        const oldest = state.facts.filter(f => f.source === 'auto').sort((a, b) => (a.updated || a.created) - (b.updated || b.created))[0];
+        const oldest = options.noEvict ? null : state.facts.filter(f => f.source === 'auto').sort((a, b) => (a.updated || a.created) - (b.updated || b.created))[0];
         if (!oldest) {
             // Nothing could go: put back what was dropped for this one.
             state.facts = state.facts.concat(dropped);
@@ -229,6 +233,76 @@ function addSummary(state, summary) {
     state.summaries.sort((a, b) => a.at - b.at);
     if (state.summaries.length > MAX_SUMMARIES) state.summaries = state.summaries.slice(-MAX_SUMMARIES);
     return {ok: true, summary: entry};
+}
+
+// ---- import (the Memory tab, D156) ----
+const FORMAT = 'noggin-memory';
+const FORMAT_VERSION = 1;
+const IMPORT_MAX = 400;         // entries read from each list of a file; an export holds at most 60 facts and 300 notes
+const PARTS = ['night', 'morning', 'afternoon', 'evening'];
+const NOON_MS = 12 * 3600000;
+// A day that exists (a 31st of February does not), unlike what DAY alone lets through.
+function realDay(day) {
+    if (typeof day !== 'string' || !DAY.test(day)) return false;
+    const p = day.split('-'), date = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2]));
+    return date.getUTCFullYear() === +p[0] && date.getUTCMonth() === +p[1] - 1 && date.getUTCDate() === +p[2];
+}
+// When a note was written: the file's time when it fits the note's day (within two days), else
+// noon of that day, so a note with a missing or wrong time never ranks as the newest.
+function noteTime(at, day) {
+    const noon = dayNumber(day) * DAY_MS + NOON_MS;
+    return typeof at === 'number' && isFinite(at) && Math.abs(at - noon) <= 2 * DAY_MS ? at : noon;
+}
+// What a memory file (the export, or the older export without a format) adds to `state`. Every
+// entry goes through the checks of a new one (clean, budgets, expiry, the age limit), gets a new
+// id and never changes or pushes out what is kept: a full memory refuses the rest. options:
+// {today, replace}: replace empties the facts and notes first. {ok, added: {facts, notes},
+// known: {facts, notes}, skipped: {reason: n}, empty: nothing came in}, or {ok: false, error}.
+// The recap bookkeeping in a file is never read.
+function importData(state, data, options) {
+    options = options || {};
+    const notExport = {ok: false, error: 'That file is not a memory export.'};
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return notExport;
+    if (data.format !== undefined && data.format !== FORMAT) return {ok: false, error: 'That file is not a memory export from Noggin.'};
+    if (data.version !== undefined) {
+        if (typeof data.version !== 'number' || data.version !== Math.floor(data.version) || data.version < 1) return notExport;
+        if (data.version > FORMAT_VERSION) return {ok: false, error: 'That file comes from a newer Noggin than this one.'};
+    }
+    if (!Array.isArray(data.facts) && !Array.isArray(data.summaries)) return {ok: false, error: 'That file has no facts or notes.'};
+    const today = options.today, added = {facts: 0, notes: 0}, known = {facts: 0, notes: 0}, skipped = {};
+    const skip = reason => { skipped[reason] = (skipped[reason] || 0) + 1; };
+    if (options.replace) { state.facts = []; state.summaries = []; }
+    const object = value => value && typeof value === 'object' && !Array.isArray(value);
+    const facts = list(data.facts).slice(0, IMPORT_MAX).filter(object);
+    // What was asked for goes first, so it is the part that finds room when the facts are full.
+    facts.filter(f => f.source === 'asked').concat(facts.filter(f => f.source !== 'asked')).forEach(f => {
+        const hasEnd = f.expires !== undefined && f.expires !== null && f.expires !== '';
+        if (hasEnd && !realDay(f.expires)) return skip('bad date');
+        const created = typeof f.created === 'number' && isFinite(f.created) && f.created > 0 ? f.created : undefined;
+        const r = addFact(state, f.text, f.source, {expires: hasEnd ? f.expires : null, today: today, noEvict: true, noMerge: true, now: created});
+        if (!r.ok) skip(r.reason);
+        else if (r.duplicate) known.facts++;
+        else added.facts++;
+    });
+    const oldest = today ? dayNumber(today) - KEEP_DAYS : -Infinity, newest = today ? dayNumber(today) + 1 : Infinity;
+    list(data.summaries).slice(0, IMPORT_MAX).filter(object).forEach(s => {
+        if (typeof s.day !== 'string' || !DAY.test(s.day)) return skip('no day');
+        if (!realDay(s.day)) return skip('bad date');
+        if (dayNumber(s.day) <= oldest) return skip('old');
+        if (dayNumber(s.day) > newest) return skip('future');
+        const cleaned = clean(s.text, SUMMARY_MAX);
+        if (cleaned.error) return skip(cleaned.error);
+        if (state.summaries.some(n => n.day === s.day && key(n.text) === key(cleaned.text))) { known.notes++; return; }
+        if (state.summaries.length >= MAX_SUMMARIES) return skip('full');
+        const r = addSummary(state, {text: s.text, day: s.day, part: PARTS.indexOf(s.part) >= 0 ? s.part : '', at: noteTime(s.at, s.day), logs: []});
+        if (r.ok) added.notes++; else skip(r.reason);
+    });
+    return {ok: true, added: added, known: known, skipped: skipped, empty: !added.facts && !added.notes};
+}
+// The file to download: the facts and notes; a note's log names mean nothing on another Jibo, so they stay out.
+function exportData(state) {
+    return {format: FORMAT, version: FORMAT_VERSION, facts: state.facts,
+        summaries: state.summaries.map(s => ({id: s.id, text: s.text, day: s.day, part: s.part, at: s.at}))};
 }
 
 // Summaries older than KEEP_DAYS and facts past their expiry day go. today: 'YYYY-MM-DD'.
@@ -334,4 +408,4 @@ function tool(dir, args, today) {
 
 module.exports = {FACT_MAX, FACT_CHARS, MAX_FACTS, SUMMARY_CHARS, LOADED_SUMMARIES, KEEP_DAYS, MAX_SUMMARIES, MAX_DONE,
     empty, read, write, update, clean, dayOf, partOf, label, addFact, editFact, removeFact, removeSummary,
-    addSummary, prune, search, findFacts, loaded, block, tool};
+    addSummary, importData, exportData, prune, search, findFacts, loaded, block, tool};

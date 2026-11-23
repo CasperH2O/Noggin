@@ -15,6 +15,7 @@ const memory = require('./memory'), usage = require('./usage'), stats = require(
 const {requestJson, withTimeout} = require('./http');
 
 const BODY_MAX = 128 * 1024;
+const IMPORT_BODY_MAX = 512 * 1024;   // a memory export is far smaller; the room is for files edited by hand (D156)
 const REQUEST_TIMEOUT_MS = 15000;
 const MAX_CONNECTIONS = 16;
 // The persona size the page recommends: the instructions sent at every conversation start.
@@ -66,7 +67,7 @@ function localHost(req) {
 }
 
 // The JSON body, or an error with an HTTP status.
-function readBody(req) {
+function readBody(req, max) {
     return new Promise((resolve, reject) => {
         const parts = [];
         let size = 0, failed = false;
@@ -74,7 +75,7 @@ function readBody(req) {
         req.on('data', chunk => {
             if (failed) return;
             size += chunk.length;
-            if (size > BODY_MAX) { fail(413, 'too large'); req.resume(); return; }
+            if (size > max) { fail(413, 'too large'); req.resume(); return; }
             parts.push(chunk);
         });
         req.on('end', () => {
@@ -316,9 +317,45 @@ function create(options) {
         log.info('memory: everything forgotten on the settings page');
         return memoryView();
     }
+    const SKIP_WORDS = {'too long': 'too long', 'not a plain memory': 'read like instructions, links or code', full: 'did not fit in the memory',
+        expired: 'for a day that has passed', empty: 'empty', old: 'older than two weeks', future: 'dated in the future', 'no day': 'without a day', 'bad date': 'with a date that does not exist'};
+    function importMessage(r) {
+        const n = (count, one, many) => count + ' ' + (count === 1 ? one : many);
+        const parts = [], added = [];
+        if (r.added.facts) added.push(n(r.added.facts, 'fact', 'facts'));
+        if (r.added.notes) added.push(n(r.added.notes, 'note', 'notes'));
+        parts.push(added.length ? 'Added ' + added.join(' and ') + '.' : 'Nothing new to add.');
+        const known = r.known.facts + r.known.notes;
+        if (known) parts.push(known + ' already known.');
+        const skipped = Object.keys(r.skipped).map(reason => r.skipped[reason] + ' ' + (SKIP_WORDS[reason] || reason));
+        if (skipped.length) parts.push('Left out: ' + skipped.join(', ') + '.');
+        return parts.join(' ');
+    }
+    // POST /api/memory/import {data, mode: 'add'|'replace', confirm?}: the facts and notes of an
+    // export (D156). Adding keeps everything already there and refuses what does not fit; replacing
+    // needs confirm: true and is refused when nothing in the file could be used.
+    function importMemory(body) {
+        const replace = body.mode === 'replace';
+        if (body.mode !== undefined && body.mode !== 'add' && !replace) return {httpStatus: 400, body: {ok: false, error: 'mode is add or replace'}};
+        if (replace && body.confirm !== true) return {httpStatus: 400, body: {ok: false, error: 'not confirmed'}};
+        let failed = null;
+        const transcripts = replace ? ConversationLog.transcripts(dataDir()) : [];
+        const r = memory.update(dataDir(), state => {
+            const done = memory.importData(state, body.data, {today: today(), replace: replace});
+            if (!done.ok) { failed = done.error; return {unchanged: true, done: done}; }
+            // Replacing with a file that gives nothing back would only wipe the memory.
+            if (done.empty) { if (replace) failed = 'Nothing in that file could be used, so nothing was replaced. ' + importMessage(done); return {unchanged: true, done: done}; }
+            // A replace is the file and nothing else: the conversations so far are not recapped on top of it, as after "Forget everything".
+            if (replace) { state.recap.done = transcripts.slice(0, memory.MAX_DONE); state.recap.tries = {}; }
+            return {done: done};
+        });
+        if (failed) return {httpStatus: 400, body: {ok: false, error: failed}};
+        if (replace) ConversationLog.dropRecap(dataDir(), transcripts);
+        log.info('memory: import on the settings page (' + (replace ? 'replace' : 'add') + '): ' + r.done.added.facts + ' facts, ' + r.done.added.notes + ' notes added');
+        return Object.assign(memoryView(), {message: importMessage(r.done)});
+    }
     function exportMemory(res) {
-        const state = memory.read(dataDir());
-        send(res, 200, 'application/json; charset=utf-8', JSON.stringify({facts: state.facts, summaries: state.summaries}, null, 2),
+        send(res, 200, 'application/json; charset=utf-8', JSON.stringify(memory.exportData(memory.read(dataDir())), null, 2),
             {'Content-Disposition': 'attachment; filename="noggin-memory-' + today() + '.json"'});
     }
 
@@ -349,12 +386,13 @@ function create(options) {
         if (method === 'GET' && pathname === '/api/usage') return usageView(/(^|&)refresh=1(&|$)/.test(query)).then(view => json(res, 200, view));
         if (method === 'GET' && pathname === '/api/memory/export') return exportMemory(res);
         const writes = {'/api/settings': save, '/api/test-key': testKey, '/api/apps/describe': describeApp,
-            '/api/memory/fact': saveFact, '/api/memory/delete': deleteMemory, '/api/memory/clear': clearMemory};
+            '/api/memory/fact': saveFact, '/api/memory/delete': deleteMemory, '/api/memory/clear': clearMemory,
+            '/api/memory/import': importMemory};
         if (!writes[pathname]) return json(res, 404, {ok: false, error: 'not found'});
         if (method !== 'POST') return json(res, 405, {ok: false, error: 'POST only'});
         if (!sameOrigin(req)) return json(res, 403, {ok: false, error: 'only from this settings page'});
         if (!/^application\/json\b/i.test(String(req.headers['content-type'] || ''))) return json(res, 415, {ok: false, error: 'JSON only'});
-        return readBody(req).then(body => {
+        return readBody(req, pathname === '/api/memory/import' ? IMPORT_BODY_MAX : BODY_MAX).then(body => {
             if (!body || typeof body !== 'object' || Array.isArray(body)) return json(res, 400, {ok: false, error: 'expected an object'});
             return Promise.resolve(writes[pathname](body)).then(result => {
                 if (result && result.httpStatus) return json(res, result.httpStatus, result.body);
@@ -407,4 +445,4 @@ function create(options) {
     return {listen: listen, close: close, handle: handle, state: state, usage: () => usageView(false), connections: () => sockets.size};
 }
 
-module.exports = {create, BODY_MAX, BUDGET};
+module.exports = {create, BODY_MAX, IMPORT_BODY_MAX, BUDGET};

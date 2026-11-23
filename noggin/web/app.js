@@ -80,13 +80,13 @@
         $('live-text').textContent = text;
     }
     let toastTimer = null;
-    function toast(text, isError) {
+    function toast(text, isError, ms) {
         const node = $('toast');
         node.textContent = text;
         node.className = 'toast' + (isError ? ' is-error' : '');
         node.hidden = false;
         clearTimeout(toastTimer);
-        toastTimer = setTimeout(() => { node.hidden = true; }, isError ? 6000 : 3500);
+        toastTimer = setTimeout(() => { node.hidden = true; }, ms || (isError ? 6000 : 3500));
     }
 
     function load() {
@@ -521,11 +521,45 @@
         const forget = el('button', {class: 'btn btn-flat-danger', type: 'button', text: 'Forget everything', onclick: () => {
             if (window.confirm('Jibo forgets every fact and every note. This cannot be undone.')) act('/api/memory/clear', {confirm: true});
         }});
+        // Import: the file is read here and sent to Jibo as it is; Jibo checks every entry like a new one (D156).
+        let importMode = 'add';
+        const picker = el('input', {type: 'file', accept: '.json,application/json', hidden: true, 'aria-label': 'Memory file'});
+        function pick(mode) { importMode = mode; picker.click(); }
+        picker.addEventListener('change', () => {
+            const file = picker.files && picker.files[0], mode = importMode;
+            picker.value = '';
+            if (!file) return;
+            if (file.size > 512 * 1024) { toast('That file is too big for a memory export.', true); return; }
+            const reader = new FileReader();
+            reader.onerror = () => toast('That file could not be read.', true);
+            reader.onload = () => {
+                let data;
+                try { data = JSON.parse(String(reader.result)); } catch (_) { toast('That file is not a memory export.', true); return; }
+                if (!data || typeof data !== 'object' || Array.isArray(data)) { toast('That file is not a memory export.', true); return; }
+                if (Array.isArray(data.summaries)) data.summaries = data.summaries.map(n => n && typeof n === 'object' ? {text: n.text, day: n.day, part: n.part, at: n.at} : n);
+                const nf = Array.isArray(data.facts) ? data.facts.length : 0, nn = Array.isArray(data.summaries) ? data.summaries.length : 0;
+                const count = nf + (nf === 1 ? ' fact and ' : ' facts and ') + nn + (nn === 1 ? ' note' : ' notes');
+                const ask = mode === 'replace'
+                    ? 'Jibo forgets every fact and note he has now and takes the ' + count + ' in "' + file.name + '" instead. This cannot be undone.'
+                    : 'Add the ' + count + ' in "' + file.name + '" to what Jibo remembers? Nothing he knows now is removed.';
+                if (!window.confirm(ask)) return;
+                request('POST', '/api/memory/import', mode === 'replace' ? {data: data, mode: mode, confirm: true} : {data: data, mode: mode}).then(result => {
+                    if (result.status !== 200) { toast(result.json && result.json.error || 'Not imported.', true); return; }
+                    show(result.json);
+                    toast(result.json.message || 'Imported.', false, 12000);
+                }).catch(() => toast('Jibo did not answer.', true));
+            };
+            reader.readAsText(file);
+        });
         return settingsPanel('memory').concat([
             el('h2', {class: 'section-header', text: 'Facts'}), fullness, facts,
             el('h2', {class: 'section-header', text: 'Recent conversations'}),
             el('div', {class: 'field-help', text: 'Notes Jibo keeps for two weeks. He has the newest few at hand; he looks up the rest when someone asks.'}), notes,
-            el('div', {class: 'memory-tools'}, [el('a', {class: 'btn btn-flat', href: '/api/memory/export', download: 'noggin-memory.json', text: 'Export'}), forget])
+            el('div', {class: 'memory-tools'}, [el('div', {class: 'memory-files'}, [
+                el('a', {class: 'btn btn-flat', href: '/api/memory/export', download: 'noggin-memory.json', text: 'Export'}),
+                el('button', {class: 'btn btn-flat', type: 'button', text: 'Import', onclick: () => pick('add')}),
+                el('button', {class: 'btn btn-flat-danger', type: 'button', text: 'Import and replace', onclick: () => pick('replace')}),
+                picker]), forget])
         ]);
     }
 

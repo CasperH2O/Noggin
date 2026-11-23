@@ -449,7 +449,8 @@ textarea.about { min-height: 0; resize: vertical; font-family: inherit; font-siz
 .log-row.is-editing { flex-wrap: wrap; }
 .log-row.is-editing .memory-text { flex-basis: 100%; }
 .log-row.is-editing .log-actions { margin-left: auto; }
-.memory-tools { display: flex; justify-content: space-between; gap: 12px; padding: 16px 0 8px; }
+.memory-tools { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 16px 0 8px; }
+.memory-files { display: flex; flex-wrap: wrap; gap: 12px; }
 
 /* Usage tab: tiles, the budget meter, curved day charts and the hour grid (D68) */
 :root { --chart-line: var(--accent-blue); --chart-fill: rgba(0, 155, 186, 0.10); --chart-grid: #e6e7e9; }
