@@ -67,3 +67,18 @@ test('opened by "Hey Jibo" through background.js: the conversation gets when it 
     assert.equal(calls[1][4], null);
     assert.equal(calls[2][4], null);
 });
+
+test('opened again without a close (a voice launch while Noggin is up): the old conversation and screen are closed first (D160)', async () => {
+    const events = [];
+    const s = skill();
+    s.session = {close: async reason => { events.push('session ' + reason); await sleep(15); events.push('session closed'); }};
+    s.screen = {close: async () => { events.push('screen closed'); }};
+    s.talk = () => { events.push('talk'); return Promise.resolve('test'); };
+    s.exit = () => {};
+    s.open({nlu: {intent: 'menu', entities: {}}});
+    await sleep(60);
+    assert.ok(events.indexOf('talk') > events.indexOf('session closed'), 'the new conversation starts after the old one is gone: ' + events);
+    assert.ok(events.includes('screen closed'));
+    assert.equal(s.session, null);
+    assert.equal(s.screen, null);
+});

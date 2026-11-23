@@ -16,7 +16,7 @@ No key yet? Open Noggin anyway: Jibo shows a QR code on his screen that takes yo
 
 ## Talking with Jibo
 
-- Open Noggin from the menu, or switch on **Open on "Hey Jibo"** (Behaviour tab, off by default): then "Hey Jibo" opens Noggin whenever Jibo is idle, and everything you ask goes through Noggin. Say "Hey Jibo": his ring turns orange while Noggin starts, then blue when he listens. Then talk.
+- Open Noggin from the menu, or say "Hey Jibo, Noggin" (also "use your noggin", "open Noggin", "talk to Noggin" and a few more, below), or switch on **Open on "Hey Jibo"** (Behaviour tab, off by default): then "Hey Jibo" opens Noggin whenever Jibo is idle, and everything you ask goes through Noggin. Say "Hey Jibo": his ring turns orange while Noggin starts, then blue when he listens. Then talk.
 - Jibo says hi as soon as Noggin opens. His ring is **blue** while he listens and **orange** while he thinks and talks.
 - Talk normally and wait for his answer. He does not hear you while he speaks.
 - Say **goodbye** to end, swipe down, stay quiet for a minute, or hold his head for 3 seconds.
@@ -28,6 +28,16 @@ No key yet? Open Noggin anyway: Jibo shows a QR code on his screen that takes yo
 During a conversation Jibo can tell you the time and date on his clock, set and cancel timers and alarms, change his volume, dance, play music and the radio, take a photo, open his apps, go to sleep, look away (turn around), and ask his cloud for the weather, the news, your calendar, your commute, a personal report, a surprise or a picture of something. When another skill or app takes over, Noggin comes back afterwards with "Anything else?" (within 5 minutes; you can change that). Music, the radio, going to sleep and looking away end the conversation.
 
 Jibo remembers. After a conversation he keeps a short note of it for two weeks, and the facts worth keeping about your household (names, pets, likes, plans), so he can come back to them next time. Say "remember that…", "forget that…" or "what did we talk about last week?" to ask him directly. Several people talk to Jibo and he cannot tell who is who, so what he remembers is shared by the whole household; he leaves out health details, codes, money, addresses and anything you ask him to keep secret.
+
+## Opening Noggin by voice
+
+Say "Hey Jibo" and then one of these, and Noggin opens:
+
+- "Noggin", "open Noggin", "start Noggin", "launch Noggin", "switch to Noggin"
+- "use Noggin", "use your noggin", "let's use your noggin"
+- "talk to Noggin", "talk with Noggin", "let's talk to Noggin", "chat with Noggin"
+
+Say just the words, nothing more: "Hey Jibo, talk to Noggin about space" is not one of them. It needs Jibo to hear you through his cloud. With **Open on "Hey Jibo"** on, "Hey Jibo" alone opens Noggin instead.
 
 ## The settings page
 

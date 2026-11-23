@@ -1,9 +1,23 @@
 {
   "name": "Noggin",
-  "version": "0.5.25",
+  "version": "0.5.26",
   "supported": "3.2.0",
   "type": "skill",
   "themes": false,
   "buttonColor": "#2C3B5E #0F1626",
-  "permissions": ["background", "microphone", "run-programs", "jibo-apis", "read-kb"]
+  "permissions": ["background", "microphone", "run-programs", "jibo-apis", "read-kb"],
+  "phrases": [
+    "noggin",
+    "open noggin",
+    "start noggin",
+    "launch noggin",
+    "use noggin",
+    "use your noggin",
+    "let's use your noggin",
+    "talk to noggin",
+    "talk with noggin",
+    "let's talk to noggin",
+    "chat with noggin",
+    "switch to noggin"
+  ]
 }

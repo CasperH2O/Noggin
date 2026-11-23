@@ -41,7 +41,9 @@ class Noggin extends BeSkill {
         if (back) startup.since_comeback_ms = openedAt - back.at;
         const hey = heyJibo.fromResult(result);
         if (hey) startup.since_hey_jibo_ms = openedAt - hey.heardAt;
-        Promise.resolve().then(() => { settings.adoptOldData(log); }).then(() => this.talk(settings.dataDir(), back, openedAt, startup, hey)).then(reason => {
+        // A voice launch while Noggin is open makes Be call open() again without close() (D160).
+        const released = this.release();
+        released.then(() => { settings.adoptOldData(log); }).then(() => this.talk(settings.dataDir(), back, openedAt, startup, hey)).then(reason => {
             if (current()) log.info('conversation ended: ' + reason);
         }, error => {
             if (current()) log.error('conversation failed: ' + (error && error.stack || error));
@@ -88,7 +90,7 @@ class Noggin extends BeSkill {
             : new Microphone(jibo, {onTrack: name => log.write({kind: 'microphone_track', event: name})});
         const abilities = config.actions ? {apps: Object.keys(actions.apps(config)), config: config} : null;
         const notes = this.memoryNotes(dataDir, config, back, log, openedAt);
-        const instructions = realtime.instructions(persona.soul, persona.identity, actions.localTime(jibo), abilities, notes, {presence: config.presence !== false});
+        const instructions = realtime.instructions(persona.soul, persona.identity, actions.localTime(jibo), abilities, notes, {presence: config.presence !== false, emoji: config.emoji !== false});
         session = this.session = new Conversation({
             jibo: jibo, config: config, log: log, version: VERSION,
             instructions: instructions,
@@ -179,11 +181,15 @@ class Noggin extends BeSkill {
             recap.nudge();
         }});
     }
-    close(done) {
-        this.generation = (this.generation || 0) + 1;
+    // Closes the conversation or setup screen that is still up; resolves once both are gone.
+    release() {
         const session = this.session; this.session = null;
         const screen = this.screen; this.screen = null;
-        Promise.all([session && session.close('closed'), screen && screen.close()]).then(() => done && done(), () => done && done());
+        return Promise.all([session && session.close('closed'), screen && screen.close()]).then(() => {}, () => {});
+    }
+    close(done) {
+        this.generation = (this.generation || 0) + 1;
+        this.release().then(() => done && done());
     }
     destroy(done) { this.close(done); }
 }

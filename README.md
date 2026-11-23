@@ -94,6 +94,16 @@ On the robot: BEacon, Store, Upload ZIP, and choose `Noggin.zip` from a release.
   cleared again after that "Hey Jibo", so with the setting off Jibo looks as he always does. Words
   said right after "Hey Jibo" are not heard. The simulator cancels turns differently, so check this
   on the robot.
+- **Open by voice** (`phrases` in `manifest.json`). BEam matches the whole sentence heard after
+  "Hey Jibo" against each installed skill's phrases on the robot (`beacon/lib/launch-phrases.js`),
+  ignoring case, punctuation, a leading "Jibo" and "please" / "can you". Noggin lists "noggin",
+  "open / start / launch / use / switch to noggin", "use your noggin", "(let's) talk to / with
+  noggin" and "chat with noggin"; BEam rejects a phrase with only everyday words, and needs the
+  cloud's transcript (no turn result without it). No permission is needed. The list is in the
+  store text; `tests/package.test.mjs` keeps the two in step. With `heyJibo` on, "Hey Jibo" opens
+  Noggin by itself while Jibo is idle and a key is saved, and the words after it are not heard;
+  otherwise the phrases open it. A launch while Noggin is open makes Be call `open()` again
+  without `close()`, so `open()` first closes the conversation or setup screen still up.
 
 ## Permissions
 

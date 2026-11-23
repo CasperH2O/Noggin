@@ -124,3 +124,20 @@ test('whole-file writes pass BEam\'s path checks: no fs call guarded for paths g
     assert.equal(fs.statSync(path.join(dir, 'a', 'two.bin')).size, 300000);
     assert.deepEqual(fs.readdirSync(path.join(dir, 'a')).sort(), ['one.json', 'two.bin']);
 });
+
+// BEam matches the whole sentence heard after "Hey Jibo" against the manifest's `phrases` and takes
+// no permission for it (beacon/lib/launch-phrases.js has the rules).
+test('launch phrases: a valid list in the manifest, all of it in the store text', () => {
+    const phrases = manifest.phrases;
+    assert.ok(Array.isArray(phrases) && phrases.length >= 1 && phrases.length <= 20);
+    const seen = new Set();
+    for (const phrase of phrases) {
+        assert.ok(typeof phrase === 'string' && phrase.length <= 100, phrase);
+        assert.match(phrase, /^[a-z' ]+$/, 'lower case words only: ' + phrase);
+        assert.ok(/noggin/.test(phrase), 'every phrase names Noggin, so it cannot take a request meant for Jibo: ' + phrase);
+        assert.ok(!seen.has(phrase), 'listed twice: ' + phrase);
+        seen.add(phrase);
+    }
+    const store = fs.readFileSync(path.join(source, 'store/README.md'), 'utf8').toLowerCase();
+    for (const phrase of phrases) assert.ok(store.includes('"' + phrase + '"'), 'the store text lists "' + phrase + '"');
+});
