@@ -50,7 +50,9 @@ On the robot: BEacon, Store, Upload ZIP, and choose `Noggin.zip` from a release.
   object; both run in Be's process). Learning starts with the first conversation that has it on. One conversation per pass, 3 tries, at most 60 calls a day; logs from
   before learning was switched on are never sent. Facts are about the household in the third
   person, since Noggin cannot tell people apart; private things are dropped in code.
-- **Usage** (`noggin/lib/usage.js`). The Usage tab shows what Jibo's OpenAI use costs, read with an
+- **Usage** (`noggin/lib/usage.js`, `noggin/lib/stats.js`). The Usage tab starts with how often Jibo talks (conversations,
+  time talked, average and longest, per day, and the latest ones), read from the start and end of the
+  conversation logs, so it needs logs on and reaches back as far as they are kept. It then shows what Jibo's OpenAI use costs, read with an
   admin key that must be read-only: before it is saved, and before every fetch, Noggin tries a write
   that cannot change anything (deleting an invite that does not exist) and goes on only when OpenAI
   refuses it for the missing `api.management.write` scope. A key that gets further is refused, or
@@ -115,6 +117,7 @@ The page uses these; anything on the local network can too (no login, like BEaco
 |---|---|
 | `GET /api/settings` | schema, values, persona (current and packaged), the instructions size; the key only as a hint |
 | `POST /api/settings` | `{values: {key: value or null}, persona: {soul or identity or facts: text or null}}`; `null` restores the default. All or nothing: `400` with `errors` per field. A new `adminKey` is saved only when OpenAI shows it is read-only |
+| `GET /api/stats` | the Usage tab's Conversations section, from the conversation logs kept: `{ok, total, since, week: {count, ms, averageMs, longestMs}, days: [{day, count, ms}], recent: [{start, day, time, ms, turns, reason, resumed}]}`; days are Jibo's local days, and a comeback after a handover (`resumed`) adds time but is not counted again |
 | `GET /api/usage`, `GET /api/usage?refresh=1` | the Usage tab: `{ok, state, days, models, features, budget, caching, whatIf, perConversation, hours, key, fetchedAt, cached}`; a model or feature has `cost`, `tokens` and `seconds` (audio, per-minute models); `state` is `ok`, `no-key`, `removed` (a saved key had write access and was deleted), `rejected`, `unknown`, `no-match`, `no-api-key` or `error` with `error`. `budget.spent` is what the limit counts: the project's spend for a project limit, else the account's |
 | `POST /api/test-key` | `{key}` or the saved key: Jibo asks OpenAI for its model list |
 | `GET /api/logs`, `GET /api/logs/<name>` | the conversation logs, newest first, and one log as JSON lines |
@@ -176,6 +179,7 @@ The tests and tools run on a current Node.
 | `noggin/lib/server.js` | the settings page's HTTP server and API |
 | `noggin/lib/describe.js` | Describe with AI: a line on what an extra app does |
 | `noggin/lib/usage.js` | the Usage tab: the read-only check, Jibo's key, costs, usage and limits from OpenAI |
+| `noggin/lib/stats.js` | the Usage tab's Conversations section: counts and lengths read from the start and end of each conversation log |
 | `noggin/lib/budget.js` | the budget check in the background and the heads-up |
 | `noggin/lib/ring.js` | the ring colours, shared by the conversation and the "Hey Jibo" hold |
 | `noggin/lib/embodied-listen.js` | Jibo's own listening look (Embodied Listen): its state and clearing `disableOnce` |

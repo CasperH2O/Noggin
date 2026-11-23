@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Noggin's settings page: builds every tab from the schema the robot sends (GET /api/settings),
 // keeps unsaved changes until Save (POST /api/settings), shows the conversation logs and what
-// Jibo's OpenAI use costs (GET /api/usage).
+// Jibo's OpenAI use costs (GET /api/usage) and how often he talks (GET /api/stats).
 // Plain browser JavaScript, ES2015, no libraries.
 (function () {
     'use strict';
@@ -26,7 +26,7 @@
         behaviour: 'How Jibo greets you, moves and listens.',
         skills: 'What Jibo may do for you during a conversation.',
         memory: 'What Jibo remembers about your household, and short notes of the last two weeks of conversations. Several people talk to Jibo and he cannot tell who is who, so everything here is shared by everyone in the house.',
-        usage: 'What Jibo\'s OpenAI use costs, read with a read-only admin key. Jibo asks OpenAI when you open this tab or press Refresh, and keeps the answer for 15 minutes.',
+        usage: 'How often Jibo talks, counted from his conversation logs, and what his OpenAI use costs, read with a read-only admin key. Jibo asks OpenAI when you open this tab or press Refresh, and keeps the answer for 15 minutes.',
         history: 'What was said in recent conversations. Never audio, never the key.'
     };
 
@@ -747,6 +747,58 @@
             el('div', {class: 'field-help help-bottom', text: 'Requests to OpenAI per hour, in Jibo\'s time. Darker is more.'})]));
         return out;
     }
+
+    // ---- conversation statistics: counted from the conversation logs Jibo keeps (D148) ----
+    let talks = null, talksPending = false, talksBox = null;
+    function span(ms) {
+        const s = Math.round(ms / 1000);
+        if (s < 60) return s + ' s';
+        const m = Math.floor(s / 60);
+        if (m < 60) return m + ' min' + (s % 60 && m < 10 ? ' ' + (s % 60) + ' s' : '');
+        return Math.floor(m / 60) + ' h ' + (m % 60) + ' min';
+    }
+    // Day and time as Jibo's clock has them (the server sends both), not the browser's.
+    function talkWhen(r, days) {
+        const today = days[days.length - 1].day, yesterday = days.length > 1 ? days[days.length - 2].day : null;
+        const name = r.day === today ? 'Today' : r.day === yesterday ? 'Yesterday'
+            : new Date(r.day + 'T12:00:00Z').toLocaleDateString(undefined, {weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC'});
+        return name + ' ' + r.time;
+    }
+    function talksBody(t) {
+        if (!t || !t.ok) return [el('div', {class: 'empty', text: 'Jibo did not answer.'})];
+        if (!t.total) return [el('div', {class: 'empty', text: state.values && state.values.log === false ? 'Conversation logs are off, so there is nothing to count. Turn on "Keep conversation logs" under History to see statistics.' : 'No conversation logs yet.'})];
+        const w = t.week, tile = (label, value, sub) => el('div', {class: 'tile'}, [el('div', {class: 'tile-label', text: label}), el('div', {class: 'tile-value', text: value}), sub ? el('div', {class: 'tile-sub', text: sub}) : null]);
+        const today = t.days[t.days.length - 1].day;
+        // Whole numbers on the count axis; the short text only for the tip.
+        const count = (v, axis) => axis ? (Number.isInteger(v) ? String(v) : '') : v + (v === 1 ? ' conversation' : ' conversations');
+        const minutes = (v, axis) => axis ? String(Math.round(v)) : v + ' min';
+        return [
+            el('div', {class: 'tiles'}, [
+                tile('Conversations', String(w.count), 'in the last 7 days'),
+                tile('Talked', span(w.ms), 'in total'),
+                tile('Average', w.averageMs === null ? '–' : span(w.averageMs), 'per conversation'),
+                tile('Longest', span(w.longestMs), 'one stretch')]),
+            el('div', {class: 'setting-block'}, [
+                dayChart('Conversations per day', t.days, today, d => d.count, count),
+                dayChart('Minutes talked per day', t.days, today, d => Math.round(d.ms / 6000) / 10, minutes),
+                el('div', {class: 'field-help help-bottom', text: 'Read from the conversation logs Jibo keeps: ' + t.total + ' since ' + new Date(t.since).toLocaleDateString(undefined, {day: 'numeric', month: 'short', year: 'numeric'}) + ' (the oldest logs are removed in time), in his own time. A comeback after a timer or another skill adds to the time but is not counted again.'})]),
+            el('h2', {class: 'section-header', text: 'Latest conversations'}),
+            el('div', {class: 'setting-block rows'}, t.recent.map(r => el('div', {class: 'usage-row'}, [
+                el('div', {class: 'usage-name', text: talkWhen(r, t.days)}), el('div', {class: 'usage-money', text: span(r.ms)}),
+                el('div', {class: 'usage-use', text: (r.resumed ? 'Came back after another skill' : r.turns + (r.turns === 1 ? ' turn' : ' turns')) + (r.reason ? ' · ended: ' + r.reason.replace(/_/g, ' ') : '')})])))
+        ];
+    }
+    // One request at a time; the answer goes to whichever box is on the page by then.
+    function loadTalks() {
+        if (talksPending) return;
+        talksPending = true;
+        request('GET', '/api/stats').then(result => { talks = result.json || {ok: false}; }).catch(() => { talks = {ok: false}; })
+            .then(() => {
+                talksPending = false;
+                if (talksBox && talksBox.isConnected) { talksBox.replaceChildren.apply(talksBox, talksBody(talks)); drawCharts(); }
+            });
+    }
+
     function usagePanel() {
         const body = el('div', {}, usage ? usageBody(usage) : [el('div', {class: 'setting-block'}, [el('div', {class: 'empty', text: 'Asking OpenAI…'})])]);
         const status = el('span');
@@ -771,10 +823,13 @@
                   body.replaceChildren.apply(body, usageBody(usage)); showStatus(false); drawCharts();
               });
         }
-        refresh.addEventListener('click', () => load(true));
+        refresh.addEventListener('click', () => { load(true); loadTalks(); });
+        talksBox = el('div', {}, talks ? talksBody(talks) : [el('div', {class: 'empty', text: 'Counting…'})]);
         showStatus(false);
-        if (usageWanted || !usage) { usageWanted = false; load(false); }
-        return [el('h2', {class: 'section-header', text: 'OpenAI'}), el('div', {class: 'setting-block'}, [adminKeyRow()])].concat(settingsPanel('usage'), [bar, body]);
+        if (usageWanted || !usage) { usageWanted = false; load(false); loadTalks(); }
+        else if (!talks) loadTalks();
+        return [el('h2', {class: 'section-header', text: 'Conversations'}), talksBox,
+            el('h2', {class: 'section-header', text: 'OpenAI'}), el('div', {class: 'setting-block'}, [adminKeyRow()])].concat(settingsPanel('usage'), [bar, body]);
     }
 
     // ---- page ----

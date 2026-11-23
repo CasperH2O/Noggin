@@ -537,6 +537,27 @@ test('saving an admin key: refused unless OpenAI shows it is read-only; never se
     } finally { await r.stop(); }
 });
 
+test('GET /api/stats: conversations read from the logs, with no key', async () => {
+    const r = await running({});
+    try {
+        let view = await (await r.call('GET', '/api/stats')).json();
+        assert.equal(view.ok, true);
+        assert.equal(view.total, 0);
+        assert.equal(view.days.length, 7);
+        const t = new Date(Date.now() - 5 * 60000), two = n => String(n).padStart(2, '0');
+        const name = 'conversation-' + t.getFullYear() + two(t.getMonth() + 1) + two(t.getDate()) + '-' + two(t.getHours()) + two(t.getMinutes()) + two(t.getSeconds()) + '.jsonl';
+        fs.mkdirSync(path.join(r.dir, 'logs'), {recursive: true});
+        fs.writeFileSync(path.join(r.dir, 'logs', name), JSON.stringify({t: t.toISOString(), kind: 'startup', resumed: false}) + '\n' +
+            JSON.stringify({t: new Date(t.getTime() + 120000).toISOString(), kind: 'session_end', reason: 'goodbye', turns: 4}) + '\n');
+        view = await (await r.call('GET', '/api/stats')).json();
+        assert.equal(view.total, 1);
+        assert.equal(view.week.count, 1);
+        assert.equal(view.week.longestMs, 120000);
+        assert.equal(view.recent[0].turns, 4);
+        assert.ok(!JSON.stringify(view).includes('sk-'), 'no key in it');
+    } finally { await r.stop(); }
+});
+
 test('GET /api/usage: no key, the dashboard from memory on a second look, a saved write key deleted', async () => {
     const admin = fakeAdmin(), r = await running({usageRequest: admin});
     try {

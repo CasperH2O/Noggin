@@ -11,7 +11,7 @@
 const fs = require('fs'), path = require('path');
 const settings = require('./settings'), realtime = require('./realtime-session'), actions = require('./actions');
 const openai = require('./openai'), ConversationLog = require('./conversation-log'), describe = require('./describe');
-const memory = require('./memory'), usage = require('./usage'), strings = require('./text');
+const memory = require('./memory'), usage = require('./usage'), stats = require('./stats'), strings = require('./text');
 const {requestJson, withTimeout} = require('./http');
 
 const BODY_MAX = 128 * 1024;
@@ -345,6 +345,7 @@ function create(options) {
         if (method === 'GET' && pathname.indexOf('/api/logs/') === 0) return serveLog(res, pathname.slice('/api/logs/'.length));
         if (method === 'GET' && pathname === '/api/skills/found') return found().then(result => json(res, result.httpStatus, result.body));
         if (method === 'GET' && pathname === '/api/memory') return json(res, 200, memoryView());
+        if (method === 'GET' && pathname === '/api/stats') return json(res, 200, Object.assign({ok: true}, stats.report(stats.scan(dataDir()), now().getTime(), local)));
         if (method === 'GET' && pathname === '/api/usage') return usageView(/(^|&)refresh=1(&|$)/.test(query)).then(view => json(res, 200, view));
         if (method === 'GET' && pathname === '/api/memory/export') return exportMemory(res);
         const writes = {'/api/settings': save, '/api/test-key': testKey, '/api/apps/describe': describeApp,

@@ -24,4 +24,4 @@ function resting(jibo) {
     return !!listen && !!listen._idle && listen.current === listen._idle;
 }
 
-module.exports = {state, clear, resting};
+module.exports = {clear, resting};

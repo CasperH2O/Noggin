@@ -141,8 +141,16 @@ function watch(jibo, api, options) {
         // Orange first: on the first open after an install or a reboot, BEam loads Noggin inside
         // api.open() and nothing else runs until it returns (D139).
         ring(BUSY);
-        // A handler that throws ends Jibo's emit before onHotword: disarm then anyway.
-        if (armed) clock.setTimeout(disarm, 0);
+        // A handler that throws ends Jibo's emit before onHotword: then the flag is cleared and, when
+        // Jibo's own look was skipped, the ring put out again, as nothing else would. Without the
+        // skip his own look has painted the ring and keeps it.
+        const skipped = armed;
+        clock.setTimeout(() => {
+            disarm();
+            if (decided === undefined) return;
+            decided = undefined;
+            if (skipped && !api.isOpen() && idle()) ring(OFF);
+        }, 0);
     };
     const onHotword = () => {
         if (stopped) return;

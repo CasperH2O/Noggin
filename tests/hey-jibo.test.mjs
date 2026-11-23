@@ -372,6 +372,22 @@ test('a listener between ours throws and ends the emit: the flag is still cleare
     w.stop();
 });
 
+test('review: a cut-off emit puts the orange ring out again when Jibo\'s look was skipped; his own look keeps its ring (D139, D140)', () => {
+    for (const skipped of [true, false]) {
+        const {jibo} = lookJibo({noEmbodied: skipped, listening: !skipped}), api = slowApi(), clock = fakeClock();
+        jibo.jetstream.events.hjHeard.on(() => { throw Error('another skill'); });
+        const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock});
+        assert.throws(() => jibo.jetstream.events.hjHeard.emit());
+        const last = () => jibo.leds[jibo.leds.length - 1];
+        if (skipped) assert.equal(last(), ORANGE, 'orange for now');
+        clock.advance(0);
+        if (skipped) assert.equal(last(), RING_OFF, 'put out again: Noggin never opened and Jibo\'s look was skipped');
+        else assert.equal(last(), '0,0.4,1', 'Jibo\'s own blue ring stays: not ours to put out');
+        assert.equal(clock.timers.length, 0);
+        w.stop();
+    }
+});
+
 test('stop(): both handlers leave Jibo\'s event (also the one in front) and nothing stays armed (D140)', () => {
     const {jibo, state} = lookJibo(), api = slowApi(), clock = fakeClock();
     const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock});
