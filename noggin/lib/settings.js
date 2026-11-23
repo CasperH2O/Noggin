@@ -58,15 +58,15 @@ const SCHEMA = [
     {key: 'minConfidence', type: 'number', min: 0, max: 1, step: 0.05, default: 0.35, tab: 'brain', group: 'Models', label: 'Expression confidence',
         help: 'Decisions API only: below this, no expression.', advanced: true},
 
+    // Opening on the hotword (lib/hey-jibo.js, D132).
+    {key: 'heyJibo', type: 'bool', default: false, tab: 'behaviour', group: 'Conversation', label: 'Open on "Hey Jibo"',
+        help: 'When Jibo is idle, "Hey Jibo" opens Noggin instead of Jibo\'s own listening, so everything you ask goes through Noggin. Words said right after "Hey Jibo" are not heard: wait until his ring turns blue. Needs the API key.'},
     {key: 'greeting', type: 'text', max: 200, empty: true, default: 'Hi!', tab: 'behaviour', group: 'Conversation', label: 'Greeting',
         help: 'Said as soon as Noggin opens. Empty: none.'},
     {key: 'greetingExpression', type: 'enum', default: 'smile', tab: 'behaviour', group: 'Conversation', label: 'Greeting expression',
         help: 'Smile is quick and eye only.', options: greetingExpressions},
     {key: 'comebackLine', type: 'text', max: 200, empty: true, default: 'Anything else?', tab: 'behaviour', group: 'Conversation', label: 'Coming back',
         help: 'Said when Noggin comes back after another skill. Empty: the model says something.'},
-    // Opening on the hotword (lib/hey-jibo.js, D132).
-    {key: 'heyJibo', type: 'bool', default: false, tab: 'behaviour', group: 'Conversation', label: 'Open on "Hey Jibo"',
-        help: 'When Jibo is idle, "Hey Jibo" opens Noggin instead of Jibo\'s own listening, so everything you ask goes through Noggin. Words said right after "Hey Jibo" are not heard: wait until his ring turns blue. Needs the API key.'},
     // Notes to the model about whom Jibo recognises by face (lib/presence.js, D145).
     {key: 'presence', type: 'bool', default: true, tab: 'behaviour', group: 'Conversation', label: 'Tell Noggin who Jibo sees',
         help: 'When Jibo recognises someone of his family by face, their name goes to OpenAI as a note, so he can greet them by name. Off: no names leave Jibo.'},

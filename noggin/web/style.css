@@ -83,7 +83,7 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
 }
 .toolbar-start { display: flex; align-items: center; min-width: 0; }
 .toolbar-logo { width: 34px; height: 34px; margin-right: 10px; flex: none; }
-.toolbar-title { font-size: 20px; font-weight: 400; white-space: nowrap; }
+.toolbar-title { font-size: 20px; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .toolbar-meta { display: flex; align-items: center; font-size: 13px; opacity: 0.9; }
 .live-dot { width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background: var(--grass); flex: none; }
 .live-dot.is-down { background: var(--firecracker); }
@@ -385,6 +385,7 @@ details.advanced[open] > summary::after { content: " \25B4"; }
 
 @media (max-width: 640px) {
     .save-later { display: none; }
+    .toolbar-title { font-size: 17px; }
     main { padding: 16px 16px 24px; }
     .field { flex-direction: column; align-items: stretch; gap: 8px; }
     .field-control { justify-content: flex-start; }
