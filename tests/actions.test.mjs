@@ -113,6 +113,17 @@ test('play_music and play_radio: what @be/music and @be/radio read', () => {
     assert.equal(Object.keys(actions.RADIO).length, 20);
 });
 
+test('go_to_sleep and look_away: the hand-off Jibo\'s own commands make to @be/idle, and the conversation ends', () => {
+    for (const [name, intent] of [['go_to_sleep', 'sleep'], ['look_away', 'turnAway']]) {
+        const p = actions.plan(name, '{}', {});
+        assert.equal(p.kind, 'handover'); assert.equal(p.target, '@be/idle'); assert.equal(p.comeback, false);
+        assert.deepEqual(p.options, {nlu: {intent: intent, entities: {domain: 'idle'}}, match: {skipSurprises: true}});
+        assert.equal(actions.voiceOf(name), 'leaves');
+        assert.deepEqual(actions.tools({}).find(t => t.name === name).parameters, {type: 'object', properties: {}, additionalProperties: false});
+    }
+    assert.match(actions.rules({}), /open your apps, go to sleep, and look away\./);
+});
+
 test('set_volume: a level 1-10 or a step, through jibo.volume', () => {
     assert.deepEqual(actions.plan('set_volume', {level: 4}, {}), {kind: 'local', run: 'volume', args: {level: 4}});
     assert.deepEqual(actions.plan('set_volume', {change: 'down'}, {}), {kind: 'local', run: 'volume', args: {change: 'down'}});
@@ -262,7 +273,7 @@ test('who speaks: every tool declares it, and its description, the instructions 
     }
     // Handover tools come back only when the skill they hand to speaks for them.
     const handovers = {set_timer: '{"minutes":1}', set_alarm: '{"hour":7}', use_skill: '{"name":"photo booth"}',
-        play_music: '{"song":"Yesterday"}', play_radio: '{}', open_app: '{"name":"clock"}'};
+        play_music: '{"song":"Yesterday"}', play_radio: '{}', open_app: '{"name":"clock"}', go_to_sleep: '{}', look_away: '{}'};
     handovers.get_time = '{"show":"date"}';
     for (const name of Object.keys(actions.CLOUD)) if (!actions.CLOUD[name].disabled) handovers[name] = actions.CLOUD[name].subject ? '{"subject":"a horse"}' : '{}';
     for (const [name, args] of Object.entries(handovers)) {
@@ -280,7 +291,7 @@ test('who speaks: every tool declares it, and its description, the instructions 
 const MENU_PHRASES = {joke: 'tell me a joke', surprise: 'surprise me', personal_report: 'personal report', weather: 'tell me about the weather',
     news: 'tell me about the news', calendar: 'tell me about my calendar', commute: 'what does my commute look like'};
 const BASE_TOOLS = ['get_time', 'about_jibo', 'dance', 'set_volume', 'check_clock', 'set_timer', 'cancel_timer', 'set_alarm', 'cancel_alarm',
-    'use_skill', 'play_music', 'play_radio', 'open_app'];
+    'use_skill', 'play_music', 'play_radio', 'open_app', 'go_to_sleep', 'look_away'];
 
 test('cloud tools: none by default; only the ones cloudSkills names are offered, unknown names left out', () => {
     for (const config of [{}, {cloudSkills: []}, {cloudSkills: null}, {cloudSkills: ['story', 'hue']}, []]) {
@@ -300,7 +311,7 @@ test('cloud tools: the instructions name only the enabled ones', () => {
     const one = actions.rules({cloudSkills: ['weather']});
     assert.match(one, /ask your cloud for weather, play songs/);
     assert.match(one, /use_skill, open_app and your cloud tools, call the tool without saying anything first/);
-    assert.match(one, /For play_music and play_radio, say a short goodbye first/);
+    assert.match(one, /For play_music, play_radio, go_to_sleep and look_away, say a short goodbye first/);
     assert.doesNotMatch(one, /news|joke|surprise|calendar|commute|personal report/);
     const all = actions.rules({cloudSkills: Object.keys(actions.CLOUD)});
     assert.match(all, /ask your cloud for weather, news, your calendar, commute, a personal report, a surprise and pictures of things/);

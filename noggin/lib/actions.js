@@ -6,7 +6,7 @@
 'use strict';
 const withTimeout = require('./http').withTimeout, strings = require('./text');
 
-const CLOCK = '@be/clock', OWN = '@be/noggin', NIMBUS = '@be/nimbus';
+const CLOCK = '@be/clock', OWN = '@be/noggin', NIMBUS = '@be/nimbus', IDLE = '@be/idle';
 const MIN_TIMER_S = 6, MAX_TIMER_S = 24 * 3600;    // @be/clock refuses 5 s or less and more than 24 h
 const PACKAGE = /^(@[a-z0-9-]+\/)?[a-z0-9._-]+$/;
 // The `openApps` setting: a spoken name and a scoped package per extra app, at most MAX_APPS (D32).
@@ -285,6 +285,13 @@ const TOOLS = [
         parameters: {type: 'object', additionalProperties: false, properties: {genre: {type: 'string', enum: Object.keys(RADIO)}}}},
     {name: 'open_app', voice: 'skill', ability: 'open your apps', apps: true,
         description: 'Opens one of Jibo\'s apps on his screen; when the person is done with it, the conversation continues.'},
+    // Idle's own states (D142): the same hand-off Jibo's "go to sleep" and "look away" commands make.
+    {name: 'go_to_sleep', voice: 'leaves', ability: 'go to sleep',
+        description: 'Puts Jibo to sleep, when the person asks him to go to sleep or to take a nap.',
+        parameters: NO_ARGS},
+    {name: 'look_away', voice: 'leaves', ability: 'look away',
+        description: 'Jibo turns away and looks elsewhere, when the person asks him to look away, turn around or give them some privacy. He does not switch his camera or microphone off.',
+        parameters: NO_ARGS},
     // Memory (lib/memory.js), offered when the `memory` setting is on. Several people talk to Jibo
     // and he cannot tell them apart, so facts are about the household, in the third person (D53).
     {name: 'remember', memory: true, voice: 'talk', ability: MEMORY_ABILITY,
@@ -480,6 +487,8 @@ function plan(name, argsText, config) {
         if (genre && !RADIO[genre]) return {kind: 'error', error: 'Jibo\'s radio has no such genre (' + Object.keys(RADIO).join(', ') + ')'};
         return handover(name, '@be/radio', launch('play', 'radio', genre ? {station: RADIO[genre]} : {}), {genre: genre || undefined});
     }
+    if (name === 'go_to_sleep') return handover(name, IDLE, launch('sleep', 'idle'));
+    if (name === 'look_away') return handover(name, IDLE, launch('turnAway', 'idle'));
     if (name === 'open_app') {
         const list = apps(config), k = key(args.name);
         if (!list[k]) return {kind: 'error', error: 'that app is not on Jibo\'s list (' + Object.keys(list).join(', ') + ')'};
@@ -564,5 +573,5 @@ function readClock(jibo, now, timeoutMs) {
     });
 }
 
-module.exports = {CLOCK, OWN, NIMBUS, APPS, SKILLS, RADIO, CLOUD, VOICES, TOOLS, APP_NAME, APP_PACKAGE, MAX_APPS, NOTE_MAX, voiceOf, cloudSkills, offered, rules, apps, appEntry, cleanNote, cutNote, extras, spokenName, readmeNote, suggestions, tools,
+module.exports = {CLOCK, OWN, NIMBUS, IDLE, APPS, SKILLS, RADIO, CLOUD, VOICES, TOOLS, APP_NAME, APP_PACKAGE, MAX_APPS, NOTE_MAX, voiceOf, cloudSkills, offered, rules, apps, appEntry, cleanNote, cutNote, extras, spokenName, readmeNote, suggestions, tools,
     plan, duration, clockQuery, clockCancel, installed, setVolume, localTime, describeTime, readClock};

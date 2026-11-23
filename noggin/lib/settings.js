@@ -104,7 +104,7 @@ const SCHEMA = [
         help: 'Re-send the ring colour this often, besides after each line; 0: only after each line.', advanced: true},
 
     {key: 'actions', type: 'bool', default: true, tab: 'skills', group: 'Jibo\'s skills', label: 'Use Jibo\'s skills',
-        help: 'Timers, alarms, the clock, music, radio, photos, dances and apps. Off: conversation only.'},
+        help: 'Timers, alarms, the clock, volume, music, radio, photos, dances, apps, sleep and looking away. Off: conversation only.'},
     {key: 'cloudSkills', type: 'set', default: ['weather', 'news', 'calendar', 'commute', 'personal_report', 'surprise', 'picture'],
         tab: 'skills', group: 'Jibo\'s skills', label: 'Cloud features', help: 'Jibo\'s cloud answers these, then Noggin comes back.', options: cloudOptions},
     {key: 'openApps', type: 'map', max: actions.MAX_APPS, noteMax: actions.NOTE_MAX, default: {}, tab: 'skills', group: 'Jibo\'s skills', label: 'Extra apps',

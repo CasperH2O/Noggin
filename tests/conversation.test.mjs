@@ -992,7 +992,7 @@ test('actions: tools go in session.update, open_app with the built-in apps and t
     const session = h.sent.find(e => e.type === 'session.update').session;
     assert.equal(session.tool_choice, 'auto');
     assert.deepEqual(session.tools.map(t => t.name), ['get_time', 'about_jibo', 'dance', 'set_volume', 'check_clock', 'set_timer', 'cancel_timer',
-        'set_alarm', 'cancel_alarm', 'use_skill', 'play_music', 'play_radio', 'open_app', 'remember', 'forget', 'recall']);
+        'set_alarm', 'cancel_alarm', 'use_skill', 'play_music', 'play_radio', 'open_app', 'go_to_sleep', 'look_away', 'remember', 'forget', 'recall']);
     assert.deepEqual(session.tools.find(t => t.name === 'open_app').parameters.properties.name.enum, ['clock', 'settings', 'menu', 'gallery', 'yoga', 'meet someone new', 'stargazer']);
     h.talk.close();
     const plain = await listening();
@@ -1352,6 +1352,21 @@ test('use_skill hands over and comes back; play_music and play_radio leave', asy
     assert.equal(await ended, 'leaves', 'music ends the conversation');
 });
 
+test('go_to_sleep and look_away leave for @be/idle with the intent Jibo\'s own commands carry', async () => {
+    for (const [name, intent] of [['go_to_sleep', 'sleep'], ['look_away', 'turnAway']]) {
+        const acts = fakeActions();
+        const h = harness({actions: acts});
+        const ended = h.talk.open(); await untilListening(h);
+        await youSay(h, 'please ' + name.replace(/_/g, ' '));
+        callReply(h, 'r1', 'Goodnight!', [[name, {}]]);
+        await until(() => acts.redirects.length === 1);
+        assert.deepEqual(acts.redirects[0], ['@be/idle', {nlu: {intent: intent, entities: {domain: 'idle'}}, match: {skipSurprises: true}}]);
+        assert.equal(acts.handovers[0].comeback, false);
+        h.jibo.jetstream.events.skillSwitch.fire();
+        assert.equal(await ended, 'leaves', name + ' ends the conversation');
+    }
+});
+
 test('open_app: an extra app that is not installed fails at once, without waiting for the timeout', async () => {
     const acts = fakeActions({installed: pkg => pkg !== '@be/stargazer'});
     const h = await listening({actions: acts, config: {openApps: {stargazer: '@be/stargazer'}, actionTimeoutMs: 60000}});
@@ -1439,7 +1454,7 @@ test('a follow-up reply that never comes does not leave Jibo stuck', async () =>
 
 test('persona with actions: the tool rules replace "no tools", and the time is the home timezone\'s', () => {
     const text = realtime.instructions('', '', {year: 2026, monthNum: 10, date: 13, dayOfWeek: 'Friday', hour: 9, minute: 5}, {apps: ['clock']});
-    assert.match(text, /use your timer and alarm, .*and open your apps\./);
+    assert.match(text, /use your timer and alarm, .*open your apps, go to sleep, and look away\./);
     assert.match(text, /Friday, November 13, 2026, 9:05 AM local time/);
     assert.doesNotMatch(text, /in this voice mode you have no tools/);
 });

@@ -19,9 +19,10 @@ On the robot: BEacon, Store, Upload ZIP, and choose `Noggin.zip` from a release.
   it in his own voice, one sentence at a time. A fast model (OpenAI's Decisions API) picks an
   expression for each line. The microphone is closed while Jibo speaks.
 - **Tools** (`noggin/lib/actions.js`). The model may call tools. Some run inside Noggin (facts,
-  dance, volume, reading the clock); others hand over to one of Jibo's skills (the clock, music,
-  radio, photos, apps) or ask Jibo's cloud a fixed phrase. When that skill is done, Noggin opens
-  again and carries on (`noggin/lib/comeback.js`).
+  dance, volume, reading the clock); others hand over to one of Jibo's skills (the clock, photos,
+  apps) or ask Jibo's cloud a fixed phrase. When that skill is done, Noggin opens again and carries
+  on (`noggin/lib/comeback.js`). Music, the radio, going to sleep and looking away (his idle skill)
+  end the conversation instead.
 - **The settings page** (`noggin/background.js`, `noggin/lib/server.js`, `noggin/web/`). BEam starts
   `background.js` at boot and after every install or update, inside Be's process. It serves the
   page and a small JSON API on port 8131 with Node's `http` module. Saving writes the data folder;
