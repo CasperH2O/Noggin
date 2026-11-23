@@ -19,7 +19,7 @@ const IMPORT_BODY_MAX = 512 * 1024;   // a memory export is far smaller; the roo
 const REQUEST_TIMEOUT_MS = 15000;
 const MAX_CONNECTIONS = 16;
 // The persona size the page recommends: the instructions sent at every conversation start.
-const BUDGET = 5600;
+const BUDGET = 5800;
 // BEacon runs in the same Be process; its list of custom skills carries each README (D33).
 const BEACON_PORT = 8123;
 const BEACON_TIMEOUT_MS = 4000;

@@ -56,6 +56,17 @@ function memoryNotes(memory, tools) {
     else if (!memory.learn) text += 'You cannot keep anything new yourself. ';
     return text;
 }
+// What Jibo knows about his eye emoji (D161): Noggin shows one for a word he says, so he can
+// only say the word; asked about one that showed, he owns it. The picture tool is another thing.
+function emojiNote(senses, abilities) {
+    if (senses && senses.emoji === false) return '';
+    const config = abilities && abilities.config;
+    if (config && config.emoji === false) return '';
+    const picture = !!config && actions.offered(config).some(t => t.name === 'picture');
+    return 'A small emoji may show on your eye when you say the name of something (pizza, a dog, rain); you cannot choose one. ' +
+        'Asked about one that showed, it was yours: never say you have none. ' +
+        (picture ? 'An emoji is not a picture: for a photo use picture. ' : '');
+}
 // senses: {presence} when notes say whom Jibo sees (lib/presence.js, D145). Each note says itself
 // what it is (touchNote, presenceNote), so the instructions stay within their budget (D28).
 function voiceSetup(now, abilities, memory, senses) {
@@ -77,6 +88,7 @@ function voiceSetup(now, abilities, memory, senses) {
         'You are in a spoken conversation on your physical Jibo body. You hear your person through your microphone, ' +
         'and every word you write is spoken aloud in your own voice, so write only words meant to be heard: ' +
         'no markdown, lists, emoji, bracketed markers or stage directions. Your face and body react on their own while you speak. ' +
+        emojiNote(senses, abilities) +
         'Keep replies short, as your personality says. ' +
         'You understand English and Dutch; always answer in English. ' +
         (abilities ? unseen + '. ' : '') + tools +

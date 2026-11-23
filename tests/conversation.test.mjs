@@ -109,10 +109,10 @@ test('persona budget: the instructions stay small, and so does FACTS.md', () => 
     const p = settings.persona(null);
     const apps = ['clock', 'photos', 'radio', 'weather', 'jokes'];
     const text = realtime.instructions(p.soul, p.identity, new Date(2026, 10, 12, 19, 30), {apps, config: {}});
-    assert.ok(text.length <= 5400, 'instructions are ' + text.length + ' characters (about ' + Math.round(text.length / 4) + ' tokens); the budget is 5400');
+    assert.ok(text.length <= 5600, 'instructions are ' + text.length + ' characters (about ' + Math.round(text.length / 4) + ' tokens); the budget is 5600');
     // Every cloud feature on: ~60 characters more, for naming what the cloud can do.
     const all = realtime.instructions(p.soul, p.identity, new Date(2026, 10, 12, 19, 30), {apps, config: {cloudSkills: Object.keys(actions.CLOUD)}});
-    assert.ok(all.length <= 5500, 'with every cloud tool the instructions are ' + all.length + ' characters; the budget is 5500');
+    assert.ok(all.length <= 5750, 'with every cloud tool the instructions are ' + all.length + ' characters; the budget is 5750');
     const raw = fs.readFileSync(path.join(source, 'noggin/persona/FACTS.md'), 'utf8');
     assert.ok(raw.length <= settings.PERSONA.facts.max, 'FACTS.md is ' + raw.length + ' characters; the cap is ' + settings.PERSONA.facts.max);
 });
@@ -1605,6 +1605,18 @@ test('timer tools: the instructions and tool descriptions say to call them witho
     assert.doesNotMatch(text, /"Okay!"/);
     const tools = require(path.join(source, 'noggin/lib/actions.js')).tools({});
     for (const name of ['get_time', 'set_timer', 'cancel_timer', 'set_alarm', 'cancel_alarm', 'use_skill', 'open_app']) assert.match(tools.find(t => t.name === name).description, /without saying anything first/);
+});
+test('the instructions tell Jibo his emoji come from the words he says, and keep them apart from picture (D161)', () => {
+    const now = new Date(2026, 10, 13, 9, 0);
+    const text = realtime.voiceSetup(now, {apps: [], config: {}});
+    assert.match(text, /small emoji may show on your eye when you say the name of something/);
+    assert.match(text, /never say you have none/);
+    assert.doesNotMatch(text, /use picture/, 'no picture tool, no mention of it');
+    assert.match(realtime.voiceSetup(now, {apps: [], config: {cloudSkills: ['picture']}}), /An emoji is not a picture: for a photo use picture/);
+    assert.match(realtime.voiceSetup(now, null, null), /small emoji may show/, 'also without tools');
+    assert.doesNotMatch(realtime.voiceSetup(now, {apps: [], config: {emoji: false}}), /small emoji may show/);
+    assert.doesNotMatch(realtime.voiceSetup(now, null, null, {emoji: false}), /small emoji may show/);
+    assert.match(text, /no markdown, lists, emoji, bracketed markers/, 'he still writes no emoji characters');
 });
 // ---- expressions next to speech ----
 // A DOF set like jibo.expression.dofs: names, and minus() for a new set.
