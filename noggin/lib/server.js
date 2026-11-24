@@ -11,7 +11,7 @@
 const fs = require('fs'), path = require('path');
 const settings = require('./settings'), realtime = require('./realtime-session'), actions = require('./actions');
 const openai = require('./openai'), ConversationLog = require('./conversation-log'), describe = require('./describe');
-const memory = require('./memory'), usage = require('./usage'), stats = require('./stats'), strings = require('./text');
+const memory = require('./memory'), usage = require('./usage'), stats = require('./stats'), strings = require('./text'), voice = require('./voice');
 const {requestJson, withTimeout} = require('./http');
 
 const BODY_MAX = 128 * 1024;
@@ -102,6 +102,8 @@ function create(options) {
     const beacon = Object.assign({host: '127.0.0.1', port: Number(process.env.BEACON_PORT) || BEACON_PORT, timeoutMs: BEACON_TIMEOUT_MS}, options.beacon);
     let server = null, inventory = null;
     const sockets = new Set(), fetches = new Set();
+    // Whether the Dutch Voice skill can speak Dutch (D169): asked fresh for every page load.
+    const voiceStatus = options.voiceStatus || (() => voice.create().status());
     const costs = options.usage || usage.create({request: options.usageRequest, now: () => now().getTime(), local: local, log: log});
     // Set when a saved admin key turned out to have write access and was deleted (D62).
     let removedAdminKey = false;
@@ -116,7 +118,7 @@ function create(options) {
         Object.keys(settings.PERSONA).forEach(name => { limits[name] = settings.PERSONA[name].max; packaged[name] = settings.packaged(name); });
         return {version: version, schema: settings.schemaView(), values: view.values, key: view.key, adminKey: view.adminKey, problems: view.problems, broken: view.broken,
             persona: {soul: persona.soul, identity: persona.identity, facts: persona.facts, edited: persona.edited, max: limits, packaged: packaged},
-            budget: {chars: chars, recommended: BUDGET}};
+            budget: {chars: chars, recommended: BUDGET}, dutchVoice: voiceStatus()};
     }
 
     // POST /api/settings {values, persona}: both are checked before either is saved. A new admin

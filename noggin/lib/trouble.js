@@ -3,31 +3,25 @@
 // says it (D70). OpenAI's refusal of the realtime WebSocket only shows as "closed (1006)" in the
 // page, so the cause is asked again over plain HTTPS (D71). Node 6: ES2015 only.
 'use strict';
-const withTimeout = require('./http').withTimeout;
+const withTimeout = require('./http').withTimeout, lines = require('./lines');
 
+// Jibo's line for each cause is in lib/lines.js (cause() adds it in the conversation's language).
 // screen: show the setup screen with the QR code to the settings page (lib/setup-screen.js).
 const CAUSES = {
-    no_key: {line: 'I need a brain before we can talk. Scan the code on my screen to give me one.', emoji: 'Emoji_Brain', screen: true,
+    no_key: {emoji: 'Emoji_Brain', screen: true,
         title: 'Give me a brain', detail: 'No OpenAI API key is saved yet.', step: 'Paste your OpenAI API key on the Brain tab'},
-    key_refused: {line: 'My key to OpenAI doesn\'t work anymore. Scan the code on my screen to fix it.', emoji: 'Emoji_Lock', screen: true,
+    key_refused: {emoji: 'Emoji_Lock', screen: true,
         title: 'My key doesn\'t work', detail: 'OpenAI refused the saved API key.', step: 'Paste a working OpenAI API key on the Brain tab'},
-    settings: {line: 'My settings need a look. Scan the code on my screen.', emoji: 'Emoji_Tools', screen: true,
+    settings: {emoji: 'Emoji_Tools', screen: true,
         title: 'Check my settings', detail: 'A setting is wrong.', step: 'Check the models and address on the Brain tab'},
-    no_credit: {line: 'I\'ve run out of thinking money. Ask a grown-up to top up my OpenAI account.', emoji: 'Emoji_Money'},
-    no_internet: {line: 'I can\'t reach the internet right now. Is the Wi-Fi okay?', emoji: 'Emoji_StormCloud'},
-    openai_down: {line: 'My brain is out of reach right now. Let\'s try again in a bit.', emoji: 'Emoji_Clouds'},
-    rate_limited: {line: 'I need a minute to catch my breath.', emoji: 'Emoji_Clock'},
-    permission: {line: 'I\'m not allowed to do that. A grown-up can install me again in BEacon and agree to what I need.', emoji: 'Emoji_Lock'},
+    no_credit: {emoji: 'Emoji_Money'},
+    no_internet: {emoji: 'Emoji_StormCloud'},
+    openai_down: {emoji: 'Emoji_Clouds'},
+    rate_limited: {emoji: 'Emoji_Clock'},
+    permission: {emoji: 'Emoji_Lock'},
     // An API address on the home network needs a permission Noggin does not ask for (D154).
-    permission_network: {line: 'I\'m not allowed to reach that address. A grown-up can change the address on my settings page.', emoji: 'Emoji_Lock'},
-    unknown: {line: 'Sorry, I can\'t think straight right now. Let\'s talk again a bit later.', emoji: null}
-};
-// Said on the setup screen's ends (D72), after a reconnect that lost a reply (D73), and the budget heads-up (D74).
-const LINES = {
-    ready: 'Got it! Let\'s talk.',
-    later: 'I\'ll be here when you\'re ready.',
-    lostThread: 'Oops, I lost my train of thought. Could you say that again?',
-    budget: 'Heads up: my thinking money for this month is nearly used up. Ask a grown-up to have a look.'
+    permission_network: {emoji: 'Emoji_Lock'},
+    unknown: {emoji: null}
 };
 const BUDGET_EMOJI = 'Emoji_Money';
 const CHECK_MS = 6000;           // the whole check (D71)
@@ -35,9 +29,10 @@ const REQUEST_MS = 5000;
 // No DNS or no route: the internet, not OpenAI.
 const NO_NETWORK = ['ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH', 'ENETDOWN'];
 
-function cause(name) {
+// The cause with Jibo's line in `language` (English by default). The setup screen's texts stay English.
+function cause(name, language) {
     if (!Object.prototype.hasOwnProperty.call(CAUSES, name)) name = 'unknown';
-    return Object.assign({cause: name}, CAUSES[name]);
+    return Object.assign({cause: name}, CAUSES[name], {line: lines.say('trouble.' + name, language)});
 }
 
 // An OpenAI error code (realtime event, response.done, HTTP body) -> cause name, or null.
@@ -108,4 +103,4 @@ function diagnose(config, ask, options) {
     });
 }
 
-module.exports = {CAUSES, LINES, BUDGET_EMOJI, cause, fromCode, fromMessage, fromStatus, fromError, lanAddress, interfaces, diagnose, CHECK_MS};
+module.exports = {CAUSES, BUDGET_EMOJI, cause, fromCode, fromMessage, fromStatus, fromError, lanAddress, interfaces, diagnose, CHECK_MS};

@@ -4,13 +4,14 @@
 // report, the thread-lag probe and where the server placed speech in the sent audio (D78, D87).
 // Node 6 / Chrome 53: ES2015 only.
 'use strict';
-const audio = require('./audio'), delay = require('./http').delay;
+const audio = require('./audio'), delay = require('./http').delay, lines = require('./lines');
 
 // The JavaScript thread's lag (a timer firing late), sampled every LAG_MS: a blocked thread would
 // also hold up an animation's first frame.
 const LAG_MS = 50, LAG_SPIKE_MS = 80, LAG_SPIKES = 12;
+// The simulator's `os` has no loadavg(): null there, never a throw (close() reports audio).
 let loadavg = () => null;
-try { const os = require('os'); loadavg = () => Math.round(os.loadavg()[0] * 100) / 100; } catch (_) {}
+try { const os = require('os'); if (typeof os.loadavg === 'function') loadavg = () => Math.round(os.loadavg()[0] * 100) / 100; } catch (_) {}
 
 const methods = {
     // A microphone that never answers must not hold the conversation open with the hotword off.
@@ -70,7 +71,7 @@ const methods = {
         if (this.micRestarts > 3) {
             this.restarting = false; this.gate = false;
             const why = reason === 'silent' ? 'microphone_silent' : 'microphone_failed';
-            this.speechChain = this.speechChain.then(() => this.speak("Sorry, I can't hear anything right now. Let's try again later.", null)).then(() => this.leave(why));
+            this.speechChain = this.speechChain.then(() => this.speak(lines.say('micFailed', this.language), null, {english: lines.say('micFailed', 'en')})).then(() => this.leave(why));
             return this.speechChain;
         }
         try { this.mic.stop(); } catch (_) {}

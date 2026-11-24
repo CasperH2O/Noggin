@@ -83,7 +83,16 @@ function emojiNote(senses, abilities) {
 }
 // senses: {presence} when notes say whom Jibo sees (lib/presence.js, D145). Each note says itself
 // what it is (touchNote, presenceNote), so the instructions stay within their budget (D28).
-function voiceSetup(now, abilities, memory, senses) {
+// The language rule comes after the persona, so it wins over an edited persona that names another.
+// In Dutch the model labels each reply, so Noggin can send it to the right voice (D171).
+function languageRule(language) {
+    if (language !== 'nl') return 'You understand English and Dutch; always answer in English. ';
+    return 'You understand English and Dutch. Answer in the language your person speaks to you; when you cannot tell, answer in Dutch. ' +
+        'Start every reply with [nl] when it is in Dutch or [en] when it is in English; that label is not spoken. ' +
+        'In Dutch, write numbers, times, dates and abbreviations as Dutch words. ';
+}
+// language: 'en' (default) or 'nl', the language the conversation starts in.
+function voiceSetup(now, abilities, memory, senses, language) {
     const at = actions.describeTime(now);
     const seeing = !!(senses && senses.presence);
     const unseen = seeing ? 'You see only who the notes name' : 'You cannot see the room yet';
@@ -101,16 +110,21 @@ function voiceSetup(now, abilities, memory, senses) {
     return 'Your current setup:\n' +
         'You are in a spoken conversation on your physical Jibo body. You hear your person through your microphone, ' +
         'and every word you write is spoken aloud in your own voice, so write only words meant to be heard: ' +
-        'no markdown, lists, emoji, bracketed markers or stage directions. Your face and body react on their own while you speak. ' +
+        'no markdown, lists, emoji, bracketed markers' + (language === 'nl' ? ' other than the language label described below' : '') +
+        ' or stage directions. Your face and body react on their own while you speak. ' +
         emojiNote(senses, abilities) +
         'Keep replies short, as your personality says. ' +
-        'You understand English and Dutch; always answer in English. ' +
+        languageRule(language) +
         (abilities ? unseen + '. ' : '') + tools +
         'When the session started it was ' + at.date + ', ' + at.time + ' local time on the robot (the clock may be off if Jibo was offline). ' +
         'Your person ends the conversation by saying goodbye.';
 }
-function instructions(soul, identity, now, abilities, memory, senses) {
-    return personaText(soul, identity) + '\n\n' + voiceSetup(now, abilities, memory, senses) + (memory && memory.block ? '\n\n' + memory.block : '');
+function instructions(soul, identity, now, abilities, memory, senses, language) {
+    return personaText(soul, identity) + '\n\n' + voiceSetup(now, abilities, memory, senses, language) + (memory && memory.block ? '\n\n' + memory.block : '');
+}
+// Jibo's Dutch voice stopped working mid-conversation: the rest is in English (D172).
+function englishNote() {
+    return 'Your Dutch voice is not working right now, and you have just said so in English. From now on answer in English only, and start every reply with [en].';
 }
 
 // The conversation so far as "Person:" / "Jibo:" lines, the last 6,000 characters.
@@ -170,4 +184,4 @@ function presenceNote(here) {
     return about + 'now sees ' + list + '. Who you see is not always who is talking. Never answer this note alone.]';
 }
 
-module.exports = {LANGUAGES, DEFAULT_REASONING, transcription, reasoningEffort, sessionUpdate, textDelta, personaText, voiceSetup, instructions, resumeNote, reconnectNote, touchNote, presenceNote};
+module.exports = {LANGUAGES, DEFAULT_REASONING, transcription, reasoningEffort, sessionUpdate, textDelta, personaText, voiceSetup, instructions, englishNote, resumeNote, reconnectNote, touchNote, presenceNote};

@@ -5,6 +5,7 @@
 // Node 6 / Chrome 53: ES2015 only.
 'use strict';
 const catalog = require('./catalog'), ttsText = require('./tts-text'), delay = require('./http').delay;
+const voice = require('./voice'), lines = require('./lines'), realtime = require('./realtime-session');
 
 // A notice's or trouble line's emoji stays on the eye about as long as Jibo says its line.
 const EMOJI_MIN_MS = 3000, EMOJI_MAX_MS = 4500, EMOJI_MS_PER_CHAR = 75;
@@ -23,6 +24,7 @@ const SPEAK_MS_PER_CHAR = 120;
 const RECENT_ANIMS = 5;   // a mood's animation is not repeated within this many expressions
 // A hold on the microphone (a reaction that moves the body) never lasts longer than this (D90).
 const HOLD_MAX_MS = 3000;
+const DUTCH_LIMIT_EXTRA_MS = 2000;
 
 const methods = {
     // An eye emoji for a word in Jibo's line: at most one per emojiGapMs, and not the same word
@@ -151,15 +153,22 @@ const methods = {
         if (result.switched) this.log.write({kind: 'classifier_switch', detail: result.switched});
         else if (result.error) this.log.write({kind: 'classifier_error', api: result.api || null, status: result.status || null, error: result.error});
     },
-    // Move finished text from the reply into the speech queue.
+    // Move finished text from the reply into the speech queue. The reply's language label comes
+    // first and is never said; without one the reply is in the conversation's language (D171).
     pump() {
         const turn = this.turn;
         if (!this.active || !turn || turn.skipped) return;
         if (turn.transcript === undefined && this.now() - turn.stoppedAt < this.config.transcriptWaitMs - 5) return;
+        if (turn.language === undefined) {
+            const label = voice.readLabel(turn.text);
+            if (!label && !turn.done) return;
+            turn.language = label && label.language || this.language;
+            turn.start = turn.sent = label ? label.length : 0;
+        }
         if (!turn.lines) {
-            const end = ttsText.firstSentenceEnd(turn.text);
-            if (end > 0) { this.enqueue(turn, turn.text.slice(0, end)); turn.sent = end; }
-            else if (turn.done) { this.enqueue(turn, turn.text); turn.sent = turn.text.length; }
+            const end = ttsText.firstSentenceEnd(turn.text.slice(turn.start));
+            if (end > 0) { this.enqueue(turn, turn.text.slice(turn.start, turn.start + end)); turn.sent = turn.start + end; }
+            else if (turn.done) { this.enqueue(turn, turn.text.slice(turn.start)); turn.sent = turn.text.length; }
         }
         if (turn.lines && turn.done && turn.sent < turn.text.length) {
             this.enqueue(turn, turn.text.slice(turn.sent)); turn.sent = turn.text.length;
@@ -231,10 +240,12 @@ const methods = {
                     // No expression on this line: an eye emoji for something Jibo names (pizza, rain, a dog),
                     // at that word. Without one, speech's own keyword emoji may show, unless one was just shown (D98).
                     const jiboEmoji = this.emojiAllowed();
-                    const emoji = !use && found !== 'dance' ? this.emojiFor(piece) : null;
+                    // The emoji word list is English.
+                    const emoji = !use && found !== 'dance' && turn.language === 'en' ? this.emojiFor(piece) : null;
                     if (emoji) turn.expressions.push('emoji ' + emoji.word);
                     if (index === 0 && emoji) turn.firstEmoji = true;
-                    return this.speak(piece, use, {turn: turn.n, line: index, size: use ? size : null, keyword: emoji || undefined, hotWords: emoji || jiboEmoji ? undefined : false, beside: index > 0})
+                    return this.speak(piece, use, {turn: turn.n, line: index, size: use ? size : null, keyword: emoji || undefined, hotWords: emoji || jiboEmoji ? undefined : false, beside: index > 0,
+                        language: turn.language})
                         .then(() => {
                             if (index !== 0) return;
                             turn.firstSpoken = true;
@@ -263,11 +274,13 @@ const methods = {
         }
         // at.anim: an emoji by name instead of an expression label.
         const anim = at && at.anim ? at.anim : this.choose(expression, at && at.size);
+        // The line's language: its own (a reply's label), else the conversation's (D171).
+        const dutch = (at && at.language || this.language) === 'nl';
         return chain.then(() => {
             if (!this.active) return;
-            let words = ttsText.speechText(text), lead = Promise.resolve(), leadBy = null;
-            // A keyword emoji goes in the words, just before its word: speech starts it there (D98).
-            const keyword = at && at.keyword, tagged = keyword ? ttsText.emojiEsml(words, keyword.said, keyword.name, keyword.nth) : null;
+            let words = ttsText.speechText(text, dutch ? 'nl' : 'en'), lead = Promise.resolve(), leadBy = null;
+            // A keyword emoji goes in the words, just before its word: speech starts it there (D98). English words only.
+            const keyword = !dutch && at && at.keyword, tagged = keyword ? ttsText.emojiEsml(words, keyword.said, keyword.name, keyword.nth) : null;
             if (tagged) words = tagged;
             const leadFrom = this.now(), token = this.lineToken = {};
             const holdMs = at && at.emoji ? emojiHoldMs(text) : 0;
@@ -286,30 +299,81 @@ const methods = {
             return lead.then(() => {
                 if (!this.active) return;
                 const started = this.now();
-                // Speech's own keyword emoji off for this line (its third argument, auto rules).
-                const rules = at && at.hotWords === false ? {hotWords: false} : null;
+                // Speech's own keyword emoji off for this line (its third argument, auto rules); its keywords are English.
+                const rules = dutch || at && at.hotWords === false ? {hotWords: false} : null;
                 this.log.write({kind: 'speak', turn: turn, line: line, expression: expression || null, size: at && at.size || undefined, emoji: at && at.emoji || keyword && keyword.word || undefined,
                     emoji_at: keyword ? (tagged ? keyword.said.join(' ') : 'missed') : undefined, after: later || undefined, hot_words: rules ? false : undefined,
                     play: anim || keyword && keyword.name || undefined, at: this.since(started), lead: leadBy || undefined, lead_ms: leadBy ? started - leadFrom : undefined,
-                    text: String(text).slice(0, 300)});
+                    language: dutch ? 'nl' : 'en', text: String(text).slice(0, 300)});
                 this.mark('first_speech');
                 const args = rules ? [words, SPEAK_OPTIONS, rules] : [words, SPEAK_OPTIONS];
-                const call = this.timedSpeak(speech, args, this.speakBaseMs + words.length * SPEAK_MS_PER_CHAR, {turn: turn, line: line});
+                const limitMs = this.speakBaseMs + words.length * SPEAK_MS_PER_CHAR;
+                const where = {turn: turn, line: line};
+                let language = dutch ? 'nl' : 'en';
+                // A fixed line the Dutch voice refuses is said in English: its English text is known (D175).
+                const call = !dutch ? this.timedSpeak(speech, args, limitMs, where) : this.speakDutch(speech, args, limitMs, where).catch(error => {
+                    if (!(at && at.english) || !voice.refused(error) || !this.active) throw error;
+                    language = 'en';
+                    const english = ttsText.speechText(at.english);
+                    this.log.write({kind: 'speak', turn: turn, line: line, language: 'en', fallback: 'fixed line', text: String(at.english).slice(0, 300)});
+                    return this.timedSpeak(speech, [english, SPEAK_OPTIONS, {hotWords: false}], this.speakBaseMs + english.length * SPEAK_MS_PER_CHAR, where);
+                });
                 if (beside) this.playBesideLine(anim, {via: at.via || 'line', turn: turn, line: line, holdMs: holdMs}, () => this.active && this.lineToken === token).then(result => {
                     if (!result.played && this.active) this.log.write({kind: 'late_dropped', turn: turn, line: line, name: anim, tries: result.tries, result: result.result});
                 });
-                return call.then(() => this.spoken(speech, started, turn, line), error => {
+                return call.then(() => {
+                    this.lineLanguages[language]++;   // lines said, per language (D171)
+                    this.spoken(speech, started, turn, line);
+                }, error => {
                     // The line is over, so a clip beside it stops asking.
                     if (this.lineToken === token) this.lineToken = null;
                     throw error;
                 });
             });
-        }).catch(() => {}).then(() => {
+        }).catch(() => {}).then(() => this.sayEnglishNow()).then(() => {
             this.speaking = false; if (this.marks.first_speech !== undefined) this.mark('first_speech_done');
             // A touch during the line: its petting clip plays now, before the next line or listening (D144).
             this.playPendingPet('line_end');
             return this.petDone();
         });
+    },
+    // A Dutch line: Jibo's usual speech call, with its speech sent to the Dutch voice for this call
+    // (D169). When the voice cannot take it (not ready, gone, refused), the line is not said in
+    // the English voice: the conversation goes on in English, and Jibo says so (D172).
+    speakDutch(speech, args, limitMs, where) {
+        // A count, not a flag: a refused call must not clear the mark of a line still playing.
+        this.dutchLines++;
+        let ended = false;
+        const done = () => { if (!ended) { ended = true; this.dutchLines--; } };
+        // The skill's own limit is a little longer, so Noggin's own limit ends a slow line first.
+        const call = this.voice.speak(() => this.timedSpeak(speech, args, limitMs, where), limitMs + DUTCH_LIMIT_EXTRA_MS);
+        return call.then(value => { done(); return value; }, error => {
+            done();
+            const reason = String(error && error.message || error || 'refused').slice(0, 60);
+            if (voice.refused(error)) this.dutchFailed(reason, where);
+            throw error;
+        });
+    },
+    // The Dutch voice refused a line: from now on English (D172).
+    dutchFailed(reason, where) {
+        this.log.write({kind: 'dutch_refused', turn: where && where.turn, line: where && where.line, reason: reason});
+        if (this.englishSwitched) return;
+        this.language = 'en'; this.englishNow = true; this.englishSwitched = true;
+        this.log.write({kind: 'voice_switch', language: 'en', reason: reason});
+        // Without a connection now, connect() sends it once the session is set up (D175).
+        this.sendEnglishNote();
+    },
+    // Once per connection: each new session starts from the Dutch instructions.
+    sendEnglishNote() {
+        if (!this.rt || this.englishNoteRt === this.rt) return;
+        this.englishNoteRt = this.rt;
+        this.rt.send({type: 'conversation.item.create', item: {type: 'message', role: 'system', content: [{type: 'input_text', text: realtime.englishNote()}]}});
+    },
+    // Once, right after the line that failed: Jibo says the Dutch voice is not working.
+    sayEnglishNow() {
+        if (!this.englishNow || !this.active || this.failing) return;
+        this.englishNow = false;
+        return this.speak(lines.say('dutchFailed', 'en'), null, {language: 'en'});
     },
     // The first line's clip goes before its words, so it holds Jibo's body before speech's own
     // gestures ask for it: the words follow once a body clip was handed over (D80) or a clip of

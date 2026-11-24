@@ -14,9 +14,10 @@ function firstSentenceEnd(text) {
 // bracketed markers, escape what the speech engine reads as markup. A dash becomes a
 // comma and quote marks go: the TTS has no symbol for a dash, and quotes upset its
 // word timings, which speech's gestures and emoji follow.
-function speechText(text) {
+// In Dutch, "3-5" is "3 tot 5".
+function speechText(text, language) {
     return String(text).replace(/```[\s\S]*?```/g, ' ').replace(/\[[a-z]{2,12}\]/gi, ' ').replace(/[*`#_~|\\{}]/g, '')
-        .replace(/(\d)\s*[–—]\s*(\d)/g, '$1 to $2').replace(/\s*[–—]+\s*/g, ', ')
+        .replace(/(\d)\s*[–—]\s*(\d)/g, language === 'nl' ? '$1 tot $2' : '$1 to $2').replace(/\s*[–—]+\s*/g, ', ')
         .replace(/[“”„«»"]/g, '').replace(/[‘’]/g, "'")
         .replace(/\s+/g, ' ').replace(/,\s*(?=[,.!?;:…]|$)/g, '').replace(/^[\s,]+/, '').trim()
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -53,13 +54,17 @@ function emojiEsml(esmlText, said, name, nth) {
     return esmlText.slice(0, at) + "<es name='" + name + "' nonBlocking='true'/>" + esmlText.slice(at);
 }
 
-// Stop phrases, as BEam's Agent Mode recognises them (BSD-3, @be/be skills/agent/runtime.js).
-const STOP = ['stop', 'stop chatting', 'stop talking', 'end conversation', 'cancel', 'goodbye', 'good bye', 'bye', 'bye bye', 'that is all', 'thats all'];
+// Stop phrases, as BEam's Agent Mode recognises them (BSD-3, @be/be skills/agent/runtime.js), and
+// their Dutch counterparts, heard in either language (D173). Not "dag" alone: it is also hello.
+const STOP = ['stop', 'stop chatting', 'stop talking', 'end conversation', 'cancel', 'goodbye', 'good bye', 'bye', 'bye bye', 'that is all', 'thats all',
+    'doei', 'doei doei', 'doeg', 'dag dag', 'tot ziens', 'tot later', 'tot straks', 'stoppen', 'hou op', 'houd op', 'stop met praten',
+    'einde gesprek', 'dat was het', 'dat was alles', 'dat is alles', 'laat maar'];
 function isStop(text) {
     if (typeof text !== 'string') return false;
     let normalized = text.toLowerCase().replace(/[’']/g, '').replace(/[-_]/g, ' ')
         .replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
-    normalized = normalized.replace(/^(?:okay|ok|alright|well) /, '').replace(/^(?:hey )?jibo /, '').replace(/ jibo$/, '').replace(/ (?:then|now|for now)$/, '');
+    normalized = normalized.replace(/^(?:okay|ok|oke|alright|well|nou|goed) /, '').replace(/^(?:hey |hoi )?jibo /, '').replace(/ jibo$/, '')
+        .replace(/ (?:then|now|for now|dan|nu|hoor|voor nu)$/, '');
     return STOP.indexOf(normalized) >= 0;
 }
 

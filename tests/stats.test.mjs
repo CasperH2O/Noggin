@@ -35,7 +35,7 @@ test('scan: start, length, turns, reason and resumed come from each log; oldest 
     writeLog(d, at(0, 9) + 6 * MIN, 2 * MIN, {resumed: true, reason: 'handover'});
     const rows = stats.scan(d);
     assert.deepEqual(rows.map(r => r.start), [at(1, 20), at(0, 9), at(0, 9) + 6 * MIN]);
-    assert.deepEqual(rows[0], {start: at(1, 20), end: at(1, 20) + 10 * MIN, turns: 8, reason: 'silence', resumed: false});
+    assert.deepEqual(rows[0], {start: at(1, 20), end: at(1, 20) + 10 * MIN, turns: 8, reason: 'silence', resumed: false, lines: {nl: 0, en: 0}});
     assert.equal(rows[2].resumed, true);
 });
 
@@ -114,7 +114,7 @@ test('report: counts, time, average, longest and days in Jibo\'s local time', ()
     const r = stats.report(rows.slice().sort((a, b) => a.start - b.start), NOW, local);
     assert.equal(r.total, 4, 'a comeback is not a new conversation');
     assert.equal(r.since, at(9, 12), 'the oldest row, wherever it stands in the list');
-    assert.deepEqual(r.week, {count: 3, ms: 22 * MIN, averageMs: Math.round(22 * MIN / 3), longestMs: 10 * MIN});
+    assert.deepEqual(r.week, {count: 3, ms: 22 * MIN, averageMs: Math.round(22 * MIN / 3), longestMs: 10 * MIN, lines: {nl: 0, en: 0}});
     assert.equal(r.days.length, 7);
     assert.deepEqual(r.days.map(d => d.count), [0, 0, 0, 1, 0, 1, 1]);
     assert.equal(r.days[6].ms, 6 * MIN, 'today: both stretches add time');
@@ -132,7 +132,7 @@ test('report: nothing yet', () => {
     const r = stats.report([], NOW, local);
     assert.equal(r.total, 0);
     assert.equal(r.since, null);
-    assert.deepEqual(r.week, {count: 0, ms: 0, averageMs: null, longestMs: 0});
+    assert.deepEqual(r.week, {count: 0, ms: 0, averageMs: null, longestMs: 0, lines: {nl: 0, en: 0}});
     assert.deepEqual(r.recent, []);
 });
 
@@ -142,4 +142,26 @@ test('report: only the newest few are listed', () => {
     const r = stats.report(rows, NOW, local);
     assert.equal(r.recent.length, 8);
     assert.equal(r.recent[0].start, rows[19].start);
+});
+
+test('lines per language come from the end line, are summed for the week and listed per conversation (D171)', () => {
+    const d = dir();
+    const name = writeLog(d, at(0, 9), 4 * MIN, {turns: 3, reason: 'goodbye'});
+    const file = path.join(d, 'logs', name);
+    const text = fs.readFileSync(file, 'utf8').replace('"kind":"session_end"', '"kind":"session_end","lines":{"nl":5,"en":2}');
+    fs.writeFileSync(file, text);
+    const rows = stats.scan(d);
+    assert.deepEqual(rows[0].lines, {nl: 5, en: 2});
+    const bad = stats.report([Object.assign({}, rows[0], {lines: {nl: 5, en: 2}}), {start: at(0, 10), end: at(0, 10) + MIN, turns: 1, reason: '', resumed: false}], NOW, local);
+    assert.deepEqual(bad.week.lines, {nl: 5, en: 2}, 'a row without counts adds nothing');
+    assert.deepEqual(bad.recent[1].lines, {nl: 5, en: 2});
+    assert.deepEqual(bad.recent[0].lines, {nl: 0, en: 0});
+});
+
+test('line counts that are not small whole numbers are read as zero', () => {
+    const d = dir();
+    const name = writeLog(d, at(0, 9), 4 * MIN, {turns: 3, reason: 'goodbye'});
+    const file = path.join(d, 'logs', name);
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('"kind":"session_end"', '"kind":"session_end","lines":{"nl":-1,"en":1e999}'));
+    assert.deepEqual(stats.scan(d)[0].lines, {nl: 0, en: 0});
 });

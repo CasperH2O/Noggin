@@ -106,3 +106,36 @@ test('closed while a voice launch is still ending the old conversation: no new c
     await sleep(60);
     assert.deepEqual(events, ['session closed'], 'no talk and no exit for a skill that is gone: ' + events);
 });
+
+test('say() in Dutch: through the Dutch voice; refused, the English line; stopped or late, no English afterwards; close cancels it (D175)', async () => {
+    const calls = [];
+    let mode = 'ok';
+    global.dutchVoiceService = {apiVersion: 1, version: 't', languages: ['nl'], ready: () => true, status: () => ({state: 'ready'}),
+        cancel() { calls.push('cancel'); },
+        speak(fn) {
+            calls.push(mode);
+            if (mode === 'refuse') return Promise.reject(Error('dutch_voice_not_ready'));
+            if (mode === 'timeout') return Promise.reject(Error('dutch_voice_timeout'));
+            if (mode === 'hang') return new Promise(() => {});
+            return Promise.resolve().then(fn);
+        }};
+    try {
+        said.length = 0;
+        const s = skill();
+        await s.say('later', null, 'nl');
+        assert.deepEqual(said, ['Ik ben er als je zover bent.']);
+        mode = 'refuse'; said.length = 0;
+        await s.say('later', null, 'nl');
+        assert.deepEqual(said, ["I'll be here when you're ready."]);
+        mode = 'timeout'; said.length = 0;
+        await s.say('later', null, 'nl');
+        assert.deepEqual(said, [], 'a line past its time is not said again in English');
+        mode = 'hang'; said.length = 0;
+        const pending = s.say('later', null, 'nl');
+        await sleep(10);
+        await new Promise(done => s.close(done));
+        assert.equal(calls.at(-1), 'cancel');
+        assert.equal(s.dutchSay, null);
+        pending.catch(() => {});
+    } finally { delete global.dutchVoiceService; }
+});

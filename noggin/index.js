@@ -14,6 +14,7 @@ const openai = require('./lib/openai'), ttsText = require('./lib/tts-text'), rea
 const actions = require('./lib/actions'), comeback = require('./lib/comeback'), createLog = require('./lib/log');
 const memory = require('./lib/memory'), recap = require('./lib/recap'), trouble = require('./lib/trouble'), budget = require('./lib/budget');
 const SetupScreen = require('./lib/setup-screen'), ExpressionPlayer = require('./lib/expression'), heyJibo = require('./lib/hey-jibo');
+const voice = require('./lib/voice'), lines = require('./lib/lines');
 const fs = require('fs');
 const OWN = require('./package.json').name, VERSION = require('./package.json').version;
 const RESUME_MS = 15000;
@@ -60,21 +61,40 @@ class Noggin extends BeSkill {
     // Opened from the menu, the menu view would stay; the emoji needs Jibo's eye.
     eye() { return ExpressionPlayer.showEye(jibo); }
     // anim: an eye emoji played with the words (D70). Stopped after SAY_MS, as a conversation line (D114).
-    say(text, anim) {
+    // key: a line of lib/lines.js, said in `language`; Dutch through the Dutch voice, and in
+    // English when that voice refuses it, but never once the line's time is up (D172, D175).
+    say(key, anim, language) {
         const speech = jibo.embodied && jibo.embodied.speech;
         if (!speech || !speech.speak) return Promise.resolve();
         // A stop after this open() was closed would cut the next skill's speech.
         const generation = this.generation;
-        let timer = null;
-        const spoken = Promise.resolve().then(() => speech.speak((anim ? ttsText.animEsml(anim) : '') + ttsText.speechText(text))).catch(() => {});
+        let timer = null, over = false;
+        const current = () => !over && generation === this.generation;
+        const tag = anim ? ttsText.animEsml(anim) : '';
+        const english = () => current() ? speech.speak(tag + ttsText.speechText(lines.say(key, 'en'))) : null;
+        const dutch = () => {
+            const dutchVoice = this.dutchSay = voice.create();
+            const done = () => { if (this.dutchSay === dutchVoice) this.dutchSay = null; };
+            return dutchVoice.speak(() => speech.speak(tag + ttsText.speechText(lines.say(key, 'nl'), 'nl'), {}, {hotWords: false}), SAY_MS)
+                .then(done, error => {
+                    done();
+                    if (!voice.refused(error)) return null;
+                    this.tagged.warn('Dutch line not said: ' + String(error && error.message || error).slice(0, 60));
+                    return english();
+                });
+        };
+        const spoken = Promise.resolve().then(language === 'nl' ? dutch : english).catch(() => {});
         const late = new Promise(resolve => {
             timer = setTimeout(() => {
+                over = true;
                 try { if (speech.stop && generation === this.generation) speech.stop(); } catch (_) {}
                 resolve();
             }, SAY_MS);
         });
-        return Promise.race([spoken, late]).then(() => clearTimeout(timer));
+        return Promise.race([spoken, late]).then(() => { over = true; clearTimeout(timer); });
     }
+    // The language the skill's own lines are said in: the setting, while the Dutch voice is ready.
+    language(dataDir) { return voice.create().choose(settings.load(dataDir).config.language).language; }
     // hey: {heardAt} when "Hey Jibo" opened Noggin (lib/hey-jibo.js), else null.
     talk(dataDir, back, openedAt, startup, hey) {
         const generation = this.generation;
@@ -84,7 +104,7 @@ class Noggin extends BeSkill {
             this.tagged.error(error.message);
             const t = trouble.cause(error.message === 'no_key' ? 'no_key' : 'settings');
             // Closed while Jibo spoke (a swipe, "Hey Jibo"): no screen for a skill that is gone.
-            return this.eye().then(() => this.say(t.line, t.emoji)).then(() => generation === this.generation ? this.setup(t, dataDir, generation) : 'closed');
+            return this.eye().then(() => this.say('trouble.' + t.cause, t.emoji, this.language(dataDir))).then(() => generation === this.generation ? this.setup(t, dataDir, generation) : 'closed');
         }
         const persona = settings.persona(dataDir), log = new ConversationLog(dataDir, config.log !== false, {recap: !!(config.memory && config.memoryLearn)});
         // On the robot the microphone runs as a separate arecord process: an ALSA failure
@@ -95,9 +115,12 @@ class Noggin extends BeSkill {
             : new Microphone(jibo, {onTrack: name => log.write({kind: 'microphone_track', event: name})});
         const abilities = config.actions ? {apps: Object.keys(actions.apps(config)), config: config} : null;
         const notes = this.memoryNotes(dataDir, config, back, log, openedAt);
-        const instructions = realtime.instructions(persona.soul, persona.identity, actions.localTime(jibo), abilities, notes, {presence: config.presence !== false, emoji: config.emoji !== false});
+        // Chosen once: the instructions and the conversation start in the same language (D172).
+        const speechVoice = voice.create(), language = speechVoice.choose(config.language);
+        const instructions = realtime.instructions(persona.soul, persona.identity, actions.localTime(jibo), abilities, notes,
+            {presence: config.presence !== false, emoji: config.emoji !== false}, language.language);
         session = this.session = new Conversation({
-            jibo: jibo, config: config, log: log, version: VERSION,
+            jibo: jibo, config: config, log: log, version: VERSION, voice: speechVoice, language: language,
             instructions: instructions,
             persona: {edited: Object.keys(persona.edited).filter(name => persona.edited[name]), chars: instructions.length, facts: persona.facts.length,
                 memory: notes ? notes.block.length : null},
@@ -148,9 +171,10 @@ class Noggin extends BeSkill {
             if (this.screen === screen) this.screen = null;
             this.tagged.info('setup screen ended: ' + how);
             if (generation !== this.generation) return 'setup_' + how;
-            if (how === 'timeout') return this.eye().then(() => this.say(trouble.LINES.later)).then(() => 'setup_timeout');
+            const language = this.language(dataDir);
+            if (how === 'timeout') return this.eye().then(() => this.say('later', null, language)).then(() => 'setup_timeout');
             if (how !== 'saved') return 'setup_' + how;
-            return this.eye().then(() => this.say(trouble.LINES.ready, 'Emoji_Checkmark')).then(() => generation === this.generation ? this.talk(dataDir, null, Date.now(), {after_setup: true}) : 'setup_saved');
+            return this.eye().then(() => this.say('ready', 'Emoji_Checkmark', language)).then(() => generation === this.generation ? this.talk(dataDir, null, Date.now(), {after_setup: true}) : 'setup_saved');
         });
     }
     // What Jibo remembers, for the end of the instructions (D44): null when memory is off or
@@ -194,6 +218,8 @@ class Noggin extends BeSkill {
     }
     close(done) {
         this.generation = (this.generation || 0) + 1;
+        // A Dutch setup or trouble line still being said ends with the skill (D175).
+        if (this.dutchSay) { this.dutchSay.cancel(); this.dutchSay = null; }
         this.release().then(() => done && done());
     }
     // Removal: a comeback still waiting would outlive the skill (D162).

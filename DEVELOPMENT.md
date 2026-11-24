@@ -29,6 +29,16 @@ On the robot: BEacon, Store, Upload ZIP, and choose `Noggin.zip` from a release.
   stroke does not end the conversation. Whom Jibo recognises by face is read once a second from
   `jibo.lps.identity` and named through his family list. Both reach the model as short system
   notes without a reply; the setting `presence` switches names off.
+- **Dutch** (`noggin/lib/voice.js`, `noggin/lib/lines.js`). With Language set to Dutch, the model
+  starts every reply with `[nl]` or `[en]`; Noggin reads that label (never says it) and sends a
+  Dutch reply through the separate Dutch Voice skill (`@be/dutch-voice`), which publishes
+  `global.dutchVoiceService` in Be's process. Noggin keeps its own embodied-speech call and wraps
+  it in `service.speak(fn)`, which sends Jibo's speech to the Dutch voice for that one call, so eyes
+  and body follow the Dutch words. The service is looked up at every call. Without it (or not
+  ready) a conversation set to Dutch runs in English and Jibo says why; if it refuses a line, Jibo
+  says so in English once and the conversation goes on in English. Noggin's own lines are in
+  `lib/lines.js` in both languages. The end of each conversation log counts the lines said in each
+  language, for the Usage tab.
 - **Tools** (`noggin/lib/actions.js`). The model may call tools. Some run inside Noggin (facts,
   dance, volume, reading the clock); others hand over to one of Jibo's skills (the clock, photos,
   apps) or ask Jibo's cloud a fixed phrase. When that skill is done, Noggin opens again and carries
@@ -209,7 +219,9 @@ The tests and tools run on a current Node.
 | `noggin/lib/labels.js` | the expression classifier's requests and how its answers are read |
 | `noggin/lib/catalog.js`, `catalog.json` | moods and their animations, dances, eye emoji (built by `tools/expression-catalog.mjs`) |
 | `noggin/lib/expression.js` | plays expressions next to speech; the thinking eye; Jibo's eye view |
-| `noggin/lib/tts-text.js` | reply text as plain words and ESML for Jibo's speech; stop phrases |
+| `noggin/lib/tts-text.js` | reply text as plain words and ESML for Jibo's speech; stop phrases in English and Dutch |
+| `noggin/lib/voice.js` | the seam to the Dutch Voice skill, and the reply's language label |
+| `noggin/lib/lines.js` | everything Noggin says as fixed text, in English and Dutch |
 | `noggin/lib/mic.js`, `audio.js` | the microphone (arecord on the robot) and its samples as PCM16 at 24 kHz |
 | `noggin/lib/audio-clock.js` | when each part of the sent audio left, for the timing log |
 | `noggin/lib/conversation-log.js` | the conversation logs and recap transcripts, with their caps |

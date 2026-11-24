@@ -302,6 +302,7 @@
             el('div', {class: 'field-text'}, [
                 el('div', {class: 'field-label', text: field.label}),
                 field.help ? el('div', {class: 'field-help', text: field.help}) : null,
+                field.key === 'language' ? dutchVoiceNote() : null,
                 error ? el('div', {class: 'field-error', text: error}) : null
             ]),
             el('div', {class: 'field-control' + (wide && field.type === 'map' ? ' is-wide' : '')}, [control(field)])
@@ -798,6 +799,25 @@
             : new Date(r.day + 'T12:00:00Z').toLocaleDateString(undefined, {weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC'});
         return name + ' ' + r.time;
     }
+    // Whether Dutch can be spoken: the robot looked for the Dutch Voice skill when the page loaded.
+    function dutchVoiceNote() {
+        const v = state.dutchVoice || {};
+        if (v.found && v.ready) return el('div', {class: 'field-help'}, [el('span', {class: 'chip is-ok', text: 'Dutch Voice ' + (v.version || '') + ' ready'})]);
+        if (v.found) return el('div', {class: 'field-help', text: 'Dutch Voice is installed but not ready' + (v.state === 'starting' ? ' yet: it is starting.' : ' (' + (v.reason || v.state || 'unknown') + '). Until it is, Jibo speaks English.')});
+        return el('div', {class: 'field-help', text: v.reason === 'missing'
+            ? 'Dutch Voice is not installed. Without it Jibo speaks English, and says why when Dutch is chosen.'
+            : 'This Dutch Voice does not fit this Noggin: update both. Until then Jibo speaks English.'});
+    }
+    // Which voice Jibo used: shown once he said something in Dutch.
+    function languageTile(lines) {
+        const total = lines.nl + lines.en;
+        return el('div', {class: 'tile'}, [el('div', {class: 'tile-label', text: 'In Dutch'}), el('div', {class: 'tile-value', text: Math.round(100 * lines.nl / total) + '%'}),
+            el('div', {class: 'tile-sub', text: lines.nl + ' of ' + total + ' lines'})]);
+    }
+    function languageText(lines) {
+        if (!lines || !lines.nl) return '';
+        return ' · ' + lines.nl + ' Dutch' + (lines.en ? ', ' + lines.en + ' English' : '') + (lines.nl + lines.en === 1 ? ' line' : ' lines');
+    }
     function talksBody(t) {
         if (!t || !t.ok) return [el('div', {class: 'empty', text: 'Jibo did not answer.'})];
         if (!t.total) return [el('div', {class: 'empty', text: state.values && state.values.log === false ? 'Conversation logs are off, so there is nothing to count. Turn on "Keep conversation logs" under History to see statistics.' : 'No conversation logs yet.'})];
@@ -811,7 +831,7 @@
                 tile('Conversations', String(w.count), 'in the last 7 days'),
                 tile('Talked', span(w.ms), 'in total'),
                 tile('Average', w.averageMs === null ? '–' : span(w.averageMs), 'per conversation'),
-                tile('Longest', span(w.longestMs), 'one stretch')]),
+                tile('Longest', span(w.longestMs), 'one stretch')].concat(w.lines && w.lines.nl ? [languageTile(w.lines)] : [])),
             el('div', {class: 'setting-block'}, [
                 dayChart('Conversations per day', t.days, today, d => d.count, count),
                 dayChart('Minutes talked per day', t.days, today, d => Math.round(d.ms / 6000) / 10, minutes),
@@ -819,7 +839,7 @@
             el('h2', {class: 'section-header', text: 'Latest conversations'}),
             el('div', {class: 'setting-block rows'}, t.recent.map(r => el('div', {class: 'usage-row'}, [
                 el('div', {class: 'usage-name', text: talkWhen(r, t.days)}), el('div', {class: 'usage-money', text: span(r.ms)}),
-                el('div', {class: 'usage-use', text: (r.resumed ? 'Came back after another skill' : r.turns + (r.turns === 1 ? ' turn' : ' turns')) + (r.reason ? ' · ended: ' + r.reason.replace(/_/g, ' ') : '')})])))
+                el('div', {class: 'usage-use', text: (r.resumed ? 'Came back after another skill' : r.turns + (r.turns === 1 ? ' turn' : ' turns')) + languageText(r.lines) + (r.reason ? ' · ended: ' + r.reason.replace(/_/g, ' ') : '')})])))
         ];
     }
     // One request at a time; the answer goes to whichever box is on the page by then.

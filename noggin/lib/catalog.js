@@ -9,6 +9,7 @@
 const CATALOG = require('./catalog.json').moods, EMOJI = require('./catalog.json').emoji;
 // dances: style -> {words, list}, Jibo's dances with their own music (danceChoice, pickDance).
 const DANCES = require('./catalog.json').dances || {};
+const lines = require('./lines');
 
 // The moods the decision model picks from, and when each fits. Noggin plays a random animation
 // of the mood and size from catalog.json (pickAnimation). The dance plays on its own, with its
@@ -100,28 +101,14 @@ function pickDance(style, options) {
     return from[Math.min(from.length - 1, Math.floor(random() * from.length))].n;
 }
 // What the dance is called (for the model: "what dance was that?") and what Jibo may say just
-// before it (danceAnnounce). Plain words only: they go straight into ESML.
+// before it (danceAnnounce, lines in lib/lines.js). Plain words only: they go straight into ESML.
 const DANCE_NAMES = {funk: 'a funk dance', pop: 'a pop dance', robot: 'the robot', techno: 'a techno dance', twerk: 'a twerk',
     belly: 'a belly dance', flamenco: 'a flamenco', country: 'a country dance', slow: 'a slow dance', calm: 'a calm, zen dance',
     silly: 'a silly dance', waltz: 'a waltz'};
-const DANCE_LINES = {
-    funk: ['Time to get funky!', 'Here comes the funk!', 'Feel the groove!'],
-    pop: ['Here is my pop dance!', 'Pop star mode!', 'This one is catchy!'],
-    robot: ['Here is my robot dance!', 'Robot mode: on!', 'Beep boop, robot dance!'],
-    techno: ['Turn it up!', 'Time to rave!', 'Here is my techno dance!'],
-    twerk: ['Watch me twerk!', 'Shake it!', 'Here is my twerk!'],
-    belly: ['Here is my belly dance!', 'Belly dance time!', 'Watch these moves!'],
-    flamenco: ['Ole!', 'Here is my flamenco!', 'A little flamenco!'],
-    country: ['Yee haw!', 'Grab your boots!', 'Here is my country dance!'],
-    slow: ['Here is a slow one.', 'Something smooth.', 'Time for a slow dance.'],
-    calm: ['Something calm.', 'Very zen.', 'A peaceful little dance.'],
-    silly: ['Here is a silly one!', 'This one is goofy!', 'Try not to laugh!'],
-    waltz: ['May I have this dance?', 'Here is my waltz!', 'A little waltz!']
-};
 function danceName(style) { return DANCE_NAMES[style] || 'a dance'; }
-function danceLine(style, random) {
-    const lines = DANCE_LINES[style] || ['Here we go!'];
-    return lines[Math.min(lines.length - 1, Math.floor((random || Math.random)() * lines.length))];
+// The announcement in `language` (lib/lines.js holds them).
+function danceLine(style, random, language) {
+    return lines.say(DANCE_NAMES[style] ? 'dance.' + style : 'dance.other', language, random);
 }
 // Whether Jibo names the dance before it (the `danceAnnounce` setting): 'always'; 'off'; 'sometimes'
 // (the default): only for a dance he picked himself (from 'random'), about one in three, and

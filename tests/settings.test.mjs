@@ -308,3 +308,23 @@ test('on the robot an API address on the home network is refused when saved (BEa
     const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'noggin-settings-'));
     assert.equal(settings.update(elsewhere, {apiBase: 'http://192.168.1.20:8080/v1'}).ok, true, 'a development checkout has no such guard');
 });
+
+test('language: English by default; the greeting and comeback line follow it while unchanged (D170)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'noggin-lang-'));
+    let view = settings.load(dir).config;
+    assert.equal(view.language, 'en');
+    assert.equal(view.greeting, 'Hi!'); assert.equal(view.comebackLine, 'Anything else?');
+    assert.deepEqual(settings.update(dir, {language: 'nl'}), {ok: true, errors: {}});
+    view = settings.load(dir).config;
+    assert.equal(view.greeting, 'Hoi!'); assert.equal(view.comebackLine, 'Nog iets?');
+    // Saving the Dutch default stores nothing, so switching back gives the English one again.
+    settings.update(dir, {greeting: 'Hoi!'});
+    assert.equal(JSON.parse(fs.readFileSync(settings.file(dir), 'utf8')).greeting, undefined);
+    settings.update(dir, {language: 'en'});
+    assert.equal(settings.load(dir).config.greeting, 'Hi!');
+    // An edited greeting is kept in both languages.
+    settings.update(dir, {greeting: 'Hallo allemaal'});
+    settings.update(dir, {language: 'nl'});
+    assert.equal(settings.load(dir).config.greeting, 'Hallo allemaal');
+    assert.equal(settings.update(dir, {language: 'fr'}).ok, false, 'only English or Dutch');
+});

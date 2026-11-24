@@ -4,6 +4,7 @@
 // facts), as a handover to another skill, or as a question to Jibo's cloud.
 // Node 6 / Chrome 53: ES2015 only.
 'use strict';
+const voice = require('./voice');
 const catalog = require('./catalog'), ttsText = require('./tts-text'), actions = require('./actions');
 const delay = require('./http').delay;
 const heyJibo = require('./hey-jibo');
@@ -59,12 +60,26 @@ const methods = {
         this.recentDances = [name].concat(this.recentDances.filter(n => n !== name)).slice(0, RECENT_DANCES);
         const announced = catalog.danceAnnounce(this.config.danceAnnounce, from, this.danceCount - this.announcedAt, this.random);
         this.danceCount++; if (announced) this.announcedAt = this.danceCount;
-        const line = announced ? catalog.danceLine(style, this.random) : null;
-        this.log.write(Object.assign({kind: 'speak', turn: turn === undefined ? null : turn, anim: name, dance: style, from: from}, line ? {text: line} : {}));
+        // The announcement follows the reply's language; in Dutch only while the Dutch voice can say
+        // it, otherwise the dance goes without words (D174, D175).
+        const language = this.turn && this.turn.language || this.language;
+        const dutch = language === 'nl';
+        const canSay = !dutch || this.voice.choose('nl').language === 'nl';
+        const line = announced && canSay ? catalog.danceLine(style, this.random, language) : null;
+        this.log.write(Object.assign({kind: 'speak', turn: turn === undefined ? null : turn, anim: name, dance: style, from: from},
+            line ? {text: line, language: language} : {}));
         // One speak for the words and the dance: a dance right after another speak is cut short (D115).
-        const words = (line ? ttsText.speechText(line) + ' ' : '') + "<anim name='" + name + "' endNeutral='true'/>";
+        const tag = "<anim name='" + name + "' endNeutral='true'/>";
+        const words = (line ? ttsText.speechText(line, language) + ' ' : '') + tag;
+        const where = {turn: turn === undefined ? null : turn, dance: name};
         this.dancing = true;
-        return this.timedSpeak(speech, [words], DANCE_SPEAK_MS, {turn: turn === undefined ? null : turn, dance: name}).then(() => {
+        // Refused in Dutch: the dance without words, and Jibo says right away why (D175).
+        const call = !(line && dutch) ? this.timedSpeak(speech, [words], DANCE_SPEAK_MS, where)
+            : this.speakDutch(speech, [words, {}, {hotWords: false}], DANCE_SPEAK_MS, where).catch(error => {
+                if (!voice.refused(error) || !this.active) throw error;
+                return this.timedSpeak(speech, [tag], DANCE_SPEAK_MS, where).then(() => this.sayEnglishNow());
+            });
+        return call.then(() => {
             this.dancing = false;
             return {name: name, style: style, from: from, announced: announced};
         }, error => {

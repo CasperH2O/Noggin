@@ -6,6 +6,7 @@
 'use strict';
 const fs = require('fs'), path = require('path'), url = require('url');
 const catalog = require('./catalog'), realtime = require('./realtime-session'), actions = require('./actions'), files = require('./files'), migrate = require('./migrate');
+const lines = require('./lines');
 
 const ROBOT_SKILLS = '/opt/jibo/Jibo/Skills';
 // The skill's own Knowledge folder, where BEam 3.2.0 allows files without a permission (D151).
@@ -66,12 +67,16 @@ const SCHEMA = [
     // Opening on the hotword (lib/hey-jibo.js, D132).
     {key: 'heyJibo', type: 'bool', default: false, tab: 'behaviour', group: 'Conversation', label: 'Open on "Hey Jibo"',
         help: 'When Jibo is idle, "Hey Jibo" opens Noggin instead of Jibo\'s own listening, so everything you ask goes through Noggin. Words said right after "Hey Jibo" are not heard: wait until his ring turns blue. Needs the API key.'},
-    {key: 'greeting', type: 'text', max: 200, empty: true, default: 'Hi!', tab: 'behaviour', group: 'Conversation', label: 'Greeting',
-        help: 'Said as soon as Noggin opens. Empty: none.'},
+    // Dutch is spoken by the Dutch Voice skill (lib/voice.js, D169). Before the fields whose default follows it.
+    {key: 'language', type: 'enum', default: 'en', tab: 'behaviour', group: 'Conversation', label: 'Language',
+        help: 'The language Jibo speaks in a conversation. Dutch needs the Dutch Voice skill from the store. In Dutch, Jibo answers a person who speaks English in English.',
+        options: [{value: 'en', label: 'English'}, {value: 'nl', label: 'Dutch (Nederlands)'}]},
+    {key: 'greeting', type: 'text', max: 200, empty: true, default: lines.LINES.en.greeting, defaults: {nl: lines.LINES.nl.greeting}, tab: 'behaviour', group: 'Conversation', label: 'Greeting',
+        help: 'Said as soon as Noggin opens. Empty: none. Unchanged, it follows the language.'},
     {key: 'greetingExpression', type: 'enum', default: 'smile', tab: 'behaviour', group: 'Conversation', label: 'Greeting expression',
         help: 'Smile is quick and eye only.', options: greetingExpressions},
-    {key: 'comebackLine', type: 'text', max: 200, empty: true, default: 'Anything else?', tab: 'behaviour', group: 'Conversation', label: 'Coming back',
-        help: 'Said when Noggin comes back after another skill. Empty: the model says something.'},
+    {key: 'comebackLine', type: 'text', max: 200, empty: true, default: lines.LINES.en.comeback, defaults: {nl: lines.LINES.nl.comeback}, tab: 'behaviour', group: 'Conversation', label: 'Coming back',
+        help: 'Said when Noggin comes back after another skill. Empty: the model says something. Unchanged, it follows the language.'},
     // Notes to the model about whom Jibo recognises by face (lib/presence.js, D145).
     {key: 'presence', type: 'bool', default: true, tab: 'behaviour', group: 'Conversation', label: 'Tell Noggin who Jibo sees',
         help: 'When Jibo recognises someone of his family by face, their name goes to OpenAI as a note, so he can greet them by name. Off: no names leave Jibo.'},
@@ -149,6 +154,10 @@ const FIELDS = SCHEMA.map(field => field.key);
 const PERSONA = {soul: {file: 'SOUL.md', max: 8000}, identity: {file: 'IDENTITY.md', max: 8000}, facts: {file: 'FACTS.md', max: 4000}};
 
 function options(field) { return typeof field.options === 'function' ? field.options() : field.options; }
+// A field's default in `language` (D170).
+function defaultFor(field, language) {
+    return field.defaults && Object.prototype.hasOwnProperty.call(field.defaults, language) ? field.defaults[language] : field.default;
+}
 
 // An OpenAI key: letters, digits, _ and - only. A pasted key often comes with spaces or quotes.
 const SECRET = /^[A-Za-z0-9_-]{4,400}$/;
@@ -265,16 +274,18 @@ function effective(raw) {
     SCHEMA.forEach(field => {
         const value = raw[field.key];
         const unset = value === undefined || value === null || (value === '' && !field.empty);
-        if (unset) { config[field.key] = field.default; return; }
+        // `language` comes before the fields whose default follows it.
+        const fallback = defaultFor(field, config.language);
+        if (unset) { config[field.key] = fallback; return; }
         const over = overCap(field, value);
         if (over) {
             const result = check(field, over);
             problems[field.key] = 'Only the first ' + field.max + ' of ' + Object.keys(value).length + ' apps are used. Remove some and save.';
-            config[field.key] = result.error ? field.default : result.value;
+            config[field.key] = result.error ? fallback : result.value;
             return;
         }
         const result = check(field, value);
-        if (result.error) { problems[field.key] = result.error; config[field.key] = field.default; }
+        if (result.error) { problems[field.key] = result.error; config[field.key] = fallback; }
         else config[field.key] = result.value;
     });
     return {config: config, problems: problems};
@@ -300,6 +311,8 @@ function update(dir, patch, options) {
     try { raw = stored(dir); } catch (_) { raw = {}; }
     const next = {};
     Object.keys(raw).forEach(k => { if (BY_KEY[k]) next[k] = raw[k]; });
+    // A value equal to the default of the language being saved is not stored, so it keeps following it.
+    const language = Object.prototype.hasOwnProperty.call(patch, 'language') ? patch.language || 'en' : next.language || 'en';
     Object.keys(patch).forEach(key => {
         const field = BY_KEY[key], value = patch[key];
         if (!field) { errors[key] = 'Unknown setting.'; return; }
@@ -310,7 +323,7 @@ function update(dir, patch, options) {
             errors[key] = 'On Jibo this must be a public address or localhost, not a device on the home network.';
             return;
         }
-        if (JSON.stringify(result.value) === JSON.stringify(field.default)) delete next[key];
+        if (JSON.stringify(result.value) === JSON.stringify(defaultFor(field, language))) delete next[key];
         else next[key] = result.value;
     });
     if (Object.keys(errors).length) return {ok: false, errors: errors};

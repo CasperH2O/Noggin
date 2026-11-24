@@ -160,7 +160,7 @@ test('budget: low only with a limit and at most the share left; the watch waits,
     // The notice: once per day, only when low.
     global[budget.HUB] = {state: {low: true}, warnedDay: null};
     const n = budget.notice('2026-11-19', 10);
-    assert.match(n.text, /nearly used up/); assert.equal(n.emoji, 'Emoji_Money');
+    assert.equal(n.line, 'budget'); assert.equal(n.emoji, 'Emoji_Money');
     n.said();
     assert.equal(budget.notice('2026-11-19', 10), null);
     assert.ok(budget.notice('2026-11-20', 10));

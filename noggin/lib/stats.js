@@ -19,7 +19,13 @@ function lines(text, cut) {
 }
 const time = e => e && typeof e.t === 'string' ? Date.parse(e.t) : NaN;
 
-// One log -> {start, end, turns, reason, resumed}, or null when it holds nothing usable.
+// Lines said in each language, from a conversation's end line (D171); zeros when it has none.
+function lineCounts(endLine) {
+    const lines = endLine && endLine.lines && typeof endLine.lines === 'object' ? endLine.lines : {};
+    const count = v => (Number.isInteger(v) && v >= 0 && v < 1e6 ? v : 0);
+    return {nl: count(lines.nl), en: count(lines.en)};
+}
+// One log -> {start, end, turns, reason, resumed, lines}, or null when it holds nothing usable.
 function stretch(dir, item) {
     let first, last;
     const part = (position, length) => files.readPart(path.join(dir, item.name), position, length);
@@ -35,7 +41,8 @@ function stretch(dir, item) {
     const endLine = last.filter(e => e.kind === 'session_end').pop();
     let end = time(endLine || last[last.length - 1]);
     if (!isFinite(end) || end < start) end = start;
-    return {start: start, end: end, turns: endLine ? Number(endLine.turns) || 0 : 0, reason: endLine && endLine.reason ? String(endLine.reason) : '', resumed: !!(startup && startup.resumed)};
+    return {start: start, end: end, turns: endLine ? Number(endLine.turns) || 0 : 0, reason: endLine && endLine.reason ? String(endLine.reason) : '', resumed: !!(startup && startup.resumed),
+        lines: lineCounts(endLine)};
 }
 
 // A finished log never changes, so a row is read again only when its log's size does (D148).
@@ -56,7 +63,7 @@ function scan(dataDir) {
 
 // What the page shows, in Jibo's local time (`local`: ms -> {year, monthNum, date}); pure.
 //   total: conversations in the logs kept, since: when the oldest began,
-//   week: the last 7 local days {count, ms, averageMs, longestMs} (a stretch counts for the day it began),
+//   week: the last 7 local days {count, ms, averageMs, longestMs, lines: {nl, en}} (a stretch counts for the day it began),
 //   days: [{day, count, ms}] oldest first, recent: the newest stretches first with their day and time.
 function report(rows, now, local) {
     const pad = strings.pad2, key = t => t.year + '-' + pad(t.monthNum + 1) + '-' + pad(t.date);
@@ -67,13 +74,15 @@ function report(rows, now, local) {
         index[day] = days.length;
         days.push({day: day, count: 0, ms: 0});
     }
-    const week = {count: 0, ms: 0, averageMs: null, longestMs: 0};
+    const week = {count: 0, ms: 0, averageMs: null, longestMs: 0, lines: {nl: 0, en: 0}};
     rows.forEach(r => {
         const i = index[key(local(r.start))];
         if (i === undefined) return;
         const ms = r.end - r.start;
         if (!r.resumed) { days[i].count++; week.count++; }
         days[i].ms += ms; week.ms += ms;
+        const said = r.lines || {nl: 0, en: 0};
+        week.lines.nl += said.nl; week.lines.en += said.en;
         week.longestMs = Math.max(week.longestMs, ms);
     });
     if (week.count) week.averageMs = Math.round(week.ms / week.count);
@@ -83,7 +92,8 @@ function report(rows, now, local) {
         // day and time in Jibo's zone, like the charts, whatever zone the browser is in.
         recent: rows.slice(-RECENT).reverse().map(r => {
             const t = local(r.start);
-            return {start: r.start, day: key(t), time: pad(t.hour || 0) + ':' + pad(t.minute || 0), ms: r.end - r.start, turns: r.turns, reason: r.reason, resumed: r.resumed};
+            return {start: r.start, day: key(t), time: pad(t.hour || 0) + ':' + pad(t.minute || 0), ms: r.end - r.start, turns: r.turns, reason: r.reason, resumed: r.resumed,
+                lines: r.lines || {nl: 0, en: 0}};
         })
     };
 }

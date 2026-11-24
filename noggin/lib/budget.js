@@ -49,10 +49,11 @@ function watch(options) {
 }
 
 // For the skill: the heads-up to say after the greeting, or null; at most once per local day.
+// `line` names it in lib/lines.js, so the conversation says it in its own language.
 function notice(today, percent) {
     const h = global[HUB];
     if (!h || !h.state || !h.state.low || !(percent > 0) || h.warnedDay === today) return null;
-    return {text: trouble.LINES.budget, emoji: trouble.BUDGET_EMOJI, said() { h.warnedDay = today; }};
+    return {line: 'budget', emoji: trouble.BUDGET_EMOJI, said() { h.warnedDay = today; }};
 }
 
 module.exports = {watch, notice, isLow, hub, FIRST_MS, EVERY_MS, HUB};

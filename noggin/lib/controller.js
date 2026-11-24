@@ -14,6 +14,7 @@
 'use strict';
 const catalog = require('./catalog'), ttsText = require('./tts-text'), realtime = require('./realtime-session');
 const actions = require('./actions'), trouble = require('./trouble'), ExpressionPlayer = require('./expression');
+const voice = require('./voice'), lines = require('./lines');
 const delay = require('./http').delay;
 const AudioClock = require('./audio-clock'), heyJibo = require('./hey-jibo');
 // Conversation's methods, by topic; mixed into the class below.
@@ -26,6 +27,8 @@ const LISTENING = require('./ring').LISTENING, BUSY = require('./ring').BUSY, OF
 // The words a dropped turn carries: those it carried itself, then its own.
 function carriedText(carried) { return carried ? joinWords(carried.before, carried.own) : ''; }
 function joinWords(a, b) { return [a, b].filter(Boolean).join(' '); }
+// A reply's words without its language label (D171).
+function replyWords(turn) { return String(turn.text || '').slice(turn.start || 0); }
 const REPLY_WAIT_MS = 15000, KEEP_PAIRS = 10;
 const QUIET_WARM_MS = 180000;  // warm the classifier again when speech starts after this long without a request (D93)
 
@@ -35,8 +38,9 @@ class Conversation {
     //        resume: {pairs, tool, args, said} when coming back after a handover,
     //        heyJibo: {heardAt} when "Hey Jibo" opened Noggin (lib/hey-jibo.js),
     //        openedAt: when the skill's open() began (Date.now()), startup: facts for the startup log,
-    //        diagnose() -> {cause, detail} after an OpenAI failure (lib/trouble.js), notice: {text, emoji, said()} after the greeting,
-    //        version: the skill's version for the session log entry (optional)}
+    //        diagnose() -> {cause, detail} after an OpenAI failure (lib/trouble.js), notice: {line (a lib/lines.js key), emoji, said()} after the greeting,
+    //        version: the skill's version for the session log entry (optional),
+    //        voice: lib/voice.js create() (optional), language: its choose() result, made once by the caller (optional)}
     constructor(deps) {
         this.jibo = deps.jibo; this.config = deps.config; this.instructions = deps.instructions; this.persona = deps.persona; this.version = deps.version || null;
         this.connectFn = deps.connect; this.diagnoseFn = deps.diagnose || null; this.notice = deps.notice || null; this.mic = deps.mic; this.classify = deps.classify; this.log = deps.log || {write() {}};
@@ -60,6 +64,14 @@ class Conversation {
         this.eyeWatch = null;
         this.speechAnims = null; this.spokenAt = null; this.recentAnims = []; this.recentEmoji = []; this.lastEmojiAt = -Infinity;
         this.heard = ''; this.recentDances = []; this.danceCount = 0; this.announcedAt = -Infinity;
+        // The language the conversation starts in: Dutch only with the Dutch voice ready (D172).
+        // A reply's own label may pick the other voice (D171).
+        this.voice = deps.voice || voice.create();
+        const chosen = deps.language || this.voice.choose(this.config.language);
+        this.language = chosen.language; this.dutchMissing = chosen.missing; this.englishNow = false; this.englishSwitched = false;
+        this.dutchLines = 0;   // Dutch lines being said through the Dutch voice
+        this.englishNoteRt = null;
+        this.lineLanguages = {nl: 0, en: 0};   // lines said per language, for the Usage tab (D171)
     }
     since(t) { return Math.round((t === undefined ? this.now() : t) - this.t0); }
     isPrivate() { return !!(this.jibo.privacyController && this.jibo.privacyController.enabled); }
@@ -88,6 +100,7 @@ class Conversation {
         this.log.write({kind: 'session', version: this.version || undefined, realtimeModel: config.realtimeModel, reasoning: realtime.reasoningEffort(config), transcribeModel: config.transcribeModel,
             transcribeLanguages: realtime.transcription(config).languages || null, turnDetection: config.turnDetection,
             classifierModel: config.expressions ? config.classifierModel : null, actions: !!this.acts, resumed: this.resume ? this.resume.tool || true : undefined,
+            language: this.language, dutch_missing: this.dutchMissing || undefined,
             persona: this.persona || undefined,
             timing: {thinkingEye: config.thinkingEye !== false, expressionWaitMs: config.expressionWaitMs, expressionLeadMs: config.expressionLeadMs, echoTailMs: config.echoTailMs}});
         if (this.isPrivate()) { this.leave('privacy'); return this.done; }
@@ -136,7 +149,9 @@ class Conversation {
         hotword = hotword.then(result => { this.mark('hotword'); this.boot.hotword = result; });
         // The first line is fixed text: Jibo says it as soon as his eye shows, while OpenAI connects.
         // That is the greeting, or, back from the clock, the comeback line ("Anything else?").
-        const first = this.resume ? config.comebackLine || '' : config.greeting || '';
+        // Dutch asked for but not possible: the unedited "Hoi!" becomes "Hi!"; anything else as written (D170).
+        const written = (this.resume ? config.comebackLine : config.greeting) || '';
+        const first = this.dutchMissing ? lines.firstLine(this.resume ? 'comeback' : 'greeting', written, this.language) : written;
         this.firstLine = first;
         const greeted = (!first ? eye : eye.then(() => {
             if (!this.active) return;
@@ -144,8 +159,10 @@ class Conversation {
             const label = this.resume ? null : config.greetingExpression;
             const expression = (catalog.EXTRA[label] || catalog.MOODS[label]) && label !== 'dance' ? label : null;
             if (catalog.MOODS[expression]) this.policy.used(expression, this.now());
-            return this.speak(first, expression);
-        })).then(() => this.sayNotice());
+            // The unedited Dutch default has an English twin for when the Dutch voice refuses (D175).
+            const key = this.resume ? 'comeback' : 'greeting';
+            return this.speak(first, expression, first === lines.LINES.nl[key] ? {english: lines.LINES.en[key]} : null);
+        })).then(() => this.sayDutchMissing()).then(() => this.sayNotice());
         // A failure waits for the greeting, so Jibo finishes his "Hi!" before he apologises.
         const afterGreeting = promise => promise.catch(error => greeted.then(() => { throw error; }));
         // The classifier does not need the realtime session: its slow first answers (D93) happen
@@ -200,7 +217,11 @@ class Conversation {
                 this.reasoningRefused = true;
                 this.log.write({kind: 'reasoning_refused', code: error.code || null});
                 return update(false);
-            }).then(() => { this.mark('session_updated'); this.log.write({kind: 'connected', ms: this.now() - started}); });
+            }).then(() => {
+                this.mark('session_updated'); this.log.write({kind: 'connected', ms: this.now() - started});
+                // A Dutch refusal before the connection was set up (the greeting) is told now (D175).
+                if (this.englishSwitched) this.sendEnglishNote();
+            });
         });
     }
     // Resolves on the first of `types`; rejects on an error event, a closed connection or the timeout.
@@ -220,13 +241,20 @@ class Conversation {
             });
         });
     }
+    // Dutch was asked for but the Dutch voice is not ready: the conversation is English, and Jibo
+    // says why once, after the greeting; never on a comeback (D172).
+    sayDutchMissing() {
+        if (!this.dutchMissing || this.resume || !this.active) return;
+        return this.speak(lines.say('dutchMissing', 'en'), null, {language: 'en'});
+    }
     // Something to say once after the greeting (the budget heads-up, D74); never on a comeback.
     sayNotice() {
         const notice = this.notice;
         if (!notice || this.resume || !this.active) return;
         this.notice = null;
-        this.log.write({kind: 'notice', text: notice.text});
-        return this.speak(notice.text, null, notice.emoji ? {anim: notice.emoji, emoji: 'notice', via: 'notice', hotWords: false} : null)
+        const text = lines.say(notice.line, this.language);
+        this.log.write({kind: 'notice', text: text});
+        return this.speak(text, null, Object.assign({english: lines.say(notice.line, 'en')}, notice.emoji ? {anim: notice.emoji, emoji: 'notice', via: 'notice', hotWords: false} : {}))
             .then(() => { try { if (notice.said) notice.said(); } catch (_) {} });
     }
     // The connection dropped after the session was set up: once per conversation, a new session
@@ -254,7 +282,7 @@ class Conversation {
                 this.reconnecting = false;
                 if (!this.active || !this.rt) return;
                 this.rt.send({type: 'conversation.item.create', item: {type: 'message', role: 'system', content: [{type: 'input_text', text: realtime.reconnectNote(this.pairs.slice(-KEEP_PAIRS))}]}});
-                return lost ? this.speak(trouble.LINES.lostThread, null) : null;
+                return lost ? this.speak(lines.say('lostThread', this.language), null, {english: lines.say('lostThread', 'en')}) : null;
             }).then(() => Promise.all([delay(this.config.echoTailMs), this.settle()])).then(() => { if (this.active && !this.turn) this.listen(); });
             return this.speechChain;
         }).catch(error => this.fail(openaiError(error)));
@@ -449,7 +477,7 @@ class Conversation {
         if (!this.active || turn.skipped) return;
         const at = t => t === undefined ? null : t - turn.stoppedAt;
         const calls = this.acts && turn.calls && turn.calls.length ? turn.calls : null;
-        this.log.write({kind: 'jibo', turn: turn.n, text: turn.text, status: turn.status || null, reaction: turn.reaction || null, expressions: turn.expressions,
+        this.log.write({kind: 'jibo', turn: turn.n, text: replyWords(turn), language: turn.language || undefined, status: turn.status || null, reaction: turn.reaction || null, expressions: turn.expressions,
             ms: {transcript: at(turn.transcriptAt), first_text: at(turn.firstTextAt), first_speech: at(turn.firstSpeechAt), end: this.now() - turn.stoppedAt},
             usage: turn.usage || null, followUp: turn.followUp || undefined, calls: turn.calls && turn.calls.length ? turn.calls.map(c => c.name) : undefined,
             lag: turn.lag && turn.lag.length ? turn.lag : undefined});
@@ -465,8 +493,9 @@ class Conversation {
     // The conversation so far as person/Jibo pairs, for coming back after a handover.
     remember(turn) {
         const last = this.pairs[this.pairs.length - 1];
-        if (turn.followUp && last) { if (turn.text) last.jibo = (last.jibo ? last.jibo + ' ' : '') + turn.text; }
-        else if (turn.transcript || turn.text) this.pairs.push({you: turn.transcript || '', jibo: turn.text || ''});
+        const words = replyWords(turn);
+        if (turn.followUp && last) { if (words) last.jibo = (last.jibo ? last.jibo + ' ' : '') + words; }
+        else if (turn.transcript || words) this.pairs.push({you: turn.transcript || '', jibo: words});
         if (this.pairs.length > KEEP_PAIRS) this.pairs.splice(0, this.pairs.length - KEEP_PAIRS);
     }
     // No "Hey Jibo" while Noggin has the microphone: true if asked for (this.hotword holds the token).
@@ -515,11 +544,17 @@ class Conversation {
         let cause = 'unknown';
         found.then(result => {
             if (!this.active) return;
-            const t = trouble.cause(result && result.cause);
+            const t = trouble.cause(result && result.cause, this.language);
             cause = t.cause;
             this.log.write({kind: 'trouble', cause: cause, detail: result && result.detail || null});
-            // A line already playing (the greeting) ends first, so the reason is never cut off.
-            return this.untilQuiet(QUIET_MS).then(() => this.active ? this.speak(t.line, null, t.emoji ? {anim: t.emoji, emoji: cause, via: 'trouble', hotWords: false} : null) : null);
+            // A line already playing (the greeting) ends first, so the reason is never cut off; a Dutch
+            // line still playing after that is ended, so the Dutch voice is free for the reason (D175).
+            return this.untilQuiet(QUIET_MS).then(() => {
+                if (!this.active) return null;
+                if (this.dutchLines > 0) this.voice.cancel();
+                const english = lines.say('trouble.' + t.cause, 'en');
+                return this.speak(t.line, null, Object.assign({english: english}, t.emoji ? {anim: t.emoji, emoji: cause, via: 'trouble', hotWords: false} : {}));
+            });
         }).then(() => this.leave(cause === 'unknown' ? 'error' : 'trouble_' + cause), () => this.leave('error'));
     }
     // Resolves once Jibo is not speaking, or after `ms`.
@@ -559,12 +594,14 @@ class Conversation {
         const clipStopped = this.player.stopCurrent('closed');
         const speech = jibo.embodied && jibo.embodied.speech;
         const speechStopped = this.speaking && speech && speech.stop ? Promise.resolve().then(() => speech.stop()) : Promise.resolve();
+        // A Dutch line also ends its routing to the Dutch voice at once (D169).
+        if (this.dutchLines > 0) this.voice.cancel();
         cleanup.push(clipStopped, speechStopped);
         // A clip or dance stopped half way leaves Jibo in its pose: back to neutral (not the base, D116).
         if (midMove && !this.isPrivate()) cleanup.push(Promise.all([clipStopped, speechStopped]).catch(() => {}).then(() => this.player.centre({force: true})));
         const hotword = this.hotword; this.hotword = null;
         if (hotword) cleanup.push(Promise.resolve().then(() => hotword.release()));
-        if (wasActive) { this.led(OFF); this.log.write({kind: 'session_end', reason: reason, turns: this.turns}); }
+        if (wasActive) { this.led(OFF); this.log.write({kind: 'session_end', reason: reason, turns: this.turns, lines: this.lineLanguages}); }
         // A platform call that never answers must not keep the skill open.
         this.closing = Promise.all(cleanup.map(p => Promise.race([p.catch(() => {}), delay(1500)]))).then(() => {
             if (this.log.close) this.log.close();
