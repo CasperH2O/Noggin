@@ -45,8 +45,9 @@ const SCHEMA = [
     {key: 'turnDetection', type: 'enum', default: 'semantic_vad', tab: 'brain', group: 'Models', label: 'When you are done talking',
         help: 'Semantic waits for the end of a thought; silence waits for a pause.',
         options: [{value: 'semantic_vad', label: 'Semantic (end of a thought)'}, {value: 'server_vad', label: 'Silence (a pause)'}]},
-    {key: 'realtimeReasoning', type: 'enum', default: 'low', tab: 'brain', group: 'Models', label: 'Conversation model reasoning',
-        help: 'How long the conversation model thinks before it answers: less is quicker, more is more careful. Only gpt-realtime-2 models take it.', advanced: true,
+    // 'default' is a real value (send nothing); null would mean this schema's default, Low (D167).
+    {key: 'realtimeReasoning', type: 'enum', default: realtime.DEFAULT_REASONING, tab: 'brain', group: 'Models', label: 'Conversation model reasoning',
+        help: 'How long the conversation model thinks before it answers: less is quicker, more is more careful. High and Extra high can make Jibo slow to answer. Only gpt-realtime-2 models take it.', advanced: true,
         options: [{value: 'default', label: 'Model default'}, {value: 'minimal', label: 'Minimal'}, {value: 'low', label: 'Low'}, {value: 'medium', label: 'Medium'},
             {value: 'high', label: 'High'}, {value: 'xhigh', label: 'Extra high'}]},
     {key: 'classifierApi', type: 'enum', default: 'decisions', tab: 'brain', group: 'Models', label: 'Expression picker',

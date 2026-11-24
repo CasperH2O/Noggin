@@ -97,6 +97,13 @@ test('update: all or nothing; stores only what differs from the default; null re
     const raw = JSON.parse(fs.readFileSync(settings.file(dir), 'utf8'));
     assert.deepEqual(raw, {apiKey: KEY}, 'defaults are not stored');
     assert.equal(fs.existsSync(settings.file(dir) + '.new'), false);
+    // The reasoning effort: low is the default and is not stored; 'default' (send nothing) is.
+    settings.update(dir, {realtimeReasoning: 'low'});
+    assert.equal('realtimeReasoning' in JSON.parse(fs.readFileSync(settings.file(dir), 'utf8')), false);
+    settings.update(dir, {realtimeReasoning: 'default'});
+    assert.equal(settings.read(dir).realtimeReasoning, 'default');
+    settings.update(dir, {realtimeReasoning: null});
+    assert.equal(settings.read(dir).realtimeReasoning, 'low');
 });
 
 test('update: a stale temporary file from a power cut does not block saving', () => {
@@ -113,6 +120,10 @@ test('field checks: numbers, enums, sets, apps, urls, keys', () => {
     assert.ok(settings.check(f('expressions'), 'true').error, 'booleans are real booleans');
     assert.ok(settings.check(f('danceAnnounce'), 'loud').error);
     assert.equal(settings.check(f('classifierReasoning'), 'none').value, 'none');
+    assert.equal(settings.check(f('realtimeReasoning'), 'default').value, 'default', 'a real value: send nothing');
+    assert.equal(settings.check(f('realtimeReasoning'), 'xhigh').value, 'xhigh');
+    assert.ok(settings.check(f('realtimeReasoning'), 'loud').error);
+    assert.equal(f('realtimeReasoning').default, 'low');
     assert.deepEqual(settings.check(f('cloudSkills'), ['news', 'weather']).value, ['weather', 'news'], 'kept in the cloud order');
     assert.match(settings.check(f('cloudSkills'), ['joke']).error, /switched off/);
     assert.match(settings.check(f('cloudSkills'), ['doom']).error, /Unknown/);

@@ -585,15 +585,43 @@ test('transcription languages: sent only to models that take them, only known co
 
 test('realtime reasoning: low unless set, only to gpt-realtime-2 models, none for the model default', () => {
     const effort = config => realtime.sessionUpdate(Object.assign({turnDetection: 'semantic_vad', realtimeModel: 'gpt-realtime-2.1'}, config), 'i', [{name: 't'}]).session.reasoning;
-    assert.deepEqual(effort({}), {effort: 'low'}, 'not set: low, as the model default would be');
+    assert.deepEqual(effort({}), {effort: 'low'}, 'not set: low, the documented gpt-realtime-2 default');
     assert.deepEqual(effort({realtimeReasoning: 'minimal'}), {effort: 'minimal'});
     assert.deepEqual(effort({realtimeReasoning: 'xhigh', realtimeModel: 'gpt-realtime-2'}), {effort: 'xhigh'});
     assert.deepEqual(effort({realtimeModel: 'gpt-realtime-2.1-mini'}), {effort: 'low'});
-    for (const config of [{realtimeReasoning: 'default'}, {realtimeReasoning: 'loud'}, {realtimeReasoning: null}, {realtimeModel: 'gpt-realtime'}, {realtimeModel: 'gpt-realtime-20'}, {realtimeModel: ''}]) {
+    assert.deepEqual(effort({realtimeReasoning: null}), {effort: 'low'}, 'null is not set');
+    for (const config of [{realtimeReasoning: 'default'}, {realtimeReasoning: 'loud'}, {realtimeModel: 'gpt-realtime'}, {realtimeModel: 'gpt-realtime-20'}, {realtimeModel: ''}]) {
         assert.equal(effort(config), undefined, JSON.stringify(config));
     }
     assert.equal(realtime.sessionUpdate({turnDetection: 'semantic_vad', realtimeModel: 'gpt-realtime-2.1'}, 'i').session.tools, undefined, 'tools unchanged');
     assert.equal(DEFAULTS.realtimeReasoning, 'low');
+});
+
+test('a model that refuses the reasoning field gets the session update again without it, once', async () => {
+    // The stub answers a session.update that carries reasoning with an error event, as a model that does not know the field would.
+    const refuse = (code, refused) => (n, rt) => {
+        const send = rt.send;
+        rt.send = e => {
+            if (e.type === 'session.update' && e.session.reasoning) { refused.push(e); setTimeout(() => rt.emit({type: 'error', error: {code: code}}), 1); return; }
+            return send.call(rt, e);
+        };
+        return Promise.resolve(rt);
+    };
+    const refused = [], h = harness({connect: refuse('unknown_parameter', refused)});
+    h.talk.open(); await untilListening(h);
+    assert.equal(refused.length, 1, 'asked once with the effort');
+    const updates = h.sent.filter(e => e.type === 'session.update');
+    assert.equal(updates.length, 1, 'then once without it');
+    assert.equal(updates[0].session.reasoning, undefined);
+    assert.deepEqual(h.logs.filter(e => e.kind === 'reasoning_refused'), [{kind: 'reasoning_refused', code: 'unknown_parameter'}]);
+    assert.equal(h.talk.reasoningRefused, true, 'a reconnect does not ask again');
+    h.talk.close();
+    // A fatal code (a refused key) is not retried: the usual trouble path.
+    const fatal = [], bad = harness({connect: refuse('invalid_api_key', fatal)});
+    bad.talk.open(); await bad.talk.done;
+    assert.equal(fatal.length, 1);
+    assert.equal(bad.logs.filter(e => e.kind === 'reasoning_refused').length, 0);
+    assert.equal(bad.sent.filter(e => e.type === 'session.update').length, 0, 'no second update');
 });
 
 test('Decisions API: request shape, answer parsing, confidence threshold', () => {
@@ -2207,6 +2235,15 @@ test('the session entry names the skill version that wrote the log, and the tran
     };
     assert.deepEqual(await languages({}), ['en', 'nl'], 'the languages sent to the transcription model');
     assert.equal(await languages({transcribeModel: 'gpt-4o-mini-transcribe'}), null, 'none for a model that takes no list');
+    const reasoning = async config => {
+        const t = harness({config}); t.talk.open(); await untilListening(t);
+        const sent = t.logs.find(e => e.kind === 'session').reasoning;
+        t.talk.close();
+        return sent;
+    };
+    assert.equal(await reasoning({realtimeModel: 'gpt-realtime-2.1'}), 'low', 'the effort asked for');
+    assert.equal(await reasoning({realtimeReasoning: 'default'}), null);
+    assert.equal(await reasoning({realtimeModel: 'gpt-realtime'}), null, 'none for a model that takes no effort');
     const bare = await listening();
     assert.ok(!('version' in JSON.parse(JSON.stringify(bare.logs.find(e => e.kind === 'session')))), 'left out when unknown');
     bare.talk.close();

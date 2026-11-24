@@ -187,9 +187,20 @@ class Conversation {
             this.mark('session_created', timing.created || undefined);
             // Only the current connection's events: a dropped one is replaced (D73).
             rt.listen(event => { if (this.rt === rt) this.onEvent(event); });
-            const updated = this.waitFor(['session.updated'], 10000);
-            rt.send(realtime.sessionUpdate(config, this.instructions, this.acts ? actions.tools(config) : null));
-            return updated.then(() => { this.mark('session_updated'); this.log.write({kind: 'connected', ms: this.now() - started}); });
+            // A model that refuses the reasoning field gets the update once more without it, for this
+            // conversation and its reconnect, so a wrong guess costs a log line and not every conversation (D168).
+            const update = withReasoning => {
+                const updated = this.waitFor(['session.updated'], 10000);
+                rt.send(realtime.sessionUpdate(withReasoning ? config : Object.assign({}, config, {realtimeReasoning: 'default'}), this.instructions, this.acts ? actions.tools(config) : null));
+                return updated;
+            };
+            const asked = !this.reasoningRefused && !!realtime.reasoningEffort(config);
+            return update(!this.reasoningRefused).catch(error => {
+                if (!asked || !error.refused || isFatal(error.code)) throw error;
+                this.reasoningRefused = true;
+                this.log.write({kind: 'reasoning_refused', code: error.code || null});
+                return update(false);
+            }).then(() => { this.mark('session_updated'); this.log.write({kind: 'connected', ms: this.now() - started}); });
         });
     }
     // Resolves on the first of `types`; rejects on an error event, a closed connection or the timeout.
@@ -201,7 +212,10 @@ class Conversation {
                 if (types.indexOf(event.type) >= 0) { clearTimeout(timer); stop(); resolve(event); }
                 else if (event.type === 'error' || event.type === 'transport.closed') {
                     clearTimeout(timer); stop();
-                    reject(Error('OpenAI: ' + (event.error ? event.error.code || event.error.message : 'connection closed')));
+                    const failure = Error('OpenAI: ' + (event.error ? event.error.code || event.error.message : 'connection closed'));
+                    // An error event (not a closed connection): the server answered and said no.
+                    if (event.type === 'error') { failure.refused = true; failure.code = event.error && event.error.code || null; }
+                    reject(failure);
                 }
             });
         });

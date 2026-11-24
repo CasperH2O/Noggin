@@ -21,10 +21,12 @@ function transcription(config) {
 // The conversation models that take session.reasoning (D167); others never get the field.
 const REASONING_MODELS = /^gpt-realtime-2(?:[.-]|$)/;
 const REASONING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh'];
-// The effort to send: 'low' unless the setting says otherwise, none for 'default' (the model's own),
-// an unknown value or a model that does not take it.
+// Low is the documented gpt-realtime-2 default; sending it keeps that from changing under us (D167).
+const DEFAULT_REASONING = 'low';
+// The effort to send: the setting (not set: low), nothing for 'default' (the model's own), an
+// unknown value or a model that does not take it.
 function reasoningEffort(config) {
-    const wanted = config.realtimeReasoning === undefined ? 'low' : config.realtimeReasoning;
+    const wanted = config.realtimeReasoning == null ? DEFAULT_REASONING : config.realtimeReasoning;
     if (REASONING_LEVELS.indexOf(wanted) < 0 || !REASONING_MODELS.test(String(config.realtimeModel || ''))) return null;
     return wanted;
 }
@@ -168,4 +170,4 @@ function presenceNote(here) {
     return about + 'now sees ' + list + '. Who you see is not always who is talking. Never answer this note alone.]';
 }
 
-module.exports = {LANGUAGES, transcription, reasoningEffort, sessionUpdate, textDelta, personaText, voiceSetup, instructions, resumeNote, reconnectNote, touchNote, presenceNote};
+module.exports = {LANGUAGES, DEFAULT_REASONING, transcription, reasoningEffort, sessionUpdate, textDelta, personaText, voiceSetup, instructions, resumeNote, reconnectNote, touchNote, presenceNote};
