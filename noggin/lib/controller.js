@@ -85,7 +85,7 @@ class Conversation {
         this.done = new Promise(resolve => { this.finish = resolve; });
         this.active = true; this.state = 'starting'; this.mark('talk_open');
         const jibo = this.jibo, config = this.config;
-        this.log.write({kind: 'session', version: this.version || undefined, realtimeModel: config.realtimeModel, transcribeModel: config.transcribeModel,
+        this.log.write({kind: 'session', version: this.version || undefined, realtimeModel: config.realtimeModel, reasoning: realtime.reasoningEffort(config), transcribeModel: config.transcribeModel,
             transcribeLanguages: realtime.transcription(config).languages || null, turnDetection: config.turnDetection,
             classifierModel: config.expressions ? config.classifierModel : null, actions: !!this.acts, resumed: this.resume ? this.resume.tool || true : undefined,
             persona: this.persona || undefined,

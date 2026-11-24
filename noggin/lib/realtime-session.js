@@ -18,6 +18,16 @@ function transcription(config) {
     if (wanted.length && LANGUAGE_MODELS.test(String(config.transcribeModel || ''))) out.languages = wanted;
     return out;
 }
+// The conversation models that take session.reasoning (D167); others never get the field.
+const REASONING_MODELS = /^gpt-realtime-2(?:[.-]|$)/;
+const REASONING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh'];
+// The effort to send: 'low' unless the setting says otherwise, none for 'default' (the model's own),
+// an unknown value or a model that does not take it.
+function reasoningEffort(config) {
+    const wanted = config.realtimeReasoning === undefined ? 'low' : config.realtimeReasoning;
+    if (REASONING_LEVELS.indexOf(wanted) < 0 || !REASONING_MODELS.test(String(config.realtimeModel || ''))) return null;
+    return wanted;
+}
 // session.update for text-out voice turns (GA realtime schema).
 // `tools`: the function tools Noggin offers (lib/actions.js), or none.
 function sessionUpdate(config, instructions, tools) {
@@ -31,6 +41,8 @@ function sessionUpdate(config, instructions, tools) {
             turn_detection: {type: config.turnDetection}
         }}
     };
+    const effort = reasoningEffort(config);
+    if (effort) session.reasoning = {effort: effort};
     if (tools && tools.length) { session.tools = tools; session.tool_choice = 'auto'; }
     return {type: 'session.update', session: session};
 }
@@ -156,4 +168,4 @@ function presenceNote(here) {
     return about + 'now sees ' + list + '. Who you see is not always who is talking. Never answer this note alone.]';
 }
 
-module.exports = {LANGUAGES, transcription, sessionUpdate, textDelta, personaText, voiceSetup, instructions, resumeNote, reconnectNote, touchNote, presenceNote};
+module.exports = {LANGUAGES, transcription, reasoningEffort, sessionUpdate, textDelta, personaText, voiceSetup, instructions, resumeNote, reconnectNote, touchNote, presenceNote};

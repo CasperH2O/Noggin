@@ -583,6 +583,19 @@ test('transcription languages: sent only to models that take them, only known co
     }
 });
 
+test('realtime reasoning: low unless set, only to gpt-realtime-2 models, none for the model default', () => {
+    const effort = config => realtime.sessionUpdate(Object.assign({turnDetection: 'semantic_vad', realtimeModel: 'gpt-realtime-2.1'}, config), 'i', [{name: 't'}]).session.reasoning;
+    assert.deepEqual(effort({}), {effort: 'low'}, 'not set: low, as the model default would be');
+    assert.deepEqual(effort({realtimeReasoning: 'minimal'}), {effort: 'minimal'});
+    assert.deepEqual(effort({realtimeReasoning: 'xhigh', realtimeModel: 'gpt-realtime-2'}), {effort: 'xhigh'});
+    assert.deepEqual(effort({realtimeModel: 'gpt-realtime-2.1-mini'}), {effort: 'low'});
+    for (const config of [{realtimeReasoning: 'default'}, {realtimeReasoning: 'loud'}, {realtimeReasoning: null}, {realtimeModel: 'gpt-realtime'}, {realtimeModel: 'gpt-realtime-20'}, {realtimeModel: ''}]) {
+        assert.equal(effort(config), undefined, JSON.stringify(config));
+    }
+    assert.equal(realtime.sessionUpdate({turnDetection: 'semantic_vad', realtimeModel: 'gpt-realtime-2.1'}, 'i').session.tools, undefined, 'tools unchanged');
+    assert.equal(DEFAULTS.realtimeReasoning, 'low');
+});
+
 test('Decisions API: request shape, answer parsing, confidence threshold', () => {
     const line = labels.decisionsRequest('gpt-6-luna', 'I got a puppy', 'A puppy, how lovely!', 'line');
     assert.equal(line.model, 'gpt-6-luna');
