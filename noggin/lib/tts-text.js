@@ -44,9 +44,10 @@ function animEsml(name) { return /^[A-Za-z0-9_-]+$/.test(name || '') ? "<anim na
 // the name is not safe.
 function emojiEsml(esmlText, said, name, nth) {
     if (!/^[A-Za-z0-9_-]+$/.test(name || '') || !said || !said.length) return null;
-    const words = said.map(w => w.replace(/[^a-z]/g, '')).filter(Boolean);
+    // Letters include the accented ones of Dutch words ("pinguïns").
+    const words = said.map(w => w.replace(/[^a-z\u00e0-\u00fc]/g, '')).filter(Boolean);
     if (!words.length) return null;
-    const find = new RegExp('(^|[^A-Za-z])(' + words.join('[^A-Za-z]+') + ')(?![A-Za-z])', 'gi');
+    const find = new RegExp('(^|[^A-Za-z\u00c0-\u00fc])(' + words.join('[^A-Za-z\u00c0-\u00fc]+') + ')(?![A-Za-z\u00c0-\u00fc])', 'gi');
     let match = find.exec(esmlText);
     for (let skip = nth || 0; match && skip > 0; skip--) match = find.exec(esmlText);
     if (!match) return null;

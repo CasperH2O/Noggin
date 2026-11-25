@@ -105,7 +105,13 @@ function pickDance(style, options) {
 const DANCE_NAMES = {funk: 'a funk dance', pop: 'a pop dance', robot: 'the robot', techno: 'a techno dance', twerk: 'a twerk',
     belly: 'a belly dance', flamenco: 'a flamenco', country: 'a country dance', slow: 'a slow dance', calm: 'a calm, zen dance',
     silly: 'a silly dance', waltz: 'a waltz'};
-function danceName(style) { return DANCE_NAMES[style] || 'a dance'; }
+// In Dutch for a Dutch conversation, so the model's follow-up names it in Dutch too (D177).
+const DANCE_NAMES_NL = {funk: 'een funkdans', pop: 'een popdans', robot: 'de robot', techno: 'een technodans', twerk: 'een twerk',
+    belly: 'een buikdans', flamenco: 'een flamenco', country: 'een countrydans', slow: 'een slowdans', calm: 'een rustige zendans',
+    silly: 'een gek dansje', waltz: 'een wals'};
+function danceName(style, language) {
+    return language === 'nl' ? DANCE_NAMES_NL[style] || 'een dans' : DANCE_NAMES[style] || 'a dance';
+}
 // The announcement in `language` (lib/lines.js holds them).
 function danceLine(style, random, language) {
     return lines.say(DANCE_NAMES[style] ? 'dance.' + style : 'dance.other', language, random);
@@ -150,32 +156,77 @@ const EMOJI_CANCEL = {
     mouse: ['computer', 'click', 'keyboard'], bug: ['software', 'code', 'fix', 'computer'],
     turkey: ['country', 'istanbul', 'ankara']
 };
+// Dutch: the same pictures through Dutch words (lib/emoji-nl.js).
+const EMOJI_NL = require('./emoji-nl');
+const ACCENTS = {'\u00e0': 'a', '\u00e1': 'a', '\u00e2': 'a', '\u00e4': 'a', '\u00e8': 'e', '\u00e9': 'e', '\u00ea': 'e', '\u00eb': 'e',
+    '\u00ec': 'i', '\u00ed': 'i', '\u00ee': 'i', '\u00ef': 'i', '\u00f2': 'o', '\u00f3': 'o', '\u00f4': 'o', '\u00f6': 'o',
+    '\u00f9': 'u', '\u00fa': 'u', '\u00fb': 'u', '\u00fc': 'u'};
+function plain(word) { return word.replace(/[\u00e0-\u00fc]/g, c => ACCENTS[c] || c); }
+// A Dutch word and the singulars it may come from: plurals and diminutives ("honden", "hondje",
+// "katten", "bomen", "huizen", "zonnetje" -> hond, kat, boom, huis, zon).
+const NL_ENDINGS = ['etjes', 'etje', 'tjes', 'tje', 'pjes', 'pje', 'jes', 'je', 'en', 's'];
+function dutchForms(word) {
+    const out = [word], add = form => { if (form.length >= 2 && out.indexOf(form) < 0) out.push(form); };
+    NL_ENDINGS.forEach(ending => {
+        // A plural's singular has at least three letters ("eis" is not eggs).
+        if (word.length - ending.length < (ending === 'en' || ending === 's' ? 3 : 2) || word.slice(-ending.length) !== ending) return;
+        const base = word.slice(0, -ending.length);
+        add(base);
+        // katten -> kat, balletje -> bal: the plural doubles the last consonant.
+        if (/([bdfgklmnprstz])\1$/.test(base)) add(base.slice(0, -1));
+        // huizen -> huis, duiven -> duif: s and f become z and v between vowels.
+        const soft = base.replace(/z$/, 's').replace(/v$/, 'f');
+        add(soft);
+        // bomen -> boom, manen -> maan: a long vowel is written single before one consonant.
+        const open = /^(|.*[^aeiou])([aeou])([^aeiouj])$/.exec(soft);
+        if (open) add(open[1] + open[2] + open[2] + open[3]);
+    });
+    return out;
+}
+// What a word or two-word term shows in `language`: {key: the emoji index term, term: the word
+// list's own term (for the cancel words)}, or null.
+function emojiTerm(term, language) {
+    if (language === 'nl') {
+        if (EMOJI_NL.NOT.indexOf(plain(term)) >= 0) return null;
+        const forms = dutchForms(plain(term));
+        for (let i = 0; i < forms.length; i++) if (EMOJI_NL.TERMS[forms[i]]) return {key: EMOJI_NL.TERMS[forms[i]], term: forms[i]};
+        return null;
+    }
+    if (EMOJI[term]) return {key: term, term: term};
+    const singular = term.replace(/(ies)$/, 'y').replace(/(ches|shes|xes|ses)$/, m => m.slice(0, -2)).replace(/([^s])s$/, '$1');
+    return singular !== term && EMOJI[singular] ? {key: singular, term: singular} : null;
+}
+// A line's words, lower case, without "'s" (Dutch letters keep their accents).
+function wordsOf(text, language) {
+    const letters = language === 'nl' ? /[^a-z\u00e0-\u00fc]+/ : /[^a-z]+/;
+    return String(text || '').toLowerCase().replace(/[\u2019']s\b/g, '').split(letters).filter(Boolean);
+}
 // The first word or two-word term of Jibo's line that has an eye emoji, not one of
-// options.recent (words): {word, name, said, nth} or null; `said` is the term as it is in the line
-// (words) and `nth` how many times it came before (skipped as cancelled), to place the emoji
-// there. Plurals find their singular ("dogs" -> dog).
+// options.recent (emoji index terms): {word, name, said, nth} or null; `word` is the index term,
+// `said` the term as it is in the line (words) and `nth` how many times it came before (skipped
+// as cancelled), to place the emoji there. Plurals find their singular ("dogs" -> dog).
+// options.language 'nl' reads the line as Dutch.
 function emojiFor(text, options) {
     options = options || {};
-    const recent = options.recent || [], random = options.random || Math.random;
-    const words = String(text || '').toLowerCase().replace(/[\u2019']s\b/g, '').split(/[^a-z]+/).filter(Boolean);
+    const recent = options.recent || [], random = options.random || Math.random, language = options.language === 'nl' ? 'nl' : 'en';
+    const cancel = language === 'nl' ? EMOJI_NL.CANCEL : EMOJI_CANCEL;
+    const words = wordsOf(text, language);
     const lookup = term => {
-        if (recent.indexOf(term) >= 0) return null;
-        if (EMOJI[term]) return term;
-        const singular = term.replace(/(ies)$/, 'y').replace(/(ches|shes|xes|ses)$/, m => m.slice(0, -2)).replace(/([^s])s$/, '$1');
-        return singular !== term && EMOJI[singular] && recent.indexOf(singular) < 0 ? singular : null;
+        const found = emojiTerm(term, language);
+        return found && recent.indexOf(found.key) < 0 ? found : null;
     };
-    const cancelled = (term, from, to) => {
-        const near = words.slice(Math.max(0, from - 2), to + 2);
-        return (EMOJI_CANCEL[term] || []).some(w => near.indexOf(w) >= 0);
+    const cancelled = (found, from, to) => {
+        const near = words.slice(Math.max(0, from - 2), to + 2).map(plain);
+        return (cancel[found.term] || []).some(w => near.indexOf(w) >= 0);
     };
     for (let i = 0; i < words.length; i++) {
         const pair = i + 1 < words.length ? lookup(words[i] + ' ' + words[i + 1]) : null;
         const found = pair && !cancelled(pair, i, i + 2) ? pair : lookup(words[i]);
         if (!found || (found !== pair && cancelled(found, i, i + 1))) continue;
-        const names = EMOJI[found], said = words.slice(i, found === pair ? i + 2 : i + 1), term = said.join(' ');
+        const names = EMOJI[found.key], said = words.slice(i, found === pair ? i + 2 : i + 1), term = said.join(' ');
         let nth = 0;
         for (let j = 0; j < i; j++) if (words.slice(j, j + said.length).join(' ') === term) nth++;
-        return {word: found, name: names[Math.min(names.length - 1, Math.floor(random() * names.length))], said: said, nth: nth};
+        return {word: found.key, name: names[Math.min(names.length - 1, Math.floor(random() * names.length))], said: said, nth: nth};
     }
     return null;
 }

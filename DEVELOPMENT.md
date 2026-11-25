@@ -218,6 +218,7 @@ The tests and tools run on a current Node.
 | `noggin/lib/openai.js` | the OpenAI connections: the realtime WebSocket and HTTPS requests |
 | `noggin/lib/labels.js` | the expression classifier's requests and how its answers are read |
 | `noggin/lib/catalog.js`, `catalog.json` | moods and their animations, dances, eye emoji (built by `tools/expression-catalog.mjs`) |
+| `noggin/lib/emoji-nl.js` | Dutch words for the eye emoji, each pointing at a word of the English emoji index |
 | `noggin/lib/expression.js` | plays expressions next to speech; the thinking eye; Jibo's eye view |
 | `noggin/lib/tts-text.js` | reply text as plain words and ESML for Jibo's speech; stop phrases in English and Dutch |
 | `noggin/lib/voice.js` | the seam to the Dutch Voice skill, and the reply's language label |

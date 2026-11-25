@@ -1915,6 +1915,32 @@ test('emojiFor: the first word or two-word term with a picture, plurals, not a r
     assert.equal(catalog.emojiFor(''), null);
 });
 
+test('emojiFor in Dutch: Dutch words show the same pictures, with plurals, diminutives and accents (D176)', () => {
+    const nl = (line, more) => catalog.emojiFor(line, Object.assign({language: 'nl', random: () => 0}, more || {}));
+    assert.deepEqual(nl('Wat leuk, een hond!'), {word: 'dog', name: catalog.EMOJI.dog[0], said: ['hond'], nth: 0});
+    const cases = {'Ik hou van katten.': 'cat', 'Drie bomen in de tuin.': 'tree', 'De huizen zijn groot.': 'house', 'Een lekker ijsje.': 'ice cream',
+        'Wat een zonnetje!': 'sun', 'Kijk, een eitje.': 'egg', "Auto's rijden snel.": 'car', 'Rode appels!': 'red apple', 'Pinguïns zijn grappig.': 'penguin',
+        'Mijn circuits zoemen.': 'circuit', 'Zullen we een kopje koffie drinken?': 'coffee'};
+    for (const line of Object.keys(cases)) assert.equal((nl(line) || {}).word, cases[line], line);
+    assert.deepEqual(nl('Pinguïns zijn grappig.').said, ['pinguïns'], 'said: the word as in the line, accents kept');
+    assert.equal(ttsText.emojiEsml('Pinguïns zijn grappig.', ['pinguïns'], 'Emoji_Penguin', 0), "<es name='Emoji_Penguin' nonBlocking='true'/>Pinguïns zijn grappig.");
+    for (const line of ['Dat is een eis.', 'Even kijken, hoor.', 'Ik zit op de bank.', 'Er komt een golf aan.', 'Tot slot nog dit.', 'Ik ben er.',
+        'Zal ik verder in het Engels praten?', 'Die regels gelden ook.', 'Hij heeft twee zonen.', 'Pak het kastje.', 'Een natje en een droogje.',
+        'Het was een groot succes.', 'De burgers stemden.', 'Het ijs is glad.', 'Op dun ijs.', 'Een glas jus d\'orange.'])
+        assert.equal(nl(line), null, line);
+    assert.equal(nl('Mijn appel iphone is stuk.'), null, 'a nearby word cancels');
+    assert.equal(nl('Veel succes vandaag!').word, 'good luck');
+    assert.equal(nl('Ik hou van honden.', {recent: ['dog']}), null, 'recent pictures count across languages');
+    assert.equal(catalog.emojiFor('Ik hou van honden.'), null, 'an English line does not read Dutch words');
+    const english = require(path.join(source, 'noggin/lib/catalog.json')).emoji, terms = require(path.join(source, 'noggin/lib/emoji-nl.js'));
+    for (const word of Object.keys(terms.TERMS)) {
+        assert.ok(english[terms.TERMS[word]], word + ' points at a known picture term');
+        assert.match(word, /^[a-z]+( [a-z]+)?$/, word + ': lower case, no accents, at most two words');
+    }
+    for (const word of Object.keys(terms.CANCEL)) assert.ok(terms.TERMS[word], word + ' has cancel words and a picture');
+    for (const word of terms.NOT) assert.match(word, /^[a-z]+$/, word);
+});
+
 test('emojiFor: words with another meaning or picture have none; a nearby word can cancel one (D98)', () => {
     for (const line of ['Here is a paper for you.', 'That machine is loud.', 'Let us break the ice.', 'As a rule of thumb, rest.', 'Cheers to that!'])
         assert.equal(catalog.emojiFor(line), null, line);
@@ -3432,7 +3458,7 @@ function deltas(h, id, parts) {
     h.emit({type: 'response.done', response: {id, status: 'completed'}});
 }
 
-test('Dutch: a reply labelled [nl] is said through the Dutch voice, label never said, no keyword emoji; the log keeps the language', async () => {
+test('Dutch: a reply labelled [nl] is said through the Dutch voice, label never said, Noggin\'s emoji at the Dutch word (D176); the log keeps the language', async () => {
     const v = dutchVoice();
     try {
         const h = await listening({config: {language: 'nl', greeting: 'Hoi!', emoji: true}});
@@ -3441,7 +3467,9 @@ test('Dutch: a reply labelled [nl] is said through the Dutch voice, label never 
         youSay(h, 'Hoi Jibo, ik heb een hond');
         reply(h, 'r1', '[nl] Wat leuk, een hond! Hoe heet hij?');
         await untilListening(h);
-        assert.deepEqual(h.said.slice(1), ['Wat leuk, een hond!', 'Hoe heet hij?']);
+        assert.match(h.said[1], /^Wat leuk, een <es name='[A-Za-z0-9_-]+' nonBlocking='true'\/>hond!$/, 'the dog emoji, just before "hond"');
+        assert.ok(catalog.EMOJI.dog.includes(/name='([^']+)'/.exec(h.said[1])[1]));
+        assert.equal(h.said[2], 'Hoe heet hij?');
         assert.equal(v.calls.length, 3);
         assert.ok(v.calls.every(c => c.limitMs > 0));
         assert.ok(h.rules.slice(1).every(r => r && r.hotWords === false), 'speech\'s English keyword rules stay off');
@@ -3551,6 +3579,7 @@ test('Dutch instructions ask for a language label on every reply; English ones s
     assert.match(nl, /Start every reply with \[nl\] when it is in Dutch or \[en\] when it is in English/);
     assert.match(nl, /other than the language label described below/);
     assert.match(nl, /write numbers, times, dates and abbreviations as Dutch words/);
+    assert.match(nl, /Tool results are for you only and mostly in English: after one, keep answering in the language you were speaking/, 'D177');
     const en = realtime.instructions(p.soul, p.identity, new Date(2026, 10, 12, 19, 30));
     assert.match(en, /always answer in English/);
     assert.doesNotMatch(en, /\[nl\]/);
@@ -3599,6 +3628,45 @@ test('a refused Dutch dance announcement: the dance without words, and the Engli
         assert.match(h.said.at(-2), /^<anim name='[^']+' endNeutral='true'\/>$/, 'the dance alone');
         assert.match(h.said.at(-1), /Dutch voice isn't working/);
         h.talk.leave('test');
+    } finally { delete global.dutchVoiceService; }
+});
+
+test('a dance in a Dutch conversation: the announcement in the Dutch voice, the tool result names it in Dutch (D177)', async () => {
+    const v = dutchVoice();
+    try {
+        const h = await listening({config: {language: 'nl', greeting: '', danceAnnounce: 'always'}, actions: fakeActions()});
+        await youSay(h, 'doe de robot');
+        callReply(h, 'd1', '', [['dance', {}, 'call_dance_1']]);
+        await until(() => h.sent.filter(e => e.type === 'response.create').length >= 1);
+        reply(h, 'f1', '[nl] Dat was leuk!');
+        await untilListening(h);
+        assert.match(h.said[0], /^Robotstand: aan! <anim name='[A-Za-z0-9_]+' endNeutral='true'\/>$/);
+        assert.equal(v.calls.length, 2, 'the announcement and the follow-up both went through the Dutch voice');
+        assert.equal(danceOutput(h).dance, 'de robot');
+        assert.equal(catalog.danceName('waltz', 'nl'), 'een wals'); assert.equal(catalog.danceName(null, 'nl'), 'een dans');
+        assert.equal(catalog.danceName('waltz'), 'a waltz');
+        h.talk.leave('test');
+    } finally { delete global.dutchVoiceService; }
+});
+
+test('a dance after an [en] reply in a Dutch conversation: English announcement and name; after a refused Dutch one, the name in English (D177)', async () => {
+    const v = dutchVoice();
+    try {
+        const h = await listening({config: {language: 'nl', greeting: '', danceAnnounce: 'always'}, actions: fakeActions()});
+        await youSay(h, 'do the robot');
+        callReply(h, 'd1', '[en] Sure!', [['dance', {}, 'call_dance_1']]);
+        await until(() => h.sent.filter(e => e.type === 'response.create').length >= 1);
+        reply(h, 'f1', '[en] That was fun!');
+        await untilListening(h);
+        assert.ok(h.said.some(e => /^Robot mode: on! <anim name=/.test(e)), h.said.join(' | '));
+        assert.equal(danceOutput(h).dance, 'the robot');
+        h.talk.leave('test');
+        const r = await listening({config: {language: 'nl', greeting: '', danceAnnounce: 'always'}, actions: {}});
+        global.dutchVoiceService.speak = () => Promise.reject(Error('dutch_voice_not_ready'));
+        const played = await r.talk.dance('doe de robot', 1);
+        assert.equal(played.language, 'en', 'the conversation switched to English');
+        assert.equal(catalog.danceName(played.style, played.language), 'the robot');
+        r.talk.leave('test');
     } finally { delete global.dutchVoiceService; }
 });
 

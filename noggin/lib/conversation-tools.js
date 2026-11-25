@@ -48,8 +48,9 @@ const methods = {
     },
     // A dance with its own music, chosen from the person's words (`heard`): the same one again, a
     // dance of the style they named, or a random one; none of the last three when there is another.
-    // Jibo may name it first (danceAnnounce). Resolves {name, style, from, announced} once it is over.
-    dance(heard, turn) {
+    // Jibo may name it first (danceAnnounce), in `language` (the reply's) when given. Resolves
+    // {name, style, from, announced, language} once it is over.
+    dance(heard, turn, language) {
         const speech = this.jibo.embodied && this.jibo.embodied.speech, choice = catalog.danceChoice(heard, this.random);
         const last = this.recentDances[0];
         let name, style, from;
@@ -60,9 +61,9 @@ const methods = {
         this.recentDances = [name].concat(this.recentDances.filter(n => n !== name)).slice(0, RECENT_DANCES);
         const announced = catalog.danceAnnounce(this.config.danceAnnounce, from, this.danceCount - this.announcedAt, this.random);
         this.danceCount++; if (announced) this.announcedAt = this.danceCount;
-        // The announcement follows the reply's language; in Dutch only while the Dutch voice can say
-        // it, otherwise the dance goes without words (D174, D175).
-        const language = this.turn && this.turn.language || this.language;
+        // The announcement follows the reply's language (English once the conversation switched);
+        // in Dutch only while the Dutch voice can say it, otherwise the dance goes without words (D174, D175, D177).
+        language = this.englishSwitched ? 'en' : language || this.turn && this.turn.language || this.language;
         const dutch = language === 'nl';
         const canSay = !dutch || this.voice.choose('nl').language === 'nl';
         const line = announced && canSay ? catalog.danceLine(style, this.random, language) : null;
@@ -81,7 +82,8 @@ const methods = {
             });
         return call.then(() => {
             this.dancing = false;
-            return {name: name, style: style, from: from, announced: announced};
+            // A refused Dutch announcement switched the conversation: the model hears English now.
+            return {name: name, style: style, from: from, announced: announced, language: this.englishSwitched ? 'en' : language};
         }, error => {
             this.dancing = false;
             // Stopped half way: back to neutral (D116).
@@ -106,8 +108,8 @@ const methods = {
             if (!speech || typeof speech.speak !== 'function') return Promise.resolve({ok: false, error: 'Jibo cannot move right now'});
             this.speaking = true; this.state = 'acting';
             // A petting clip still playing keeps the body until it ends (D144).
-            return this.petDone().then(() => this.dance(turn ? turn.transcript || '' : this.heard, turn ? turn.n : null))
-                .then(played => Object.assign({ok: true, done: 'Jibo danced', dance: catalog.danceName(played.style)},
+            return this.petDone().then(() => this.dance(turn ? turn.transcript || '' : this.heard, turn ? turn.n : null, turn && turn.language))
+                .then(played => Object.assign({ok: true, done: 'Jibo danced', dance: catalog.danceName(played.style, played.language)},
                     played.announced ? {announced: 'Jibo named the dance before it: do not name it again'} : {}),
                 () => ({ok: false, error: 'the dance did not play'}))
                 .then(result => { this.speaking = false; return result; });

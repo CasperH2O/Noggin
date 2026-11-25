@@ -27,12 +27,13 @@ const HOLD_MAX_MS = 3000;
 const DUTCH_LIMIT_EXTRA_MS = 2000;
 
 const methods = {
-    // An eye emoji for a word in Jibo's line: at most one per emojiGapMs, and not the same word
-    // again within the last ten. speak() places it at the word (D98).
-    emojiFor(text) {
+    // An eye emoji for a word in Jibo's line, in the line's language: at most one per
+    // emojiGapMs, and not the same picture's word again within the last ten. speak() places it at
+    // the word (D98, D176).
+    emojiFor(text, language) {
         if (!this.emojiAllowed()) return null;
         const now = this.now();
-        const found = catalog.emojiFor(text, {recent: this.recentEmoji});
+        const found = catalog.emojiFor(text, {recent: this.recentEmoji, language: language});
         if (!found) return null;
         this.lastEmojiAt = now;
         this.recentEmoji.push(found.word); if (this.recentEmoji.length > 10) this.recentEmoji.shift();
@@ -240,8 +241,7 @@ const methods = {
                     // No expression on this line: an eye emoji for something Jibo names (pizza, rain, a dog),
                     // at that word. Without one, speech's own keyword emoji may show, unless one was just shown (D98).
                     const jiboEmoji = this.emojiAllowed();
-                    // The emoji word list is English.
-                    const emoji = !use && found !== 'dance' && turn.language === 'en' ? this.emojiFor(piece) : null;
+                    const emoji = !use && found !== 'dance' ? this.emojiFor(piece, turn.language) : null;
                     if (emoji) turn.expressions.push('emoji ' + emoji.word);
                     if (index === 0 && emoji) turn.firstEmoji = true;
                     return this.speak(piece, use, {turn: turn.n, line: index, size: use ? size : null, keyword: emoji || undefined, hotWords: emoji || jiboEmoji ? undefined : false, beside: index > 0,
@@ -279,8 +279,8 @@ const methods = {
         return chain.then(() => {
             if (!this.active) return;
             let words = ttsText.speechText(text, dutch ? 'nl' : 'en'), lead = Promise.resolve(), leadBy = null;
-            // A keyword emoji goes in the words, just before its word: speech starts it there (D98). English words only.
-            const keyword = !dutch && at && at.keyword, tagged = keyword ? ttsText.emojiEsml(words, keyword.said, keyword.name, keyword.nth) : null;
+            // A keyword emoji goes in the words, just before its word: speech starts it there (D98, D176).
+            const keyword = at && at.keyword, tagged = keyword ? ttsText.emojiEsml(words, keyword.said, keyword.name, keyword.nth) : null;
             if (tagged) words = tagged;
             const leadFrom = this.now(), token = this.lineToken = {};
             const holdMs = at && at.emoji ? emojiHoldMs(text) : 0;
@@ -299,7 +299,8 @@ const methods = {
             return lead.then(() => {
                 if (!this.active) return;
                 const started = this.now();
-                // Speech's own keyword emoji off for this line (its third argument, auto rules); its keywords are English.
+                // Speech's own keyword emoji off for this line (its third argument, auto rules); its keywords are English,
+                // so a Dutch line has only Noggin's (D176).
                 const rules = dutch || at && at.hotWords === false ? {hotWords: false} : null;
                 this.log.write({kind: 'speak', turn: turn, line: line, expression: expression || null, size: at && at.size || undefined, emoji: at && at.emoji || keyword && keyword.word || undefined,
                     emoji_at: keyword ? (tagged ? keyword.said.join(' ') : 'missed') : undefined, after: later || undefined, hot_words: rules ? false : undefined,

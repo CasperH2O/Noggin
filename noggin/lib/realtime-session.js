@@ -89,6 +89,7 @@ function languageRule(language) {
     if (language !== 'nl') return 'You understand English and Dutch; always answer in English. ';
     return 'You understand English and Dutch. Answer in the language your person speaks to you; when you cannot tell, answer in Dutch. ' +
         'Start every reply with [nl] when it is in Dutch or [en] when it is in English; that label is not spoken. ' +
+        'Tool results are for you only and mostly in English: after one, keep answering in the language you were speaking with your person. ' +
         'In Dutch, write numbers, times, dates and abbreviations as Dutch words. ';
 }
 // language: 'en' (default) or 'nl', the language the conversation starts in.
