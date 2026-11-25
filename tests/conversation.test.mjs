@@ -83,17 +83,18 @@ test('expression policy: gap, no repeats, dance only on request', () => {
 test('persona: the packaged persona plus the voice setup, no terminal setup', () => {
     const soul = fs.readFileSync(path.join(source, 'noggin/persona/SOUL.md'), 'utf8');
     const identity = fs.readFileSync(path.join(source, 'noggin/persona/IDENTITY.md'), 'utf8');
-    const text = realtime.instructions(soul, identity, new Date(2026, 10, 12, 19, 30));
+    const text = realtime.instructions(soul, identity);
     assert.match(text, /curious, warm, playful/);
     assert.doesNotMatch(text, /SSH|terminal|types to you|Cameras and microphones are not connected/);
     assert.match(text, /hear your person through your microphone/);
-    assert.match(text, /Thursday, November 12, 2026, 7:30 PM local time/);
+    assert.doesNotMatch(text, /2026|local time/, 'the time is in the session note (D181)');
+    assert.match(realtime.sessionNote(new Date(2026, 10, 12, 19, 30)), /^Session note\. This conversation started on Thursday, November 12, 2026, 7:30 PM local time/);
 });
 
 test('persona: family-safe rules and the most-asked facts are in, text-chat abilities are out', () => {
     const p = settings.persona(null);
     assert.deepEqual(p.edited, {soul: false, identity: false, facts: false}, 'the packaged persona');
-    const text = realtime.instructions(p.soul, p.identity, new Date(2026, 10, 12, 19, 30), {apps: ['clock']});
+    const text = realtime.instructions(p.soul, p.identity, {apps: ['clock']});
     assert.match(text, /Family safe \(always, because a child may be listening\)/);
     assert.match(text, /sex, romance or flirting/);
     assert.match(text, /tell a grown-up they trust/);
@@ -108,10 +109,10 @@ test('persona: family-safe rules and the most-asked facts are in, text-chat abil
 test('persona budget: the instructions stay small, and so does FACTS.md', () => {
     const p = settings.persona(null);
     const apps = ['clock', 'photos', 'radio', 'weather', 'jokes'];
-    const text = realtime.instructions(p.soul, p.identity, new Date(2026, 10, 12, 19, 30), {apps, config: {}});
+    const text = realtime.instructions(p.soul, p.identity, {apps, config: {}});
     assert.ok(text.length <= 5600, 'instructions are ' + text.length + ' characters (about ' + Math.round(text.length / 4) + ' tokens); the budget is 5600');
     // Every cloud feature on: ~60 characters more, for naming what the cloud can do.
-    const all = realtime.instructions(p.soul, p.identity, new Date(2026, 10, 12, 19, 30), {apps, config: {cloudSkills: Object.keys(actions.CLOUD)}});
+    const all = realtime.instructions(p.soul, p.identity, {apps, config: {cloudSkills: Object.keys(actions.CLOUD)}});
     assert.ok(all.length <= 5750, 'with every cloud tool the instructions are ' + all.length + ' characters; the budget is 5750');
     const raw = fs.readFileSync(path.join(source, 'noggin/persona/FACTS.md'), 'utf8');
     assert.ok(raw.length <= settings.PERSONA.facts.max, 'FACTS.md is ' + raw.length + ' characters; the cap is ' + settings.PERSONA.facts.max);
@@ -181,7 +182,7 @@ function harness(over = {}) {
     const config = Object.assign({}, DEFAULTS, {apiKey: 'sk-test', silenceSeconds: 0.6, transcriptWaitMs: 120, echoTailMs: 10, expressionWaitMs: 60, greeting: 'Hi!', greetingExpression: 'none',
         emoji: false}, over.config || {});
     const classify = over.classify || ((person, line) => Promise.resolve({label: /dog|puppy/i.test(line) ? 'happy' : 'none', ms: 5}));
-    const talk = new Conversation({jibo, config, instructions: 'be Jibo', connect, classify, diagnose: over.diagnose, notice: over.notice,
+    const talk = new Conversation({jibo, config, instructions: 'be Jibo', sessionNote: over.note, connect, classify, diagnose: over.diagnose, notice: over.notice,
         mic: over.mic || {start: f => { onBlock = f; starts++; return Promise.resolve(); }, stop: () => { onBlock = null; }, label: 'arecord default', rate: 48000, kind: 'arecord'},
         log: {write: e => logs.push(e)}, actions: over.actions || null, resume: over.resume || null, heyJibo: over.heyJibo || null, openedAt: over.openedAt, startup: over.startup,
         random: over.random || (() => 0.5), version: over.version, now: over.now});
@@ -314,6 +315,42 @@ test('lost connection while listening: one quiet reconnect with the conversation
     assert.equal(asked, 1);
     assert.match(h.said.at(-1), /can't reach the internet/);
     assert.ok(h.logs.some(e => e.kind === 'trouble' && e.cause === 'no_internet' && e.detail === 'ENOTFOUND'));
+});
+
+test('session note: the first item of every session, also after a reconnect, before the reconnect note (D181)', async () => {
+    const h = harness({note: 'Session note. Facts: Sam likes jazz.'});
+    const ended = h.talk.open(); await untilListening(h);
+    const firstItem = () => h.sent[h.sent.findLastIndex(e => e.type === 'session.update') + 1];
+    assert.equal(firstItem().type, 'conversation.item.create');
+    assert.deepEqual(firstItem().item, {type: 'message', role: 'system', content: [{type: 'input_text', text: 'Session note. Facts: Sam likes jazz.'}]});
+    assert.equal(h.sent.find(e => e.type === 'session.update').session.instructions, 'be Jibo');
+    h.emit({type: 'transport.closed', code: 1006});
+    while (h.connects() < 2) await sleep(5);
+    await untilListening(h);
+    assert.equal(firstItem().item.content[0].text, 'Session note. Facts: Sam likes jazz.', 'the same text again, so the cache keeps it');
+    const items = h.sent.filter(e => e.type === 'conversation.item.create').map(e => e.item.content[0].text);
+    assert.equal(items.length, 3);
+    assert.match(items[2], /connection dropped/);
+    h.talk.leave('test'); await ended;
+});
+
+test('session note: a Dutch refusal while the session is set up sends the English note after the session note (D175, D181)', async () => {
+    let release = null;
+    const h = harness({note: 'Session note.', connect: (n, rt) => {
+        const send = rt.send;
+        rt.send = e => { if (e.type === 'session.update' && !release) { release = () => send(e); return; } send(e); };
+        return Promise.resolve(rt);
+    }});
+    const ended = h.talk.open();
+    while (!release) await sleep(5);
+    h.talk.dutchFailed('dutch_voice_not_ready', {});
+    assert.equal(h.sent.filter(e => e.type === 'conversation.item.create').length, 0, 'nothing before the session is set up');
+    release();
+    await untilListening(h);
+    const items = h.sent.filter(e => e.type === 'conversation.item.create').map(e => e.item.content[0].text);
+    assert.equal(items[0], 'Session note.');
+    assert.equal(items.filter(text => /Dutch voice is not working/.test(text)).length, 1);
+    h.talk.leave('test'); await ended;
 });
 
 test('lost connection while thinking: the reply is dropped and Jibo asks again after the reconnect (D73)', async () => {
@@ -1085,21 +1122,25 @@ test('remember runs in Noggin: the memory runner gets the parsed fact, its resul
     broken.talk.close();
 });
 
-test('instructions with memory: the notes come last, the "no saved memory" line goes, tools named only when offered', () => {
+test('instructions with memory: the notes go in the session note, the "no saved memory" line goes, tools named only when offered', () => {
     const now = new Date(2026, 10, 19, 19, 30), block = 'What you remember ... Facts:\n- Sam likes jazz.';
-    const off = realtime.instructions('S', 'I', now, {apps: [], config: {memory: false}});
+    const off = realtime.instructions('S', 'I', {apps: [], config: {memory: false}});
     assert.match(off, /no tools, files or saved memory/);
-    const on = realtime.instructions('S', 'I', now, {apps: [], config: {memory: true}}, {learn: true, block});
-    assert.ok(on.endsWith(block));
+    const on = realtime.instructions('S', 'I', {apps: [], config: {memory: true}}, {learn: true, block});
+    assert.ok(!on.includes(block), 'the instructions never carry the memory (D181)');
+    const note = realtime.sessionNote(now, {learn: true, block});
+    assert.ok(note.endsWith('\n\n' + block));
+    assert.match(on, /the notes in the session note at the start of the conversation/);
+    assert.ok(!realtime.sessionNote(now, null).includes('\n'), 'memory off: the time alone');
     assert.doesNotMatch(on, /saved memory/);
     assert.match(on, /never claim to remember something that is not in them/);
     assert.match(on, /After each conversation you keep a short note/);
     assert.match(on, /use remember or forget; for an earlier conversation your notes do not cover, use recall/);
-    const noTools = realtime.instructions('S', 'I', now, null, {learn: false, block});
+    const noTools = realtime.instructions('S', 'I', null, {learn: false, block});
     assert.match(noTools, /You cannot keep anything new yourself/);
     assert.doesNotMatch(noTools, /use recall/);
-    // The block is the same text however long the session: nothing in it depends on the turn.
-    assert.equal(realtime.instructions('S', 'I', now, null, {learn: true, block}), realtime.instructions('S', 'I', now, null, {learn: true, block}));
+    // The instructions are the same text in every conversation, whatever the time or memory (D181).
+    assert.equal(realtime.instructions('S', 'I', null, {learn: true, block}), realtime.instructions('S', 'I', null, {learn: true, block: 'other'}));
 });
 
 test('get_time hands over to Jibo\'s clock: no words first, the clock face for the time, the calendar for the date; Noggin comes back', async () => {
@@ -1500,9 +1541,9 @@ test('a follow-up reply that never comes does not leave Jibo stuck', async () =>
 });
 
 test('persona with actions: the tool rules replace "no tools", and the time is the home timezone\'s', () => {
-    const text = realtime.instructions('', '', {year: 2026, monthNum: 10, date: 13, dayOfWeek: 'Friday', hour: 9, minute: 5}, {apps: ['clock']});
+    const text = realtime.instructions('', '', {apps: ['clock']});
     assert.match(text, /use your timer and alarm, .*open your apps, go to sleep, and look away\./);
-    assert.match(text, /Friday, November 13, 2026, 9:05 AM local time/);
+    assert.match(realtime.sessionNote({year: 2026, monthNum: 10, date: 13, dayOfWeek: 'Friday', hour: 9, minute: 5}), /Friday, November 13, 2026, 9:05 AM local time/);
     assert.doesNotMatch(text, /in this voice mode you have no tools/);
 });
 
@@ -1640,22 +1681,21 @@ test('the greeting smiles with the eye only (no body movement), outside the clas
 });
 
 test('timer tools: the instructions and tool descriptions say to call them without words first', () => {
-    const text = realtime.voiceSetup(new Date(2026, 10, 13, 9, 0), {apps: []});
+    const text = realtime.voiceSetup({apps: []});
     assert.match(text, /For get_time, set_timer, cancel_timer, set_alarm, cancel_alarm, use_skill and open_app, call the tool without saying anything first/);
     assert.doesNotMatch(text, /"Okay!"/);
     const tools = require(path.join(source, 'noggin/lib/actions.js')).tools({});
     for (const name of ['get_time', 'set_timer', 'cancel_timer', 'set_alarm', 'cancel_alarm', 'use_skill', 'open_app']) assert.match(tools.find(t => t.name === name).description, /without saying anything first/);
 });
 test('the instructions tell Jibo his emoji come from the words he says, and keep them apart from picture (D161)', () => {
-    const now = new Date(2026, 10, 13, 9, 0);
-    const text = realtime.voiceSetup(now, {apps: [], config: {}});
+    const text = realtime.voiceSetup({apps: [], config: {}});
     assert.match(text, /small emoji may show on your eye when you say the name of something/);
     assert.match(text, /never say you have none/);
     assert.doesNotMatch(text, /use picture/, 'no picture tool, no mention of it');
-    assert.match(realtime.voiceSetup(now, {apps: [], config: {cloudSkills: ['picture']}}), /An emoji is not a picture: for a photo use picture/);
-    assert.match(realtime.voiceSetup(now, null, null), /small emoji may show/, 'also without tools');
-    assert.doesNotMatch(realtime.voiceSetup(now, {apps: [], config: {emoji: false}}), /small emoji may show/);
-    assert.doesNotMatch(realtime.voiceSetup(now, null, null, {emoji: false}), /small emoji may show/);
+    assert.match(realtime.voiceSetup({apps: [], config: {cloudSkills: ['picture']}}), /An emoji is not a picture: for a photo use picture/);
+    assert.match(realtime.voiceSetup(null, null), /small emoji may show/, 'also without tools');
+    assert.doesNotMatch(realtime.voiceSetup({apps: [], config: {emoji: false}}), /small emoji may show/);
+    assert.doesNotMatch(realtime.voiceSetup(null, null, {emoji: false}), /small emoji may show/);
     assert.match(text, /no markdown, lists, emoji, bracketed markers/, 'he still writes no emoji characters');
 });
 // ---- expressions next to speech ----
@@ -2042,9 +2082,9 @@ test('cloud tools: only those in cloudSkills go in session.update, and the instr
     assert.ok(names.includes('surprise')); assert.ok(!names.includes('weather') && !names.includes('news'));
     assert.ok(!names.includes('joke'), 'joke is disabled, even when listed');
     h.talk.close();
-    const text = realtime.voiceSetup(new Date(2026, 10, 13, 9, 0), {apps: [], config: {cloudSkills: ['surprise']}});
+    const text = realtime.voiceSetup({apps: [], config: {cloudSkills: ['surprise']}});
     assert.match(text, /ask your cloud for a surprise/); assert.doesNotMatch(text, /weather|news|joke/);
-    assert.doesNotMatch(realtime.voiceSetup(new Date(2026, 10, 13, 9, 0), {apps: [], config: {}}), /cloud/);
+    assert.doesNotMatch(realtime.voiceSetup({apps: [], config: {}}), /cloud/);
 });
 
 test('a cloud tool: no words first; the hotword is given back, then the cloud gets the fixed phrase; the turn Be starts ends Noggin as a handover', async () => {
@@ -3280,10 +3320,9 @@ test('whom Jibo sees: notes wait while Jibo thinks or speaks, and go before the 
 });
 
 test('instructions: with presence the setup says Jibo sees only who the notes name, and memory says the one person seen is probably the one talking', () => {
-    const now = new Date(2026, 10, 12, 19, 30);
-    assert.match(realtime.voiceSetup(now, null, null), /You cannot see the room yet/);
-    assert.match(realtime.voiceSetup(now, null, null, {presence: true}), /You see only who the notes name, and in this voice mode/);
-    assert.match(realtime.voiceSetup(now, {apps: [], config: {}}, null, {presence: true}), /You see only who the notes name\. /);
+    assert.match(realtime.voiceSetup(null, null), /You cannot see the room yet/);
+    assert.match(realtime.voiceSetup(null, null, {presence: true}), /You see only who the notes name, and in this voice mode/);
+    assert.match(realtime.voiceSetup({apps: [], config: {}}, null, {presence: true}), /You see only who the notes name\. /);
     const state = {facts: [], summaries: []};
     assert.match(memoryLib.block(state, '2026-11-12', ''), /you cannot tell who is speaking, so never assume/);
     assert.match(memoryLib.block(state, '2026-11-12', '', true), /see just one person, that is probably who is talking/);
@@ -3574,12 +3613,12 @@ test('Dutch: fixed lines follow the conversation language; stop phrases in Dutch
 
 test('Dutch instructions ask for a language label on every reply; English ones stay as they were', () => {
     const p = settings.persona(null);
-    const nl = realtime.instructions(p.soul, p.identity, new Date(2026, 10, 12, 19, 30), null, null, null, 'nl');
+    const nl = realtime.instructions(p.soul, p.identity, null, null, null, 'nl');
     assert.match(nl, /Start every reply with \[nl\] when it is in Dutch or \[en\] when it is in English/);
     assert.match(nl, /other than the language label described below/);
     assert.match(nl, /write numbers, times, dates and abbreviations as Dutch words/);
     assert.match(nl, /Tool results are for you only and mostly in English: after one, keep answering in the language you were speaking/, 'D177');
-    const en = realtime.instructions(p.soul, p.identity, new Date(2026, 10, 12, 19, 30));
+    const en = realtime.instructions(p.soul, p.identity);
     assert.match(en, /always answer in English/);
     assert.doesNotMatch(en, /\[nl\]/);
     assert.match(realtime.englishNote(), /start every reply with \[en\]/);

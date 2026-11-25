@@ -117,12 +117,13 @@ class Noggin extends BeSkill {
         const notes = this.memoryNotes(dataDir, config, back, log, openedAt);
         // Chosen once: the instructions and the conversation start in the same language (D172).
         const speechVoice = voice.create(), language = speechVoice.choose(config.language);
-        const instructions = realtime.instructions(persona.soul, persona.identity, actions.localTime(jibo), abilities, notes,
+        const instructions = realtime.instructions(persona.soul, persona.identity, abilities, notes,
             {presence: config.presence !== false, emoji: config.emoji !== false}, language.language);
+        const note = realtime.sessionNote(actions.localTime(jibo), notes);
         session = this.session = new Conversation({
             jibo: jibo, config: config, log: log, version: VERSION, voice: speechVoice, language: language,
-            instructions: instructions,
-            persona: {edited: Object.keys(persona.edited).filter(name => persona.edited[name]), chars: instructions.length, facts: persona.facts.length,
+            instructions: instructions, sessionNote: note,
+            persona: {edited: Object.keys(persona.edited).filter(name => persona.edited[name]), chars: instructions.length, note_chars: note.length, facts: persona.facts.length,
                 memory: notes ? notes.block.length : null},
             connect: () => openai.connect(config),
             mic: mic,
@@ -177,7 +178,7 @@ class Noggin extends BeSkill {
             return this.eye().then(() => this.say('ready', 'Emoji_Checkmark', language)).then(() => generation === this.generation ? this.talk(dataDir, null, Date.now(), {after_setup: true}) : 'setup_saved');
         });
     }
-    // What Jibo remembers, for the end of the instructions (D44): null when memory is off or
+    // What Jibo remembers, for the session note (D44, D181): null when memory is off or
     // cannot be read. After a handover the comeback carries the conversation, so no tail (D52).
     memoryNotes(dataDir, config, back, log, openedAt) {
         if (!config.memory) return null;

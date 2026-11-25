@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Noggin's memory: facts about the household and short summaries of past conversations, in
 // memory.json (mode 0600) in Noggin's data folder. The facts and the newest summaries go into the
-// instructions once, at session start (block); older summaries are found with search (D44).
+// session note once, at session start (block, D181); older summaries are found with search (D44).
 // Everything here is synchronous: the skill and background.js run in one process, so a
 // read-modify-write (update) is never interleaved (D51). Node 6: ES2015 only.
 'use strict';
@@ -21,7 +21,7 @@ const DAY_MS = 86400000;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 // Text that speaks to the model or carries markup is not a memory: it would reach the
-// instructions of every later conversation.
+// prompt of every later conversation.
 const SUSPECT = [
     /\b(ignore|disregard|override)\b.{0,30}\b(instructions?|rules?|previous|above|prompt)\b/i,
     /\b(system prompt|system message|developer message|instructions? (to|for) (the )?(model|assistant|ai))\b/i,
@@ -339,7 +339,7 @@ function findFacts(state, query) {
     return ranked.filter(r => r.score === ranked[0].score).map(r => r.entry);
 }
 
-// ---- the memory block (end of the instructions, fixed for the session) ----
+// ---- the memory block (in the session note, fixed for the session) ----
 // The newest summaries that fit SUMMARY_CHARS, oldest first.
 function loaded(state) {
     const out = [];
@@ -376,7 +376,7 @@ const REMEMBER_ERRORS = {
     expired: 'that day has passed'
 };
 // args from actions.plan: {op, text, expires} | {op, about} | {op, query}. The result goes to the
-// model as it is. The memory block in the instructions stays as it was for the session (D44), so a
+// model as it is. The memory block in the session note stays as it was for the session (D44), so a
 // change says so.
 function tool(dir, args, today) {
     if (args.op === 'remember') {

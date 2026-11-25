@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Noggin: what the realtime model is told. The session settings (audio format, transcription and
-// its language hint, tools), the instructions (persona, this voice setup, memory), and the notes
-// after a handover or a dropped connection. Pure: no I/O. Node 6 / Chrome 53: ES2015 only.
+// its language hint, tools), the instructions (persona, this voice setup), the session note (start
+// time, memory) and the notes after a handover or a dropped connection. Pure: no I/O.
+// Node 6 / Chrome 53: ES2015 only.
 'use strict';
 const actions = require('./actions'), RATE = require('./audio').RATE;
 
@@ -58,13 +59,14 @@ function personaText(soul, identity) {
     const parts = [soul, identity].map(text => String(text || '').trim()).filter(Boolean);
     return parts.join('\n\n') || 'You are Jibo, the little social robot: curious, warm, playful and a bit silly.';
 }
-// now: a Date or actions.localTime() (Jibo's home timezone). abilities: null (no tools) or
-// {apps: [names], config} when Noggin offers its tools (lib/actions.js); config's cloudSkills
-// says which cloud tools are named. memory: null (off) or {learn, block}: block (lib/memory.js)
-// goes after everything else and stays the same all session, so the prompt cache keeps it (D44).
+// abilities: null (no tools) or {apps: [names], config} when Noggin offers its tools
+// (lib/actions.js); config's cloudSkills says which cloud tools are named. memory: null (off) or
+// {learn, block}: block (lib/memory.js) goes in the session note, not here.
+// The instructions hold nothing that changes between conversations, so a new session finds them
+// and the tools after them in the prompt cache (D181).
 // The memory sentences of the setup: what Jibo's notes are, how they grow, and which tools he has.
 function memoryNotes(memory, tools) {
-    let text = 'Your memory is the notes after this setup; never claim to remember something that is not in them. ';
+    let text = 'Your memory is the notes in the session note at the start of the conversation; never claim to remember something that is not in them. ';
     if (memory.learn) text += 'After each conversation you keep a short note of it and the facts worth keeping, so what people tell you stays with you. ';
     if (tools) text += 'When someone asks you to remember or forget something, use remember or forget; for an earlier conversation your notes do not cover, use recall. ';
     else if (!memory.learn) text += 'You cannot keep anything new yourself. ';
@@ -93,8 +95,7 @@ function languageRule(language) {
         'In Dutch, write numbers, times, dates and abbreviations as Dutch words. ';
 }
 // language: 'en' (default) or 'nl', the language the conversation starts in.
-function voiceSetup(now, abilities, memory, senses, language) {
-    const at = actions.describeTime(now);
+function voiceSetup(abilities, memory, senses, language) {
     const seeing = !!(senses && senses.presence);
     const unseen = seeing ? 'You see only who the notes name' : 'You cannot see the room yet';
     const memoryTools = !!(memory && abilities && abilities.config && abilities.config.memory === true);
@@ -117,11 +118,18 @@ function voiceSetup(now, abilities, memory, senses, language) {
         'Keep replies short, as your personality says. ' +
         languageRule(language) +
         (abilities ? unseen + '. ' : '') + tools +
-        'When the session started it was ' + at.date + ', ' + at.time + ' local time on the robot (the clock may be off if Jibo was offline). ' +
         'Your person ends the conversation by saying goodbye.';
 }
-function instructions(soul, identity, now, abilities, memory, senses, language) {
-    return personaText(soul, identity) + '\n\n' + voiceSetup(now, abilities, memory, senses, language) + (memory && memory.block ? '\n\n' + memory.block : '');
+function instructions(soul, identity, abilities, memory, senses, language) {
+    return personaText(soul, identity) + '\n\n' + voiceSetup(abilities, memory, senses, language);
+}
+// The first system message of every session (D181): what changes from one conversation to the
+// next. Built once per conversation, so a reconnect sends the same text and keeps the cache.
+// now: a Date or actions.localTime() (Jibo's home timezone); memory as for instructions().
+function sessionNote(now, memory) {
+    const at = actions.describeTime(now);
+    return 'Session note. This conversation started on ' + at.date + ', ' + at.time + ' local time on the robot (the clock may be off if Jibo was offline).' +
+        (memory && memory.block ? '\n\n' + memory.block : '');
 }
 // Jibo's Dutch voice stopped working mid-conversation: the rest is in English (D172).
 function englishNote() {
@@ -185,4 +193,4 @@ function presenceNote(here) {
     return about + 'now sees ' + list + '. Who you see is not always who is talking. Never answer this note alone.]';
 }
 
-module.exports = {LANGUAGES, DEFAULT_REASONING, transcription, reasoningEffort, sessionUpdate, textDelta, personaText, voiceSetup, instructions, englishNote, resumeNote, reconnectNote, touchNote, presenceNote};
+module.exports = {LANGUAGES, DEFAULT_REASONING, transcription, reasoningEffort, sessionUpdate, textDelta, personaText, voiceSetup, instructions, sessionNote, englishNote, resumeNote, reconnectNote, touchNote, presenceNote};

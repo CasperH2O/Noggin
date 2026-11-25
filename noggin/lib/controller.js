@@ -33,16 +33,16 @@ const REPLY_WAIT_MS = 15000, KEEP_PAIRS = 10;
 const QUIET_WARM_MS = 180000;  // warm the classifier again when speech starts after this long without a request (D93)
 
 class Conversation {
-    // deps: {jibo, config, instructions, persona: {edited, chars, facts} (for the log), connect(), mic, classify(personSaid, jiboSays), log, now(),
+    // deps: {jibo, config, instructions, sessionNote (first item of every session, D181), persona: {edited, chars, note_chars, facts, memory} (for the log),
+    //        connect(), mic, classify(personSaid, jiboSays), log, now(),
     //        actions: {redirect(pkg, options), cloud(phrase), handover(state), handoverFailed(), readClock(), setVolume(args), installed(pkg), localTime(), facts()} or null,
     //        resume: {pairs, tool, args, said} when coming back after a handover,
     //        heyJibo: {heardAt} when "Hey Jibo" opened Noggin (lib/hey-jibo.js),
     //        openedAt: when the skill's open() began (Date.now()), startup: facts for the startup log,
     //        diagnose() -> {cause, detail} after an OpenAI failure (lib/trouble.js), notice: {line (a lib/lines.js key), emoji, said()} after the greeting,
-    //        version: the skill's version for the session log entry (optional),
-    //        voice: lib/voice.js create() (optional), language: its choose() result, made once by the caller (optional)}
+    //        version: for the session log (optional), voice: lib/voice.js create() (optional), language: its choose() result, made once by the caller (optional)}
     constructor(deps) {
-        this.jibo = deps.jibo; this.config = deps.config; this.instructions = deps.instructions; this.persona = deps.persona; this.version = deps.version || null;
+        this.jibo = deps.jibo; this.config = deps.config; this.instructions = deps.instructions; this.sessionNote = deps.sessionNote || ''; this.persona = deps.persona; this.version = deps.version || null;
         this.connectFn = deps.connect; this.diagnoseFn = deps.diagnose || null; this.notice = deps.notice || null; this.mic = deps.mic; this.classify = deps.classify; this.log = deps.log || {write() {}};
         this.now = deps.now || (() => Date.now()); this.random = deps.random || Math.random;
         this.micStartMs = Conversation.MIC_START_MS; this.speakBaseMs = Conversation.SPEAK_BASE_MS;
@@ -70,7 +70,7 @@ class Conversation {
         const chosen = deps.language || this.voice.choose(this.config.language);
         this.language = chosen.language; this.dutchMissing = chosen.missing; this.englishNow = false; this.englishSwitched = false;
         this.dutchLines = 0;   // Dutch lines being said through the Dutch voice
-        this.englishNoteRt = null;
+        this.englishNoteRt = null; this.readyRt = null;
         this.lineLanguages = {nl: 0, en: 0};   // lines said per language, for the Usage tab (D171)
     }
     since(t) { return Math.round((t === undefined ? this.now() : t) - this.t0); }
@@ -218,6 +218,9 @@ class Conversation {
                 this.log.write({kind: 'reasoning_refused', code: error.code || null});
                 return update(false);
             }).then(() => {
+                // Before any other item, so it stays in the cached part of every later reply.
+                if (this.sessionNote) rt.send({type: 'conversation.item.create', item: {type: 'message', role: 'system', content: [{type: 'input_text', text: this.sessionNote}]}});
+                this.readyRt = rt;
                 this.mark('session_updated'); this.log.write({kind: 'connected', ms: this.now() - started});
                 // A Dutch refusal before the connection was set up (the greeting) is told now (D175).
                 if (this.englishSwitched) this.sendEnglishNote();

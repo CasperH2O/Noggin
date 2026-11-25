@@ -53,8 +53,8 @@ On the robot: BEacon, Store, Upload ZIP, and choose `Noggin.zip` from a release.
 
 - **Memory** (`noggin/lib/memory.js`, `noggin/lib/recap.js`). Jibo keeps facts about the household
   and a one-line note per conversation (kept 14 days) in `memory.json`. At session start the facts
-  and the newest notes go at the end of the instructions, within a fixed budget, and stay the same
-  all session so the prompt cache keeps them cheap. The tools `remember`, `forget` and `recall`
+  and the newest notes go in the session note, within a fixed budget, and stay the same all
+  session so the prompt cache keeps them cheap. The tools `remember`, `forget` and `recall`
   serve explicit requests; `recall` searches older notes by keyword. After a conversation ends,
   `background.js` sends its text and the current facts to the Helper model once (Responses API,
   strict JSON) and stores the note and the fact changes. It looks every minute, and a few seconds
@@ -215,7 +215,7 @@ The tests and tools run on a current Node.
 | `noggin/lib/conversation-lines.js` | what Jibo says: lines, their expressions and emoji, the speak itself |
 | `noggin/lib/conversation-mic.js` | the microphone during a conversation, and the timing probes in the log |
 | `noggin/lib/conversation-tools.js` | running the model's tool calls: in Noggin, a handover, or Jibo's cloud |
-| `noggin/lib/realtime-session.js` | what the realtime model is told: session settings, instructions, resume notes |
+| `noggin/lib/realtime-session.js` | what the realtime model is told: session settings, instructions (the same in every conversation), the session note (start time and memory, the first system item of every session, also after a reconnect, so a new session can reuse the cached instructions and tools), resume notes |
 | `noggin/lib/openai.js` | the OpenAI connections: the realtime WebSocket and HTTPS requests |
 | `noggin/lib/models.js` | the tested models per job (one recommended each) and the pick of untested candidates from OpenAI's model list, for the settings page's dropdowns |
 | `noggin/lib/labels.js` | the expression classifier's requests and how its answers are read |

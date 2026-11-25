@@ -307,7 +307,7 @@ const TOOLS = [
         parameters: {type: 'object', additionalProperties: false, required: ['about'], properties: {about: {type: 'string'}}}},
     {name: 'recall', memory: true, voice: 'talk', ability: MEMORY_ABILITY,
         description: 'Looks through the notes of conversations from the last two weeks and the saved facts, when a person asks about ' +
-            'an earlier conversation that the notes in your instructions do not cover. Give a few keywords.',
+            'an earlier conversation that the memory notes in your session note do not cover. Give a few keywords.',
         parameters: {type: 'object', additionalProperties: false, required: ['query'], properties: {query: {type: 'string'}}}}
 ];
 

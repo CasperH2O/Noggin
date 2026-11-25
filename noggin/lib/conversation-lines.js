@@ -361,12 +361,12 @@ const methods = {
         if (this.englishSwitched) return;
         this.language = 'en'; this.englishNow = true; this.englishSwitched = true;
         this.log.write({kind: 'voice_switch', language: 'en', reason: reason});
-        // Without a connection now, connect() sends it once the session is set up (D175).
+        // Without a set-up session now, connect() sends it after the session note (D175, D181).
         this.sendEnglishNote();
     },
     // Once per connection: each new session starts from the Dutch instructions.
     sendEnglishNote() {
-        if (!this.rt || this.englishNoteRt === this.rt) return;
+        if (!this.rt || this.readyRt !== this.rt || this.englishNoteRt === this.rt) return;
         this.englishNoteRt = this.rt;
         this.rt.send({type: 'conversation.item.create', item: {type: 'message', role: 'system', content: [{type: 'input_text', text: realtime.englishNote()}]}});
     },
