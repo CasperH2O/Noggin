@@ -262,7 +262,7 @@ function pass(deps) {
         return {calling: true};
     });
     if (!plan) return Promise.resolve(decided);
-    const body = request(config.fallbackModel, plan.chain, plan.facts, plan.local);
+    const body = request(config.helperModel, plan.chain, plan.facts, plan.local);
     return Promise.resolve().then(() => deps.post('/responses', body, TIMEOUT_MS)).then(r => {
         // A stopped loop (an update started the next revision) leaves memory.json to the new one.
         if (deps.stopped && deps.stopped()) return {failed: 'stopped', logs: plan.logs};

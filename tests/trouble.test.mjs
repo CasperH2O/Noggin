@@ -15,7 +15,7 @@ const SetupScreen = require(path.join(source, 'noggin/lib/setup-screen.js'));
 const settings = require(path.join(source, 'noggin/lib/settings.js'));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const WIFI = {lo: [{family: 'IPv4', address: '127.0.0.1', internal: true}], wlan0: [{family: 'IPv4', address: '192.168.1.20', internal: false}]};
-const config = {realtimeModel: 'gpt-realtime-2.1', fallbackModel: 'gpt-4o-mini'};
+const config = {realtimeModel: 'gpt-realtime-2.1', helperModel: 'gpt-4o-mini'};
 
 test('every cause has a line in Jibo\'s words, a known emoji, and the screen ones a title, detail and step', () => {
     // Every animation Noggin's catalogue names (moods and eye emoji), as Jibo's animation database has them.

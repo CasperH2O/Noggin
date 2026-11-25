@@ -15,7 +15,7 @@ const DAY = 86400000;
 const NOW = Date.UTC(2026, 10, 19, 15, 0, 0); // Thursday 19 November, 15:00 UTC
 const sec = ms => ms / 1000;
 const dayStart = n => Date.UTC(2026, 10, 19) - n * DAY; // n days before today, 00:00 UTC
-const CONFIG = {realtimeModel: 'gpt-realtime-2.1', transcribeModel: 'gpt-4o-mini-transcribe', classifierModel: 'gpt-6-luna', fallbackModel: 'gpt-4o-mini'};
+const CONFIG = {realtimeModel: 'gpt-realtime-2.1', transcribeModel: 'gpt-4o-mini-transcribe', classifierModel: 'gpt-6-luna', helperModel: 'gpt-4o-mini'};
 const API_KEY = 'sk-proj-abcdefghijklmnopqrstuvwxyz8OQA';
 const READ = 'sk-admin-read-0123456789abcdefghij', WRITE = 'sk-admin-write-0123456789abcdefghij';
 const SCOPE = 'You have insufficient permissions for this operation. Missing scopes: api.management.write.';
@@ -64,6 +64,8 @@ test('features follow the model settings, then the model name', () => {
     assert.equal(usage.featureOf('gpt-6-luna', CONFIG), 'expressions');
     assert.equal(usage.featureOf('gpt-4o-mini', CONFIG), 'helper');
     assert.equal(usage.featureOf('gpt-5-nano', CONFIG), 'other');
+    // One model for both jobs: the bill cannot tell them apart.
+    assert.equal(usage.featureOf('gpt-6-luna', Object.assign({}, CONFIG, {helperModel: 'gpt-6-luna'})), 'shared');
 });
 
 test('read-only only on the one known refusal; anything past the permission check is a write key (D62)', () => {

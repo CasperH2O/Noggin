@@ -267,6 +267,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 .chip.is-ok { background: rgba(131, 222, 48, 0.18); color: var(--success-text); }
 .chip.is-bad { background: var(--danger-soft); color: var(--failure-text); }
+.model-pick { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.model-status { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.model-status:empty { display: none; }
+.banner-line { font-weight: 400; margin-top: 4px; }
 
 /* Persona editors */
 .persona-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 0 10px; }

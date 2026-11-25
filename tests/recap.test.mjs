@@ -112,7 +112,7 @@ function writeLog(dir, ms, list, mtime) {
     if (mtime) fs.utimesSync(file, mtime / 1000, mtime / 1000);
     return path.basename(file);
 }
-const config = {apiKey: 'k', fallbackModel: 'gpt-4o-mini', memory: true, memoryLearn: true};
+const config = {apiKey: 'k', helperModel: 'gpt-4o-mini', memory: true, memoryLearn: true};
 
 test('pass: first run only starts; earlier logs are never recapped', async () => {
     const dir = setup(), t0 = new Date(2026, 10, 19, 10, 0, 0).getTime();

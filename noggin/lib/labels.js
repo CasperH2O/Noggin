@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Noggin: the expression classifier's requests and how its answers are read: the Decisions API
-// (one choice question, with a confidence) and the Responses API fallback (a JSON schema).
+// (one choice question, with a confidence) and the Responses API (a JSON schema).
 // The requests themselves go through lib/openai.js. Pure: no I/O. Node 6 / Chrome 53: ES2015 only.
 'use strict';
 const catalog = require('./catalog'), text = require('./text');

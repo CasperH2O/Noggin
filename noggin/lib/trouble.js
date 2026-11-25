@@ -91,7 +91,7 @@ function diagnose(config, ask, options) {
         if (r.status !== 200) return {cause: fromStatus(r) || 'unknown', detail: 'models ' + r.status};
         if (options.stopped && options.stopped()) return {cause: 'unknown', detail: 'stopped'};
         // Free checks pass: one tiny request shows credit and rate limits (D71).
-        return ask('POST', '/responses', {model: config.fallbackModel, input: 'Say ok.', max_output_tokens: 16, store: false}, REQUEST_MS, track)
+        return ask('POST', '/responses', {model: config.helperModel, input: 'Say ok.', max_output_tokens: 16, store: false}, REQUEST_MS, track)
             // A plain 400 may be this probe's own fault: no blame on the settings then.
             .then(p => ({cause: p.status === 200 || p.status === 400 && !fromCode(p.json && p.json.error && p.json.error.code) ? 'unknown' : fromStatus(p) || 'unknown',
                 detail: 'responses ' + p.status}));

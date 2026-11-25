@@ -29,7 +29,9 @@ const FEATURES = {
     conversation: {label: 'Conversation', use: 'Hears Jibo\'s microphone and writes what he says.'},
     transcription: {label: 'Transcription', use: 'Writes down what people say, for the log, the memory and Jibo\'s skills.'},
     expressions: {label: 'Expressions', use: 'Picks Jibo\'s face and body expression for each line.'},
-    helper: {label: 'Notes and helpers', use: 'Memory notes after each conversation, Describe with AI, and expressions when the Decisions API is not available.'},
+    helper: {label: 'Notes and helpers', use: 'Memory notes after each conversation and Describe with AI.'},
+    // The expression model and the helper model are one model: OpenAI's bill cannot tell them apart.
+    shared: {label: 'Expressions, notes and helpers', use: 'Picks Jibo\'s expressions, writes memory notes after each conversation and Describe with AI: one model does all three.'},
     other: {label: 'Other', use: 'Not one of Noggin\'s models now: an earlier setting, or another program using the same key.'}
 };
 
@@ -88,8 +90,8 @@ function tokenKind(kind) {
 function featureOf(model, config) {
     if (model === modelName(config.realtimeModel)) return 'conversation';
     if (model === modelName(config.transcribeModel)) return 'transcription';
-    if (model === modelName(config.classifierModel)) return 'expressions';
-    if (model === modelName(config.fallbackModel)) return 'helper';
+    if (model === modelName(config.classifierModel)) return model === modelName(config.helperModel) ? 'shared' : 'expressions';
+    if (model === modelName(config.helperModel)) return 'helper';
     if (/realtime/.test(model)) return 'conversation';
     if (/transcribe/.test(model)) return 'transcription';
     return 'other';

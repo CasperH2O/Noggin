@@ -96,6 +96,7 @@
             live(true, 'Connected · ' + state.version);
             errors = {values: Object.assign({}, state.problems || {}), persona: {}};
             render();
+            loadModels(false);
         }).catch(() => {
             live(false, 'Jibo is not reachable');
             $('main').replaceChildren(el('div', {class: 'banner', text: 'Jibo did not answer. Check that he is on and on this network, then reload.'}));
@@ -129,12 +130,15 @@
         if (newKey) body.values.apiKey = newKey;
         if (newAdminKey) body.values.adminKey = newAdminKey;
         const keysChanged = !!(newKey || newAdminKey || Object.prototype.hasOwnProperty.call(pending, 'adminKey'));
+        // Another key or address can see other models.
+        const modelsChanged = !!(newKey || Object.prototype.hasOwnProperty.call(pending, 'apiBase'));
         $('save').disabled = true;
         return request('POST', '/api/settings', body).then(result => {
             if (result.status === 200) {
                 state = result.json; pending = {}; personaPending = {}; newKey = ''; newAdminKey = '';
                 errors = {values: Object.assign({}, state.problems || {}), persona: {}};
                 if (keysChanged) { usage = null; usageWanted = true; }
+                if (modelsChanged) { modelInfo = null; loadModels(false); }
                 render();
                 toast('Saved. Changes apply to the next conversation.');
                 return;
@@ -154,10 +158,95 @@
         render();
     }
 
+    // ---- model dropdowns (D179) ----
+    // modelInfo: the last GET /api/models, {ok, available: {id: shutdown date or null}, others: {role: [id]}}
+    // or {ok: false}; null until asked. Without it the dropdowns still list the tested models.
+    let modelInfo = null;
+    const MODEL_WARN_DAYS = 90;
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    function loadModels(fresh) {
+        return request('GET', '/api/models' + (fresh ? '?refresh=1' : '')).then(result => {
+            modelInfo = result.status === 200 && result.json && result.json.ok ? result.json : {ok: false};
+        }).catch(() => { modelInfo = {ok: false}; }).then(redrawModelRows);
+    }
+    // The dropdowns again with the new list; nothing else on the page is rebuilt, so what
+    // someone is typing keeps its place.
+    function redrawModelRows() {
+        if (!state) return;
+        modelFields().forEach(field => {
+            const row = document.querySelector('[data-key="' + field.key + '"] .field-control');
+            if (row) row.replaceChildren(modelControl(field, current(field.key)));
+        });
+        updateModelNotes();
+    }
+    function niceDate(iso) {
+        const p = iso.split('-');
+        return Number(p[2]) + ' ' + MONTHS[Number(p[1]) - 1] + ' ' + p[0];
+    }
+    function daysUntil(iso) {
+        const p = iso.split('-').map(Number);
+        return Math.ceil((Date.UTC(p[0], p[1] - 1, p[2]) - Date.now()) / 86400000);
+    }
+    // What OpenAI says about one model: {text, level} (level: ok, warn, bad or plain), or null when unknown.
+    function modelStatus(id) {
+        if (!modelInfo || !modelInfo.ok) return null;
+        if (!Object.prototype.hasOwnProperty.call(modelInfo.available, id)) return {text: 'Your key cannot use this model', level: 'bad'};
+        const shutdown = modelInfo.available[id];
+        if (!shutdown) return {text: 'Available, no shutdown announced', level: 'ok'};
+        const days = daysUntil(shutdown);
+        if (days < 0) return {text: 'Shut down on ' + niceDate(shutdown), level: 'bad'};
+        return {text: 'Shuts down on ' + niceDate(shutdown) + ' (in ' + days + ' day' + (days === 1 ? '' : 's') + ')', level: days <= MODEL_WARN_DAYS ? 'bad' : 'plain'};
+    }
+    function modelFields() { return state.schema.filter(f => f.type === 'model'); }
+    function isVerified(field, id) { return field.verified.some(m => m.id === id); }
+    const CHIP_CLASS = {ok: ' is-ok', bad: ' is-bad'};
+    // What is wrong with the models chosen now, one line each.
+    function modelProblems() {
+        const lines = [];
+        modelFields().forEach(field => {
+            const id = current(field.key), status = modelStatus(id);
+            if (status && status.level === 'bad') lines.push(field.label + ' ' + id + ': ' + status.text.charAt(0).toLowerCase() + status.text.slice(1) + '.');
+        });
+        return lines;
+    }
+    // Status chips next to each dropdown and the banner on top of the Brain tab, redrawn after
+    // a change or an answer from OpenAI.
+    function updateModelNotes() {
+        if (!state) return;
+        modelFields().forEach(field => {
+            const id = current(field.key), status = modelStatus(id), where = document.getElementById('model-status-' + field.key);
+            if (!where) return;
+            const chips = [];
+            if (status) chips.push(el('span', {class: 'chip' + (CHIP_CLASS[status.level] || ''), text: status.text}));
+            if (!isVerified(field, id)) chips.push(el('span', {class: 'chip', text: 'Not tested with Noggin'}));
+            where.replaceChildren.apply(where, chips);
+        });
+        const banner = document.getElementById('model-banner'), problems = modelProblems();
+        if (!banner) return;
+        banner.hidden = problems.length === 0;
+        const lines = problems.map(p => el('div', {class: 'banner-line', text: p}));
+        banner.replaceChildren.apply(banner, problems.length ? [el('div', {text: 'Check your models. Pick another below.'})].concat(lines) : []);
+    }
+    // A dropdown: the tested models first (one recommended), then the others OpenAI lists for this
+    // key that look right for the job, and the saved name when it is in neither list.
+    function modelControl(field, value) {
+        const verified = field.verified, unverified = ((modelInfo && modelInfo.ok && modelInfo.others[field.role]) || []).filter(id => !isVerified(field, id));
+        const label = m => m.id + (m.recommended ? ' (recommended)' : '') + (m.note ? ', ' + m.note : '');
+        const groups = [el('optgroup', {label: 'Tested with Noggin'}, verified.map(m => el('option', {value: m.id, text: label(m), selected: m.id === value})))];
+        // The saved name and the one chosen now stay in the list even when OpenAI does not list them.
+        const rest = unverified.slice();
+        [state.values[field.key], value].forEach(id => { if (id && !isVerified(field, id) && rest.indexOf(id) < 0) rest.unshift(id); });
+        if (rest.length) groups.push(el('optgroup', {label: 'Not tested'}, rest.map(id => el('option', {value: id, text: id + (id === state.values[field.key] && unverified.indexOf(id) < 0 ? ' (saved)' : ''), selected: id === value}))));
+        const select = el('select', {'aria-label': field.label, onchange: () => { setValue(field, select.value); updateModelNotes(); }}, groups);
+        return el('div', {class: 'model-pick'}, [select, el('div', {class: 'model-status', id: 'model-status-' + field.key})]);
+    }
+
     // ---- controls per field type ----
     function control(field) {
         const value = current(field.key);
         switch (field.type) {
+        case 'model':
+            return modelControl(field, value);
         case 'bool': {
             const input = el('input', {type: 'checkbox', checked: !!value, 'aria-label': field.label, onchange: () => setValue(field, input.checked)});
             return el('label', {class: 'switch'}, [input, el('span')]);
@@ -190,11 +279,9 @@
         case 'map':
             return mapControl(field);
         default: {
-            const listId = field.suggestions ? 'list-' + field.key : null;
-            const input = el('input', {type: field.type === 'url' ? 'url' : 'text', value: value === null ? '' : value, list: listId, maxlength: field.max || 200,
+            const input = el('input', {type: field.type === 'url' ? 'url' : 'text', value: value === null ? '' : value, maxlength: field.max || 200,
                 autocomplete: 'off', spellcheck: 'false', 'aria-label': field.label, oninput: () => setValue(field, input.value)});
-            const list = listId ? el('datalist', {id: listId}, field.suggestions.map(s => el('option', {value: s}))) : null;
-            return el('div', {class: 'grow'}, [input, list]);
+            return el('div', {class: 'grow'}, [input]);
         }
         }
     }
@@ -321,6 +408,7 @@
                 const ok = r.json && r.json.ok;
                 const text = ok ? 'Works · ' + (r.json.ms / 1000).toFixed(1) + ' s' : (r.json && r.json.error) || 'Did not work';
                 result.replaceChildren(el('span', {class: 'chip ' + (ok ? 'is-ok' : 'is-bad'), text: text}));
+                if (ok && !newKey) loadModels(true);
             }).catch(() => result.replaceChildren(el('span', {class: 'chip is-bad', text: 'Jibo did not answer'})))
               .then(() => { test.disabled = false; });
         }});
@@ -893,6 +981,7 @@
         const panel = active === 'persona' ? personaPanel() : active === 'history' ? historyPanel() : active === 'memory' ? memoryPanel() : active === 'usage' ? usagePanel() : settingsPanel(active);
         const intro = active === 'persona' ? [] : [el('p', {class: 'hint', text: INTRO[active]})];
         const notices = state.broken ? [el('div', {class: 'banner', text: 'Jibo\'s settings file could not be read (' + state.broken + '). Saving writes a new one.'})] : [];
+        if (active === 'brain') notices.push(el('div', {class: 'banner is-warning', id: 'model-banner', hidden: true}));
         main.replaceChildren(el('section', {class: 'panel is-active'}, notices.concat(intro, panel)));
         $('nav').replaceChildren.apply($('nav'), TABS.map(tab => el('button', {class: 'tab' + (tab.id === active ? ' is-active' : ''), type: 'button',
             'aria-current': tab.id === active ? 'page' : null, onclick: () => {
@@ -902,6 +991,7 @@
                 render(); window.scrollTo(0, 0);
             }, html: icon(tab.icon) + '<span>' + tab.label + '</span>'})));
         updateSaveBar();
+        updateModelNotes();
         drawCharts();
         window.scrollTo(0, scroll);
     }

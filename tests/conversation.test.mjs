@@ -643,7 +643,7 @@ test('Decisions API: request shape, answer parsing, confidence threshold', () =>
     assert.equal(labels.decisionLabel(null).label, null);
 });
 
-test('classifier: Decisions first, then the Responses fallback for the rest of the session if the account cannot use it', async () => {
+test('classifier: a refused Decisions request gives no expression and no other model is asked (D179)', async () => {
     const calls = [];
     const config = Object.assign({}, DEFAULTS, {apiKey: 'sk'});
     const ok = openai.classifier(config, (route, body) => { calls.push(route); return Promise.resolve({status: 200, ms: 120, json: {answers: [{type: 'choice', name: 'expression', choice: 'happy', confidence: 0.8}]}}); });
@@ -651,12 +651,12 @@ test('classifier: Decisions first, then the Responses fallback for the rest of t
     calls.length = 0;
     const missing = openai.classifier(config, (route, body) => {
         calls.push(route + ':' + body.model);
-        return Promise.resolve(route === '/decisions' ? {status: 404, ms: 50, json: {error: {code: 'model_not_found'}}} : {status: 200, ms: 600, json: {output_text: '{"expression":"sad"}'}});
+        return Promise.resolve({status: 404, ms: 50, json: {error: {code: 'model_not_found'}}});
     });
     const first = await missing('my cat died', 'I am so sorry.', 'line');
-    assert.equal(first.label, 'sad'); assert.match(first.switched, /model_not_found.*gpt-4o-mini/);
+    assert.equal(first.label, null); assert.equal(first.error, 'model_not_found'); assert.equal(first.switched, undefined);
     await missing('x', 'y', 'reaction');
-    assert.deepEqual(calls, ['/decisions:gpt-6-luna', '/responses:gpt-4o-mini', '/responses:gpt-4o-mini']);
+    assert.deepEqual(calls, ['/decisions:gpt-6-luna', '/decisions:gpt-6-luna']);
 });
 
 test('reaction that arrives after the first line is queued goes with that line', async () => {
@@ -939,7 +939,7 @@ test('the classifier warm starts while the realtime session is still connecting,
     h.talk.close();
 });
 
-test('the warm asks the reaction and two line questions at once with the real choices; a refused API switches then (D93)', async () => {
+test('the warm asks the reaction and two line questions at once with the real choices; a refused API is reported, not replaced (D93, D179)', async () => {
     const config = Object.assign({}, DEFAULTS, {apiKey: 'sk'});
     const sent = [];
     const answer = {answers: [{type: 'choice', name: 'expression', choice: 'none', confidence: 0.9}, {type: 'choice', name: 'size', choice: 'small', confidence: 0.7}]};
@@ -955,18 +955,17 @@ test('the warm asks the reaction and two line questions at once with the real ch
     assert.notEqual(sent[1].body.input, sent[2].body.input, 'two different lines');
     assert.equal(sent[0].body.questions.length, 2, 'with the size question, as a real turn');
     assert.deepEqual(result.requests.map(r => r.conn.socket), [1, 2, 3]);
-    // The account cannot use Decisions: the fallback takes over during the warm, not in turn 1.
+    // The account cannot use Decisions: the warm shows the error and nothing else is asked.
     const routes = [];
-    const refused = openai.classifier(Object.assign({}, config, {fallbackModel: 'gpt-4o-mini'}), (route, body) => {
+    const refused = openai.classifier(config, (route, body) => {
         routes.push(route);
-        return Promise.resolve(route === '/decisions' ? {status: 403, ms: 30, json: {error: {code: 'not_enabled'}}}
-            : {status: 200, ms: 50, json: {output_text: '{"expression":"none","size":"small"}'}});
+        return Promise.resolve({status: 403, ms: 30, json: {error: {code: 'not_enabled'}}});
     });
     const warmed = await refused.warm();
-    assert.ok(warmed.requests.every(r => r.label === 'none' && /decisions failed/.test(r.switched)), JSON.stringify(warmed));
+    assert.ok(warmed.requests.every(r => r.label === null && r.error === 'not_enabled' && !r.switched), JSON.stringify(warmed));
     routes.length = 0;
     await refused('x', 'y', 'line');
-    assert.deepEqual(routes, ['/responses'], 'the first real question goes straight to the fallback');
+    assert.deepEqual(routes, ['/decisions']);
     // No warm when Responses is chosen.
     const plain = openai.classifier(Object.assign({}, config, {classifierApi: 'responses'}), () => { throw Error('nothing should be sent'); });
     assert.equal(await plain.warm(), null);
@@ -977,13 +976,13 @@ test('the warm asks the reaction and two line questions at once with the real ch
 
 test('a switch during the warm is logged once, however many requests switched (D93)', async () => {
     const classify = () => Promise.resolve({label: 'none'});
-    const switched = 'decisions failed (not_enabled), now gpt-4o-mini';
+    const switched = 'size question refused (HTTP 400), now without it';
     classify.warm = () => Promise.resolve({ms: 900, requests: [{kind: 'reaction', ms: 400, switched}, {kind: 'line', ms: 300, switched}, {kind: 'line', ms: 310, switched}]});
     const h = await listening({classify}); await sleep(5);
     assert.equal(h.logs.filter(e => e.kind === 'classifier_warm').length, 1);
     const entries = h.logs.filter(e => e.kind === 'classifier_switch');
     assert.equal(entries.length, 1);
-    assert.match(entries[0].detail, /now gpt-4o-mini/);
+    assert.match(entries[0].detail, /now without it/);
     h.talk.close();
 });
 

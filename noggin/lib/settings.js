@@ -5,7 +5,7 @@
 // Node 6: ES2015 only.
 'use strict';
 const fs = require('fs'), path = require('path'), url = require('url');
-const catalog = require('./catalog'), realtime = require('./realtime-session'), actions = require('./actions'), files = require('./files'), migrate = require('./migrate');
+const catalog = require('./catalog'), models = require('./models'), realtime = require('./realtime-session'), actions = require('./actions'), files = require('./files'), migrate = require('./migrate');
 const lines = require('./lines');
 
 const ROBOT_SKILLS = '/opt/jibo/Jibo/Skills';
@@ -35,11 +35,12 @@ const SCHEMA = [
         help: 'Your OpenAI API key. It stays on Jibo and is never shown again.'},
     {key: 'apiBase', type: 'url', default: 'https://api.openai.com/v1', tab: 'brain', group: 'OpenAI', label: 'API address',
         help: 'Change only for a compatible proxy. On Jibo (BEam 3.2.0) the address must be public or localhost: a device on the home network is refused.', advanced: true},
-    {key: 'realtimeModel', type: 'text', pattern: MODEL, default: 'gpt-realtime-2.1', tab: 'brain', group: 'Models', label: 'Conversation model',
-        help: 'Hears Jibo\'s microphone and writes what he says.', suggestions: ['gpt-realtime-2.1', 'gpt-realtime-2.1-mini', 'gpt-realtime']},
+    // The model fields are dropdowns (lib/models.js, D179); a saved name outside the lists still works.
+    {key: 'realtimeModel', type: 'model', role: 'conversation', pattern: MODEL, default: 'gpt-realtime-2.1', tab: 'brain', group: 'Models', label: 'Conversation model',
+        help: 'Hears Jibo\'s microphone and writes what he says.'},
     // gpt-transcribe is the default transcription model (D108).
-    {key: 'transcribeModel', type: 'text', pattern: MODEL, default: 'gpt-transcribe', tab: 'brain', group: 'Models', label: 'Transcription model',
-        help: 'Turns your words into text for the log and Jibo\'s skills.', suggestions: ['gpt-transcribe', 'gpt-4o-mini-transcribe']},
+    {key: 'transcribeModel', type: 'model', role: 'transcription', pattern: MODEL, default: 'gpt-transcribe', tab: 'brain', group: 'Models', label: 'Transcription model',
+        help: 'Turns your words into text for the log and Jibo\'s skills.'},
     {key: 'transcribeLanguages', type: 'set', default: ['en', 'nl'], tab: 'brain', group: 'Models', label: 'Languages spoken',
         help: 'Tells the transcription model which languages to expect, so it does not mishear one as another. None: it guesses. Only gpt-transcribe and gpt-live-transcribe use this.',
         options: realtime.LANGUAGES},
@@ -54,10 +55,11 @@ const SCHEMA = [
     {key: 'classifierApi', type: 'enum', default: 'decisions', tab: 'brain', group: 'Models', label: 'Expression picker',
         help: 'How a fast model picks Jibo\'s face and body expression for each line.',
         options: [{value: 'decisions', label: 'Decisions API'}, {value: 'responses', label: 'Responses API'}]},
-    {key: 'classifierModel', type: 'text', pattern: MODEL, default: 'gpt-6-luna', tab: 'brain', group: 'Models', label: 'Expression model',
-        help: 'The Decisions API\'s model, or a Responses model.', suggestions: ['gpt-6-luna', 'gpt-4o-mini', 'gpt-4.1-mini']},
-    {key: 'fallbackModel', type: 'text', pattern: MODEL, default: 'gpt-4o-mini', tab: 'brain', group: 'Models', label: 'Fallback model',
-        help: 'Picks expressions when the Decisions API is not available.', suggestions: ['gpt-4o-mini', 'gpt-4.1-mini']},
+    {key: 'classifierModel', type: 'model', role: 'expression', pattern: MODEL, default: 'gpt-6-luna', tab: 'brain', group: 'Models', label: 'Expression model',
+        help: 'A decision model: the Decisions API asks it to pick Jibo\'s expression for each line. With the Responses API above it is an ordinary model.'},
+    // Memory notes, Describe with AI and the setup check (D179).
+    {key: 'helperModel', type: 'model', role: 'helper', pattern: MODEL, default: 'gpt-6-luna', tab: 'brain', group: 'Models', label: 'Helper model',
+        help: 'Writes the memory notes after a conversation and the lines for Describe with AI.'},
     {key: 'classifierReasoning', type: 'enum', default: null, tab: 'brain', group: 'Models', label: 'Expression model reasoning',
         help: 'Responses API with a reasoning model only.', advanced: true,
         options: [{value: null, label: 'Model default'}, {value: 'none', label: 'None'}, {value: 'minimal', label: 'Minimal'}, {value: 'low', label: 'Low'}]},
@@ -133,7 +135,7 @@ const SCHEMA = [
     {key: 'memory', type: 'bool', default: true, tab: 'memory', group: 'Memory', label: 'Memory',
         help: 'Jibo keeps facts about the household and short notes of recent conversations, and uses them when he talks: they go to OpenAI at the start of every conversation. Off: none of it goes.'},
     {key: 'memoryLearn', type: 'bool', default: true, tab: 'memory', group: 'Memory', label: 'Learn from conversations',
-        help: 'After each conversation, the fallback model writes a short note and picks out facts. This sends what was said to OpenAI once more. With conversation logs off, Jibo keeps only what was said until the note is written. Off: Jibo only remembers what you ask him to.'},
+        help: 'After each conversation, the helper model writes a short note and picks out facts. This sends what was said to OpenAI once more. With conversation logs off, Jibo keeps only what was said until the note is written. Off: Jibo only remembers what you ask him to.'},
 
     {key: 'log', type: 'bool', default: true, tab: 'history', group: 'History', label: 'Keep conversation logs',
         help: 'What was said, expressions and timings; never audio or the key.'},
@@ -177,6 +179,7 @@ function check(field, value) {
         if (typeof value !== 'string' || value.length > 200 || !/^https?:\/\/[^\s/]+(\/\S*)?$/.test(value)) return fail('An http or https address.');
         return {value: value.replace(/\/+$/, '')};
     case 'text':
+    case 'model':
         if (typeof value !== 'string') return fail('Text, please.');
         if (value === '' && !field.empty) return fail('This cannot be empty.');
         if (field.pattern && value !== '' && !field.pattern.test(value)) return fail('Letters, digits and . _ : - only.');
@@ -361,6 +364,7 @@ function schemaView() {
         Object.keys(field).forEach(k => {
             if (k === 'pattern') out.pattern = field.pattern.source;
             else if (k === 'options') out.options = options(field).map(o => (typeof o === 'string' ? {value: o, label: o} : o));
+            else if (k === 'role') { out.role = field.role; out.verified = models.verified(field.role); }
             else out[k] = field[k];
         });
         return out;

@@ -11,12 +11,13 @@
 const fs = require('fs'), path = require('path');
 const settings = require('./settings'), realtime = require('./realtime-session'), actions = require('./actions');
 const openai = require('./openai'), ConversationLog = require('./conversation-log'), describe = require('./describe');
-const memory = require('./memory'), usage = require('./usage'), stats = require('./stats'), strings = require('./text'), voice = require('./voice');
+const models = require('./models'), memory = require('./memory'), usage = require('./usage'), stats = require('./stats'), strings = require('./text'), voice = require('./voice');
 const {requestJson, withTimeout} = require('./http');
 
 const BODY_MAX = 128 * 1024;
 const IMPORT_BODY_MAX = 512 * 1024;   // a memory export is far smaller; the room is for files edited by hand (D156)
 const REQUEST_TIMEOUT_MS = 15000;
+const MODELS_KEEP_MS = 6 * 3600000, MODELS_REFRESH_MS = 60000;
 const MAX_CONNECTIONS = 16;
 // The persona size the page recommends: the instructions sent at every conversation start.
 const BUDGET = 5800;
@@ -91,7 +92,7 @@ function create(options) {
     const webDir = options.webDir, version = options.version || '';
     const dataDir = typeof options.dataDir === 'function' ? options.dataDir : () => options.dataDir;
     const log = options.log || {info() {}, warn() {}, error() {}};
-    const checkKey = options.checkKey || openai.checkKey;
+    const checkKey = options.checkKey || openai.checkKey, listModels = options.listModels || openai.listModels;
     const post = options.post || openai.post, describeTimeoutMs = options.describeTimeoutMs || DESCRIBE_TIMEOUT_MS;
     let describing = false;
     const now = options.now || (() => new Date());
@@ -166,6 +167,29 @@ function create(options) {
         const field = settings.SCHEMA.filter(f => f.key === name)[0];
         return settings.check(field, value).value || String(value).trim();
     }
+    // GET /api/models[?refresh=1]: which models the saved key can use and when OpenAI shuts them
+    // down (D179). Kept for six hours, and a refresh within a minute of the last answer gets
+    // that answer; requests during a fetch share it. A failed answer is not kept.
+    let modelView = null, modelAsk = null;
+    function modelsView(refresh) {
+        const loaded = settings.load(dataDir()), key = loaded.secrets.apiKey, base = loaded.config.apiBase;
+        if (!key) return Promise.resolve({ok: false, error: 'no key saved yet'});
+        const nowMs = now().getTime();
+        const same = modelView && modelView.key === key && modelView.base === base;
+        if (same && nowMs - modelView.at < (refresh ? MODELS_REFRESH_MS : MODELS_KEEP_MS)) return Promise.resolve(modelView.body);
+        if (modelAsk && modelAsk.key === key && modelAsk.base === base) return modelAsk.promise;
+        let abort = null;
+        const done = () => { if (abort) fetches.delete(abort); if (modelAsk && modelAsk.promise === promise) modelAsk = null; };
+        const promise = Promise.resolve(listModels({apiBase: base, apiKey: key}, undefined, cancel => { abort = cancel; fetches.add(cancel); })).then(result => {
+            done();
+            if (!result.models) return {ok: false, error: result.error || 'OpenAI did not answer'};
+            const body = Object.assign({ok: true, fetchedAt: nowMs}, models.view(result.models));
+            modelView = {key: key, base: base, at: nowMs, body: body};
+            return body;
+        }, error => { done(); throw error; });
+        modelAsk = {key: key, base: base, promise: promise};
+        return promise;
+    }
     // POST /api/test-key {key?}: the given key, or the saved one.
     function testKey(body) {
         const loaded = settings.load(dataDir());
@@ -216,7 +240,7 @@ function create(options) {
     }
 
     // POST /api/apps/describe {pkg}: one line on what an installed skill does, written by the
-    // fallback model from its README (D41). Only a package name comes in; the README is BEacon's,
+    // helper model from its README (D41). Only a package name comes in; the README is BEacon's,
     // so this never sends other text to OpenAI. One at a time.
     function describeApp(body) {
         const pkg = typeof body.pkg === 'string' ? body.pkg : '';
@@ -233,7 +257,7 @@ function create(options) {
             const name = skill.manifest && typeof skill.manifest.name === 'string' ? skill.manifest.name : pkg;
             let abort = null;
             const untrack = () => { if (abort) fetches.delete(abort); };
-            const asked = Promise.resolve().then(() => post(config, '/responses', describe.request(config.fallbackModel, name, skill.readme), describeTimeoutMs,
+            const asked = Promise.resolve().then(() => post(config, '/responses', describe.request(config.helperModel, name, skill.readme), describeTimeoutMs,
                 cancel => { abort = cancel; fetches.add(cancel); }));
             const late = () => {
                 const reason = 'no answer in ' + describeTimeoutMs / 1000 + ' s';
@@ -244,7 +268,7 @@ function create(options) {
                 if (r.status !== 200) return fail(502, r.status === 401 ? 'OpenAI does not accept the key' : 'OpenAI answered ' + r.status);
                 const line = describe.result(r.json);
                 if (line.refused) log.warn('describe ' + pkg + ': refused "' + line.refused.slice(0, 120) + '"');
-                return line.error ? fail(422, line.error) : {httpStatus: 200, body: {ok: true, about: line.about, model: config.fallbackModel}};
+                return line.error ? fail(422, line.error) : {httpStatus: 200, body: {ok: true, about: line.about, model: config.helperModel}};
             }, error => fail(502, 'OpenAI did not answer (' + String(error && error.message || error).slice(0, 80) + ')'));
         }, error => fail(502, 'BEacon did not answer (' + error.message + ')'))
             .then(result => { describing = false; return result; }, error => { describing = false; throw error; });
@@ -385,6 +409,7 @@ function create(options) {
         if (method === 'GET' && pathname === '/api/skills/found') return found().then(result => json(res, result.httpStatus, result.body));
         if (method === 'GET' && pathname === '/api/memory') return json(res, 200, memoryView());
         if (method === 'GET' && pathname === '/api/stats') return json(res, 200, Object.assign({ok: true}, stats.report(stats.scan(dataDir()), now().getTime(), local)));
+        if (method === 'GET' && pathname === '/api/models') return modelsView(/(^|&)refresh=1(&|$)/.test(query)).then(view => json(res, 200, view));
         if (method === 'GET' && pathname === '/api/usage') return usageView(/(^|&)refresh=1(&|$)/.test(query)).then(view => json(res, 200, view));
         if (method === 'GET' && pathname === '/api/memory/export') return exportMemory(res);
         const writes = {'/api/settings': save, '/api/test-key': testKey, '/api/apps/describe': describeApp,

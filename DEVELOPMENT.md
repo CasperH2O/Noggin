@@ -56,7 +56,7 @@ On the robot: BEacon, Store, Upload ZIP, and choose `Noggin.zip` from a release.
   and the newest notes go at the end of the instructions, within a fixed budget, and stay the same
   all session so the prompt cache keeps them cheap. The tools `remember`, `forget` and `recall`
   serve explicit requests; `recall` searches older notes by keyword. After a conversation ends,
-  `background.js` sends its text and the current facts to the Fallback model once (Responses API,
+  `background.js` sends its text and the current facts to the Helper model once (Responses API,
   strict JSON) and stores the note and the fact changes. It looks every minute, and a few seconds
   after the skill signals the end of a conversation (a listener list on the shared `global`
   object; both run in Be's process). Learning starts with the first conversation that has it on. One conversation per pass, 3 tries, at most 60 calls a day; logs from
@@ -173,6 +173,7 @@ The page uses these; anything on the local network can too (no login, like BEaco
 | `POST /api/settings` | `{values: {key: value or null}, persona: {soul or identity or facts: text or null}}`; `null` restores the default. All or nothing: `400` with `errors` per field. A new `adminKey` is saved only when OpenAI shows it is read-only |
 | `GET /api/stats` | the Usage tab's Conversations section, from the conversation logs kept: `{ok, total, since, week: {count, ms, averageMs, longestMs}, days: [{day, count, ms}], recent: [{start, day, time, ms, turns, reason, resumed}]}`; days are Jibo's local days, and a comeback after a handover (`resumed`) adds time but is not counted again |
 | `GET /api/usage`, `GET /api/usage?refresh=1` | the Usage tab: `{ok, state, days, models, features, budget, caching, whatIf, perConversation, hours, key, fetchedAt, cached}`; a model or feature has `cost`, `tokens` and `seconds` (audio, per-minute models); `state` is `ok`, `no-key`, `removed` (a saved key had write access and was deleted), `rejected`, `unknown`, `no-match`, `no-api-key` or `error` with `error`. `budget.spent` is what the limit counts: the project's spend for a project limit, else the account's |
+| `GET /api/models`, `GET /api/models?refresh=1` | the Models endpoint's answer for the saved key, kept 6 hours (a refresh within a minute of the last answer gets it, requests during a fetch share one): `{ok, fetchedAt, available: {id: shutdown date or null}, others: {conversation, transcription, expression, helper: [id]}}`; `others` are models that look right for the job, are not tested and have no shutdown announced; `{ok: false, error}` without a key or when OpenAI does not answer. The tested lists are in `lib/models.js` |
 | `POST /api/test-key` | `{key}` or the saved key: Jibo asks OpenAI for its model list |
 | `GET /api/logs`, `GET /api/logs/<name>` | the conversation logs, newest first, and one log as JSON lines |
 | `GET /api/skills/found` | the custom skills installed through BEacon that could become extra apps, as `{found: [{name, pkg, label, about}], builtIn}` (`about`: the start of the skill's README); Noggin asks BEacon (`127.0.0.1:8123`, or `BEACON_PORT`) itself. `502` when BEacon does not answer within 4 s |
@@ -182,7 +183,7 @@ The page uses these; anything on the local network can too (no login, like BEaco
 | `POST /api/memory/clear` | `{confirm: true}`: every fact and note goes, and the conversations so far are never recapped |
 | `GET /api/memory/export` | the facts and notes as a JSON download: `{format: 'noggin-memory', version: 1, facts, summaries}` (no log names) |
 | `POST /api/memory/import` | `{data, mode?: 'add' (default) or 'replace', confirm?}`: `data` is an export (the older one without `format` too). Every entry is checked like a new one (length, instruction-like text, a date that exists, expiry, notes older than 14 days, the memory budget) and gets a new id; at most 400 facts and 400 notes are read, nothing already kept is changed or pushed out, and a full memory (60 facts, 2,400 characters, 300 notes) refuses the rest. The body may be up to 512 KB (other writes 128 KB). `replace` needs `confirm: true`, is refused (`400`) when nothing in the file could be used, and, like `clear`, counts the conversations so far as recapped. Answers like `GET /api/memory` plus `message` (what was added, already known, left out); `400` with `error` for a file that is not an export |
-| `POST /api/apps/describe` | `{pkg}` → `{about, model}`: one line on what an installed skill does, written by the Fallback model from the README BEacon has, with the saved key. Only a package name comes in. One call at a time (`429` while busy); `404` when the skill is not installed through BEacon, `422` without a README or for an answer that reads like instructions, `502` when OpenAI or BEacon does not answer |
+| `POST /api/apps/describe` | `{pkg}` → `{about, model}`: one line on what an installed skill does, written by the Helper model from the README BEacon has, with the saved key. Only a package name comes in. One call at a time (`429` while busy); `404` when the skill is not installed through BEacon, `422` without a README or for an answer that reads like instructions, `502` when OpenAI or BEacon does not answer |
 
 A `POST` must be JSON (`Content-Type: application/json`) and must not name another site in its
 `Origin` or `Referer`; bodies are limited to 128 KB.
@@ -216,6 +217,7 @@ The tests and tools run on a current Node.
 | `noggin/lib/conversation-tools.js` | running the model's tool calls: in Noggin, a handover, or Jibo's cloud |
 | `noggin/lib/realtime-session.js` | what the realtime model is told: session settings, instructions, resume notes |
 | `noggin/lib/openai.js` | the OpenAI connections: the realtime WebSocket and HTTPS requests |
+| `noggin/lib/models.js` | the tested models per job (one recommended each) and the pick of untested candidates from OpenAI's model list, for the settings page's dropdowns |
 | `noggin/lib/labels.js` | the expression classifier's requests and how its answers are read |
 | `noggin/lib/catalog.js`, `catalog.json` | moods and their animations, dances, eye emoji (built by `tools/expression-catalog.mjs`) |
 | `noggin/lib/emoji-nl.js` | Dutch words for the eye emoji, each pointing at a word of the English emoji index |

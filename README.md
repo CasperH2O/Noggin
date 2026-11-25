@@ -44,7 +44,7 @@ Say just the words, nothing more: "Hey Jibo, talk to Noggin about space" is not 
 
 The page has seven tabs. Changes apply to the next conversation.
 
-- **Brain:** your OpenAI key and the models Noggin uses.
+- **Brain:** your OpenAI key and the models Noggin uses. Each model is picked from a list: the models Noggin was tested with (one is recommended), then other models your key can use. Next to each, Jibo shows whether your key can use it and when OpenAI shuts it down, and warns at the top when a chosen model is about to go.
 - **Persona:** who Jibo is: his soul, his identity and more facts about him. Everything can be changed, and **Reset to default** brings back Noggin's own text. The default persona keeps every answer right for a young child.
 - **Behaviour:** opening on "Hey Jibo", the greeting, telling Noggin who Jibo sees, when a conversation ends, expressions and dances. Advanced settings for the microphone are folded away.
 - **Skills:** which of Jibo's skills and cloud features Noggin may use, and up to 8 extra apps it may open by name, each with a line on what it does so Noggin knows when to open it. Scan finds the skills you installed through BEacon and fills in that line from their description; add each with one click.
@@ -69,6 +69,8 @@ Noggin does not ask for the camera (it only hears whom Jibo's own face recogniti
 What you say goes to OpenAI to be answered, with your key. So does, at the start of every conversation, what Jibo remembers (the facts and his recent notes), so he can use it; turn memory off on the Memory tab and none of it goes. When Noggin comes back after one of Jibo's skills or his cloud, what Jibo said meanwhile goes to OpenAI too (for example your calendar, your commute or a personal report), so Noggin can carry on from it. When Jibo recognises someone from his family list by face, their name goes to OpenAI as well; switch **Tell Noggin who Jibo sees** off on the Behaviour tab to keep names on Jibo. Noggin keeps conversation logs on Jibo as text, readable by anyone on your home network through the settings page; turn them off on the History tab if that is not what you want. The logs themselves are sent nowhere.
 
 With **Learn from conversations** on (the default), each finished conversation's text and the facts Jibo keeps go to OpenAI once more, so a small model can write the note and pick out facts. The notes and facts stay on Jibo. With conversation logs off, Jibo keeps only what was said until that note is written. Turn learning off on the Memory tab and Jibo only remembers what you ask him to; turn memory off and he remembers nothing.
+
+When you open the Brain tab, and after you save a new key, Jibo asks OpenAI which models your key can use and when they shut down. Only the key goes with that request, and the answer is kept in memory for 6 hours.
 
 With an admin key saved, Jibo reads your account's costs, usage and spend limits from OpenAI when you open the Usage tab, and twice a day for the budget heads-up, and keeps them in memory for 15 minutes. He never keeps or shows the account's users, and never sees other keys' secrets.
 

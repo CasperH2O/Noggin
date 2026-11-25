@@ -5,7 +5,7 @@
 // simulator). Node 6 / Chrome 53: ES2015 only.
 'use strict';
 const https = require('https'), http = require('http'), url = require('url');
-const labels = require('./labels'), web = require('./http');
+const labels = require('./labels'), web = require('./http'), models = require('./models');
 
 const ANSWER_MAX = 1024 * 1024;
 const CLASSIFY_TIMEOUT_MS = 10000;
@@ -127,6 +127,17 @@ function checkKey(config, timeoutMs) {
         .then(r => finish(r.status === 200 ? {ok: true, status: r.status} : {ok: false, status: r.status, error: keyProblem(r.status)}),
             error => finish({ok: false, status: null, error: String(error && error.message || error)}));
 }
+// The models this key can use: [{id, shutdown}] or {error}, for the settings page (D179).
+// track(abort), when given, receives a function that cancels the request.
+function listModels(config, timeoutMs, track) {
+    return Promise.resolve().then(() => web.requestJson({url: config.apiBase + '/models', headers: {Authorization: 'Bearer ' + config.apiKey},
+        timeoutMs: timeoutMs || 8000, timeoutMessage: 'no answer from OpenAI', maxBytes: ANSWER_MAX, track: track}))
+        .then(r => {
+            if (r.status !== 200) return {error: keyProblem(r.status)};
+            const list = models.parseList(r.json);
+            return list ? {models: list} : {error: 'OpenAI sent no model list'};
+        }, error => ({error: String(error && error.message || error)}));
+}
 // The page's fetch, ended after timeoutMs (Chrome 53 has no AbortController).
 function pageJson(config, route, body, method, timeoutMs) {
     const started = Date.now(), get = method === 'GET';
@@ -204,12 +215,13 @@ const WARM = [
     {kind: 'line', person: 'Hello Jibo, how are you today?', jibo: 'It is lovely to hear from you.'}
 ];
 // classify(personSaid, jiboSays, kind) -> {label, confidence, size, ms, api}. kind 'reaction'
-// (no jiboSays yet) or 'line'. The Decisions API is the default; if the account cannot use
-// it (an HTTP error), the rest of the session uses the Responses API with the fallback model.
+// (no jiboSays yet) or 'line'. The Decisions API is the default, the Responses API a setting;
+// a refused Decisions request gives no expression for that line (D179).
 // The size question (small/big) is asked unless config.expressionSize is false; if the
 // Decisions API refuses two questions, the rest of the session asks only the expression.
 function classifier(config, post) {
-    let api = config.classifierApi === 'responses' ? 'responses' : 'decisions', withSize = config.expressionSize !== false;
+    const api = config.classifierApi === 'responses' ? 'responses' : 'decisions';
+    let withSize = config.expressionSize !== false;
     if (!post) {
         const send = poster(config);
         post = (route, body) => send(route, body, CLASSIFY_TIMEOUT_MS);
@@ -220,8 +232,7 @@ function classifier(config, post) {
         return {label: answer.label, size: sized ? answer.size : null, confidence: null, ms: r.ms, api: 'responses'};
     }
     function viaResponses(personSaid, jiboSays, kind) {
-        const model = api === 'responses' && config.classifierApi === 'responses' ? config.classifierModel : config.fallbackModel;
-        return post('/responses', labels.classifierRequest(model, personSaid, jiboSays, config.classifierReasoning, kind))
+        return post('/responses', labels.classifierRequest(config.classifierModel, personSaid, jiboSays, config.classifierReasoning, kind))
             .then(r => withConn(r, r.status === 200 ? responsesResult(r, withSize)
                 : {label: null, ms: r.ms, status: r.status, api: 'responses', error: failure(r)}));
     }
@@ -235,10 +246,6 @@ function classifier(config, post) {
             if (sized && r.status === 400) {
                 withSize = false;
                 return classify(personSaid, jiboSays, kind).then(result => Object.assign(result, {switched: result.switched || 'size question refused (' + error + '), now without it'}));
-            }
-            if (r.status >= 400 && r.status < 500 && r.status !== 429 && config.fallbackModel) {
-                api = 'responses';
-                return viaResponses(personSaid, jiboSays, kind).then(result => Object.assign(result, {switched: 'decisions failed (' + error + '), now ' + config.fallbackModel}));
             }
             return withConn(r, {label: null, ms: r.ms, status: r.status, api: 'decisions', error: error});
         });
@@ -257,4 +264,4 @@ function classifier(config, post) {
     return classify;
 }
 
-module.exports = {connect, classifier, checkKey, post: nodeJson, poster, asker, switchesToPage};
+module.exports = {connect, classifier, checkKey, listModels, post: nodeJson, poster, asker, switchesToPage};

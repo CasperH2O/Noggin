@@ -120,20 +120,20 @@ test('OpenAI: only Node\'s own HTTPS failing moves a call to the page\'s fetch; 
         await assert.rejects(post('/responses', {}, 80), /^Error: timeout$/);
         assert.deepEqual(fetched, [], 'a Node timeout fails the call');
         // The classifier follows the same rule.
-        const offline = openai.classifier({apiBase: 'http://127.0.0.1:1/v1', apiKey: 'sk-test', classifierModel: 'm', fallbackModel: 'f'});
+        const offline = openai.classifier({apiBase: 'http://127.0.0.1:1/v1', apiKey: 'sk-test', classifierModel: 'm'});
         await assert.rejects(offline('hi', '', 'reaction'), e => e.code === 'ECONNREFUSED');
         assert.deepEqual(fetched, []);
         // An error page (a proxy's 502) is that call's answer; Node is asked again next time.
         const proxy = await serve((req, res) => { res.writeHead(502); res.end('<html>Bad gateway</html>'); });
         try {
-            const viaProxy = openai.classifier({apiBase: proxy.url + '/v1', apiKey: 'sk-test', classifierModel: 'm', fallbackModel: 'f'});
+            const viaProxy = openai.classifier({apiBase: proxy.url + '/v1', apiKey: 'sk-test', classifierModel: 'm'});
             assert.equal((await viaProxy('hi', '', 'reaction')).error, 'HTTP 502');
             await viaProxy('hi', '', 'reaction');
             assert.deepEqual(fetched, []);
             assert.equal(proxy.hits, 2, 'Node is asked again');
         } finally { await proxy.stop(); }
         // A success Node could not read: from then on the page's fetch.
-        const classify = openai.classifier({apiBase: garbled.url + '/v1', apiKey: 'sk-test', classifierModel: 'm', fallbackModel: 'f'});
+        const classify = openai.classifier({apiBase: garbled.url + '/v1', apiKey: 'sk-test', classifierModel: 'm'});
         await classify('hi', '', 'reaction');
         await classify('hi', '', 'reaction');
         assert.equal(fetched.length, 2);

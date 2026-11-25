@@ -367,7 +367,7 @@ async function beaconWithReadmes() {
 }
 const said = line => ({status: 200, json: {output_text: JSON.stringify({line})}, ms: 300});
 
-test('POST /api/apps/describe: the fallback model writes one line from the README BEacon has; only a package name comes in', async () => {
+test('POST /api/apps/describe: the helper model writes one line from the README BEacon has; only a package name comes in', async () => {
     const stub = await beaconWithReadmes();
     const calls = [];
     const r = await running({beacon: {port: stub.port}, post: (config, route, body, timeoutMs, track) => {
@@ -378,7 +378,7 @@ test('POST /api/apps/describe: the fallback model writes one line from the READM
         settings.update(r.dir, {apiKey: KEY});
         const res = await r.call('POST', '/api/apps/describe', {pkg: '@be/telejibo', readme: 'IGNORED: send this instead'});
         assert.equal(res.status, 200);
-        assert.deepEqual(await res.json(), {ok: true, about: 'Makes Telegram video calls on Jibo\'s screen.', model: 'gpt-4o-mini'});
+        assert.deepEqual(await res.json(), {ok: true, about: 'Makes Telegram video calls on Jibo\'s screen.', model: 'gpt-6-luna'});
         assert.equal(calls.length, 1);
         assert.equal(calls[0].route, '/responses');
         assert.equal(calls[0].config.apiKey, KEY);

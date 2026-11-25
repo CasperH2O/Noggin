@@ -35,7 +35,7 @@ function request(model, name, readme) {
         text: {format: {type: 'json_schema', name: 'app_line', strict: true, schema: {
             type: 'object', additionalProperties: false, required: ['line'], properties: {line: {type: 'string'}}
         }}},
-        max_output_tokens: 120,
+        max_output_tokens: 300,
         store: false
     };
 }
