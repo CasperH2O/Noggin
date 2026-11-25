@@ -60,8 +60,8 @@ const CLOUD = {
     calendar: {phrase: 'tell me about my calendar', topic: 'your calendar'},
     commute: {phrase: 'what does my commute look like', topic: 'commute'},
     personal_report: {phrase: 'personal report', topic: 'a personal report'},
-    // The AI's own jokes are more varied than the cloud's small fixed set.
-    joke: {phrase: 'tell me a joke', topic: 'a joke', disabled: 'the AI tells its own jokes'},
+    // Off by default: the AI's own jokes are more varied than the cloud's small fixed set (D184).
+    joke: {phrase: 'tell me a joke', topic: 'a joke'},
     surprise: {phrase: 'surprise me', topic: 'a surprise'},
     // Not on the main menu: a family-safe web image of the subject on Jibo's face. The cloud
     // matches the whole sentence, so the phrase is exactly this form.
@@ -69,14 +69,30 @@ const CLOUD = {
 };
 
 const key = text => String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
-// The cloud features the `cloudSkills` setting switches on, in CLOUD's order (unknown and
-// disabled names are left out).
+// The cloud features the `cloudSkills` setting switches on, in CLOUD's order (unknown names
+// are left out).
 function cloudSkills(config) {
     let list = config && !Array.isArray(config) ? config.cloudSkills : null;
     if (typeof list === 'string') list = list.split(',');
     if (!Array.isArray(list)) return [];
     const wanted = list.map(key);
-    return Object.keys(CLOUD).filter(name => !CLOUD[name].disabled && wanted.indexOf(name) >= 0);
+    return Object.keys(CLOUD).filter(name => wanted.indexOf(name) >= 0);
+}
+// The local tools with the name the settings page shows (D183); the memory tools have their own
+// `memory` setting and the cloud ones `cloudSkills`.
+const LOCAL = {
+    get_time: 'Time and date', about_jibo: 'Facts about Jibo', dance: 'Dance', set_volume: 'Volume', check_clock: 'Check timer and alarm',
+    set_timer: 'Set timer', cancel_timer: 'Cancel timer', set_alarm: 'Set alarm', cancel_alarm: 'Cancel alarm', use_skill: 'Photos and skills',
+    play_music: 'Play a song', play_radio: 'Radio', open_app: 'Open apps', go_to_sleep: 'Go to sleep', look_away: 'Look away'
+};
+// The local tools the `localSkills` setting switches on, in LOCAL's order. Unlike the cloud list,
+// no list (or one that is no list) means all of them, so nothing changes for an existing setup.
+function localSkills(config) {
+    let list = config && !Array.isArray(config) ? config.localSkills : null;
+    if (typeof list === 'string') list = list.split(',');
+    if (!Array.isArray(list)) return Object.keys(LOCAL);
+    const wanted = list.map(key);
+    return Object.keys(LOCAL).filter(name => wanted.indexOf(name) >= 0);
 }
 const copy = value => JSON.parse(JSON.stringify(value));
 const PICTURE_MAX = 60;
@@ -273,7 +289,7 @@ const TOOLS = [
     {name: 'picture', cloud: true, voice: 'skill',
         description: 'Jibo\'s cloud finds a family-safe picture on the internet, shows it on his screen and says "Here\'s a picture of" the subject. ' +
             'Use it when the person asks to see a picture or photo of something (an animal, a place, a thing). ' +
-            'Not for taking a photo (use_skill take a photo).',
+            'Not for taking a new photo with Jibo\'s camera.',
         parameters: {type: 'object', additionalProperties: false, required: ['subject'], properties: {
             subject: {type: 'string', description: 'What to show, in a few English words with its article, as Jibo will say it: "a horse", "the eiffel tower", "puppies".'}}}},
     {name: 'play_music', voice: 'leaves', ability: 'play songs or the radio',
@@ -312,11 +328,12 @@ const TOOLS = [
 ];
 
 // The tools on offer: all of TOOLS, except the cloud ones the `cloudSkills` setting does not name,
-// and the memory tools unless the `memory` setting is on.
+// the local ones `localSkills` does not name, and the memory tools unless `memory` is on.
 function offered(config) {
-    const cloud = cloudSkills(config), memory = !!config && config.memory === true;
-    return TOOLS.filter(t => (!t.cloud || cloud.indexOf(t.name) >= 0) && (!t.memory || memory));
+    const cloud = cloudSkills(config), local = localSkills(config), memory = !!config && config.memory === true;
+    return TOOLS.filter(t => t.cloud ? cloud.indexOf(t.name) >= 0 : t.memory ? memory : local.indexOf(t.name) >= 0);
 }
+const isOffered = (config, name) => offered(config).some(t => t.name === name);
 // What the extra apps do, for open_app's description (D39).
 function appNotes(config) {
     const told = extraList(config).filter(app => app.about);
@@ -334,6 +351,7 @@ const join = items => items.length > 1 ? items.slice(0, -1).join(', ') + ' and '
 // tools on offer share one ability ("ask your cloud for the weather and the news").
 function rules(config) {
     const list = offered(config), abilities = [], cloud = list.filter(t => t.cloud).map(t => CLOUD[t.name].topic);
+    if (!list.length) return '';
     list.forEach(t => {
         const ability = t.cloud ? 'ask your cloud for ' + join(cloud) : t.ability;
         if (abilities.indexOf(ability) < 0) abilities.push(ability);
@@ -346,7 +364,7 @@ function rules(config) {
     };
     const sentence = voice => names(voice).length ? 'For ' + join(names(voice)) + ', ' + VOICES[voice].you + ' ' : '';
     return 'Only when your person asks, your tools let you ' +
-        abilities.slice(0, -1).join(', ') + ', and ' + abilities[abilities.length - 1] + '. ' +
+        (abilities.length > 1 ? abilities.slice(0, -1).join(', ') + ', and ' : '') + abilities[abilities.length - 1] + '. ' +
         sentence('skill') + sentence('talk') + sentence('leaves');
 }
 function voiceOf(name) { const tool = TOOLS.filter(t => t.name === name)[0]; return tool ? tool.voice : null; }
@@ -433,6 +451,8 @@ function plan(name, argsText, config) {
         if (!subject) return {kind: 'error', error: 'no subject given: ask the person what they want to see'};
         return {kind: 'cloud', target: NIMBUS, phrase: CLOUD[name].phrase + ' ' + subject, comeback: voiceOf(name) === 'skill', args: {subject: subject}};
     }
+    // Only a tool that was offered, as for the cloud ones above (D183).
+    if (LOCAL[name] && localSkills(config).indexOf(name) < 0) return {kind: 'error', error: name + ' is not switched on for Jibo'};
     if (name === 'get_time') {
         // The weekday is on the calendar page too: anything but "date" is the time.
         const show = args.show === 'date' ? 'date' : 'time';
@@ -573,5 +593,5 @@ function readClock(jibo, now, timeoutMs) {
     });
 }
 
-module.exports = {CLOCK, OWN, NIMBUS, IDLE, APPS, SKILLS, RADIO, CLOUD, VOICES, TOOLS, APP_NAME, APP_PACKAGE, MAX_APPS, NOTE_MAX, voiceOf, cloudSkills, offered, rules, apps, appEntry, cleanNote, cutNote, extras, spokenName, readmeNote, suggestions, tools,
+module.exports = {CLOCK, OWN, NIMBUS, IDLE, APPS, SKILLS, RADIO, CLOUD, LOCAL, VOICES, TOOLS, APP_NAME, APP_PACKAGE, MAX_APPS, NOTE_MAX, voiceOf, cloudSkills, localSkills, offered, isOffered, rules, apps, appEntry, cleanNote, cutNote, extras, spokenName, readmeNote, suggestions, tools,
     plan, duration, clockQuery, clockCancel, installed, setVolume, localTime, describeTime, readClock};

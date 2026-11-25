@@ -2080,11 +2080,30 @@ test('cloud tools: only those in cloudSkills go in session.update, and the instr
     const h = await listening({actions: fakeActions(), config: {cloudSkills: ['surprise', 'joke']}});
     const names = h.sent.find(e => e.type === 'session.update').session.tools.map(t => t.name);
     assert.ok(names.includes('surprise')); assert.ok(!names.includes('weather') && !names.includes('news'));
-    assert.ok(!names.includes('joke'), 'joke is disabled, even when listed');
+    assert.ok(names.includes('joke'), 'joke is optional: listed, it is offered');
     h.talk.close();
     const text = realtime.voiceSetup({apps: [], config: {cloudSkills: ['surprise']}});
     assert.match(text, /ask your cloud for a surprise/); assert.doesNotMatch(text, /weather|news|joke/);
     assert.doesNotMatch(realtime.voiceSetup({apps: [], config: {}}), /cloud/);
+});
+
+test('local tools: the get_time and about_jibo sentences follow the tools that are on, and no tools reads as no tools', () => {
+    const setup = config => realtime.voiceSetup({apps: [], config});
+    assert.match(setup({localSkills: ['get_time']}), /always use get_time\. Apart/);
+    assert.doesNotMatch(setup({localSkills: ['get_time']}), /about_jibo/);
+    assert.match(setup({localSkills: ['about_jibo']}), /done unless a tool result says so\. For a question about yourself/);
+    assert.doesNotMatch(setup({localSkills: ['about_jibo']}), /get_time/);
+    assert.match(setup({}), /always use get_time; for a question about yourself .* use about_jibo\. /);
+    const none = setup({localSkills: [], cloudSkills: []});
+    assert.match(none, /you have no tools, files or saved memory/);
+    assert.equal(none.split('You cannot see the room yet').length, 2, 'said once');
+    assert.doesNotMatch(none, /Only when your person asks/);
+    const memoryOnly = realtime.voiceSetup({apps: [], config: {localSkills: [], cloudSkills: [], memory: true}}, {learn: true});
+    assert.match(memoryOnly, /your tools let you keep, forget and look up memories/, 'the memory tools are still named');
+    assert.match(memoryOnly, /use remember or forget/);
+    assert.doesNotMatch(memoryOnly, /get_time|about_jibo|cloud/);
+    assert.equal(memoryOnly.split('You cannot see the room yet').length, 2, 'said once');
+    assert.doesNotMatch(actions.tools({localSkills: [], cloudSkills: ['picture']})[0].description, /use_skill/, 'picture does not point at a tool that may be off');
 });
 
 test('a cloud tool: no words first; the hotword is given back, then the cloud gets the fixed phrase; the turn Be starts ends Noggin as a handover', async () => {
@@ -2187,9 +2206,9 @@ test('back after the cloud: the note says your cloud took over and what it said'
     h.talk.close();
 });
 
-test('cloud tools are all on by default, except the disabled joke, and the default stays in step with actions.CLOUD', () => {
+test('cloud tools are all on by default, except joke, and the default stays in step with actions.CLOUD', () => {
     const actions = require(path.join(source, 'noggin/lib/actions.js'));
-    const live = Object.keys(actions.CLOUD).filter(name => !actions.CLOUD[name].disabled);
+    const live = Object.keys(actions.CLOUD).filter(name => name !== 'joke');
     assert.deepEqual(DEFAULTS.cloudSkills, live);
     assert.ok(DEFAULTS.cloudSkills.length >= 6 && DEFAULTS.cloudSkills.indexOf('joke') < 0);
     assert.deepEqual(actions.cloudSkills(DEFAULTS), live, 'every default name is really offered');

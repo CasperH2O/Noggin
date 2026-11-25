@@ -78,7 +78,7 @@ function emojiNote(senses, abilities) {
     if (senses && senses.emoji === false) return '';
     const config = abilities && abilities.config;
     if (config && config.emoji === false) return '';
-    const picture = !!config && actions.offered(config).some(t => t.name === 'picture');
+    const picture = !!config && actions.isOffered(config, 'picture');
     return 'A small emoji may show on your eye when you say the name of something (pizza, a dog, rain); you cannot choose one. ' +
         'Asked about one that showed, it was yours: never say you have none. ' +
         (picture ? 'An emoji is not a picture: for a photo use picture. ' : '');
@@ -103,10 +103,14 @@ function voiceSetup(abilities, memory, senses, language) {
     const none = memory ? 'tools or files: never claim to look something up or do something you cannot. '
         : 'tools, files or saved memory: never claim to look something up, remember something for later, or do something you cannot. ';
     // Which tools, and who speaks for each, come from the tool table (lib/actions.js).
-    const tools = abilities
+    const offered = abilities ? actions.offered(abilities.config) : [];
+    // These two rules are only true while their tools are on (D183).
+    const use = [actions.isOffered(abilities && abilities.config, 'get_time') && 'for the time or date, always use get_time',
+        actions.isOffered(abilities && abilities.config, 'about_jibo') && 'for a question about yourself that the facts above do not answer, use about_jibo'].filter(Boolean).join('; ');
+    const tools = offered.length
         ? actions.rules(abilities.config) +
-          'Never say something is done unless a tool result says so. For the time or date, always use get_time; ' +
-          'for a question about yourself that the facts above do not answer, use about_jibo. ' + notes +
+          'Never say something is done unless a tool result says so. ' +
+          (use ? use.charAt(0).toUpperCase() + use.slice(1) + '. ' : '') + notes +
           'Apart from these you have no ' + none
         : notes + unseen + ', and in this voice mode you have no ' + none;
     return 'Your current setup:\n' +
@@ -117,7 +121,7 @@ function voiceSetup(abilities, memory, senses, language) {
         emojiNote(senses, abilities) +
         'Keep replies short, as your personality says. ' +
         languageRule(language) +
-        (abilities ? unseen + '. ' : '') + tools +
+        (offered.length ? unseen + '. ' : '') + tools +
         'Your person ends the conversation by saying goodbye.';
 }
 function instructions(soul, identity, abilities, memory, senses, language) {

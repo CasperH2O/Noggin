@@ -8,6 +8,7 @@ import {createRequire} from 'node:module';
 const require = createRequire(import.meta.url);
 const source = path.resolve(import.meta.dirname, '..');
 const settings = require(path.join(source, 'noggin/lib/settings.js'));
+const actions = require(path.join(source, 'noggin/lib/actions.js'));
 const ConversationLog = require(path.join(source, 'noggin/lib/conversation-log.js'));
 const temp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'noggin-settings-'));
 const KEY = 'sk-test-0123456789abcdefghij';
@@ -59,12 +60,16 @@ test('the admin key: sk-admin- only, never in the page view, only as a hint; sec
     assert.equal(settings.publicView(dir).adminKey.set, false);
 });
 
-test('schema view: JSON-safe, patterns as strings, option lists resolved, joke shown as switched off', () => {
+test('schema view: JSON-safe, patterns as strings, option lists resolved, joke and the local tools are choices', () => {
     const view = JSON.parse(JSON.stringify(settings.schemaView()));
     const model = view.find(f => f.key === 'realtimeModel');
     assert.equal(typeof model.pattern, 'string');
     const cloud = view.find(f => f.key === 'cloudSkills');
-    assert.ok(cloud.options.find(o => o.value === 'joke').disabled);
+    assert.deepEqual(cloud.options.find(o => o.value === 'joke'), {value: 'joke'}, 'joke is a plain choice, not greyed out');
+    const local = view.find(f => f.key === 'localSkills');
+    assert.deepEqual(local.options.map(o => o.value), Object.keys(actions.LOCAL));
+    assert.ok(local.options.every(o => o.label), 'each local tool has a name for the page');
+    assert.deepEqual(local.default, Object.keys(actions.LOCAL));
     const greet = view.find(f => f.key === 'greetingExpression');
     assert.ok(greet.options.some(o => o.value === 'smile') && greet.options.some(o => o.value === 'none'));
     assert.ok(!greet.options.some(o => o.value === 'dance'));
@@ -125,7 +130,10 @@ test('field checks: numbers, enums, sets, apps, urls, keys', () => {
     assert.ok(settings.check(f('realtimeReasoning'), 'loud').error);
     assert.equal(f('realtimeReasoning').default, 'low');
     assert.deepEqual(settings.check(f('cloudSkills'), ['news', 'weather']).value, ['weather', 'news'], 'kept in the cloud order');
-    assert.match(settings.check(f('cloudSkills'), ['joke']).error, /switched off/);
+    assert.deepEqual(settings.check(f('cloudSkills'), ['surprise', 'joke']).value, ['joke', 'surprise'], 'joke is a choice like the others');
+    assert.deepEqual(settings.check(f('localSkills'), ['dance', 'get_time']).value, ['get_time', 'dance'], 'kept in the table order');
+    assert.deepEqual(settings.check(f('localSkills'), []).value, [], 'none is allowed');
+    assert.match(settings.check(f('localSkills'), ['fly']).error, /Unknown/);
     assert.match(settings.check(f('cloudSkills'), ['doom']).error, /Unknown/);
     // A package alone (older settings) or {pkg, about}; always {pkg, about} after the check.
     assert.deepEqual(settings.check(f('openApps'), {Stars: '@be/stargazer'}).value, {Stars: {pkg: '@be/stargazer', about: ''}});

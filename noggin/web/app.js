@@ -266,12 +266,12 @@
         case 'set': {
             return el('div', {class: 'choices'}, field.options.map(o => {
                 const on = (value || []).indexOf(o.value) >= 0;
-                const box = el('input', {type: 'checkbox', checked: on && !o.disabled, disabled: !!o.disabled, onchange: () => {
-                    const list = field.options.filter(x => !x.disabled && ((x.value === o.value) ? box.checked : (current(field.key) || []).indexOf(x.value) >= 0)).map(x => x.value);
+                const box = el('input', {type: 'checkbox', checked: on, onchange: () => {
+                    const list = field.options.filter(x => (x.value === o.value) ? box.checked : (current(field.key) || []).indexOf(x.value) >= 0).map(x => x.value);
                     setValue(field, list);
                     label.classList.toggle('is-selected', box.checked);
                 }});
-                const label = el('label', {class: 'choice' + (on && !o.disabled ? ' is-selected' : '') + (o.disabled ? ' is-disabled' : ''), title: o.disabled || null},
+                const label = el('label', {class: 'choice' + (on ? ' is-selected' : '')},
                     [box, o.label || o.value.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase())]);
                 return label;
             }));

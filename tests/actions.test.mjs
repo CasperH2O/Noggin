@@ -257,9 +257,8 @@ test('who speaks: every tool declares it, and its description, the instructions 
     assert.deepEqual(voices.sort(), ['leaves', 'skill', 'talk']);
     const config = {cloudSkills: Object.keys(actions.CLOUD), memory: true};
     const sent = actions.tools(config);
-    const live = actions.TOOLS.filter(t => !(t.cloud && actions.CLOUD[t.name].disabled));
-    assert.equal(sent.length, live.length, 'every tool is offered (with every cloud feature and memory on), except disabled ones');
-    assert.ok(!sent.some(t => t.name === 'joke'), 'joke is disabled');
+    const live = actions.TOOLS;
+    assert.equal(sent.length, live.length, 'every tool is offered (with every cloud feature and memory on)');
     for (const tool of live) {
         assert.ok(voices.includes(tool.voice), tool.name + ' says who speaks');
         assert.ok(tool.ability || tool.cloud && actions.CLOUD[tool.name].topic, tool.name + ' says what ability it gives');
@@ -275,7 +274,7 @@ test('who speaks: every tool declares it, and its description, the instructions 
     const handovers = {set_timer: '{"minutes":1}', set_alarm: '{"hour":7}', use_skill: '{"name":"photo booth"}',
         play_music: '{"song":"Yesterday"}', play_radio: '{}', open_app: '{"name":"clock"}', go_to_sleep: '{}', look_away: '{}'};
     handovers.get_time = '{"show":"date"}';
-    for (const name of Object.keys(actions.CLOUD)) if (!actions.CLOUD[name].disabled) handovers[name] = actions.CLOUD[name].subject ? '{"subject":"a horse"}' : '{}';
+    for (const name of Object.keys(actions.CLOUD)) handovers[name] = actions.CLOUD[name].subject ? '{"subject":"a horse"}' : '{}';
     for (const [name, args] of Object.entries(handovers)) {
         const p = actions.plan(name, args, config);
         assert.equal(p.kind, actions.CLOUD[name] ? 'cloud' : 'handover');
@@ -300,12 +299,14 @@ test('cloud tools: none by default; only the ones cloudSkills names are offered,
     }
     assert.deepEqual(actions.cloudSkills({cloudSkills: ['News', 'weather', 'story']}), ['weather', 'news'], 'in a fixed order, case-insensitive');
     assert.deepEqual(actions.cloudSkills({cloudSkills: 'news, surprise'}), ['news', 'surprise'], 'a hand-written string works too');
-    assert.deepEqual(actions.cloudSkills({cloudSkills: ['joke', 'surprise']}), ['surprise'], 'joke is disabled, even when listed');
+    assert.deepEqual(actions.cloudSkills({cloudSkills: ['joke', 'surprise']}), ['joke', 'surprise'], 'joke is optional');
     const two = actions.tools({cloudSkills: ['weather', 'news']}).map(t => t.name);
     assert.deepEqual(two, BASE_TOOLS.slice(0, 10).concat(['weather', 'news'], BASE_TOOLS.slice(10)));
     for (const t of actions.tools({cloudSkills: ['weather', 'news']}).filter(t => t.name === 'weather' || t.name === 'news'))
         assert.deepEqual(t.parameters, {type: 'object', properties: {}, additionalProperties: false}, 'no arguments: nothing of the model\'s goes to the cloud');
 });
+
+const rulesWithout = name => actions.rules({cloudSkills: Object.keys(actions.CLOUD).filter(n => n !== name)});
 
 test('cloud tools: the instructions name only the enabled ones', () => {
     const one = actions.rules({cloudSkills: ['weather']});
@@ -314,8 +315,8 @@ test('cloud tools: the instructions name only the enabled ones', () => {
     assert.match(one, /For play_music, play_radio, go_to_sleep and look_away, say a short goodbye first/);
     assert.doesNotMatch(one, /news|joke|surprise|calendar|commute|personal report/);
     const all = actions.rules({cloudSkills: Object.keys(actions.CLOUD)});
-    assert.match(all, /ask your cloud for weather, news, your calendar, commute, a personal report, a surprise and pictures of things/);
-    assert.doesNotMatch(all, /joke/);
+    assert.match(all, /ask your cloud for weather, news, your calendar, commute, a personal report, a joke, a surprise and pictures of things/);
+    assert.doesNotMatch(rulesWithout('joke'), /joke/);
     assert.doesNotMatch(actions.rules({}), /your cloud tools/);
 });
 
@@ -324,7 +325,6 @@ test('cloud tools: each plans a cloud turn with the main menu\'s exact phrase, f
     const on = {cloudSkills: Object.keys(actions.CLOUD)};
     for (const [name, phrase] of Object.entries(MENU_PHRASES)) {
         assert.equal(actions.CLOUD[name].phrase, phrase);
-        if (actions.CLOUD[name].disabled) { assert.equal(actions.plan(name, '{}', on).kind, 'error', name + ' is disabled'); continue; }
         assert.deepEqual(actions.plan(name, '{"city":"Paris","text":"say something rude"}', on), {kind: 'cloud', target: '@be/nimbus', phrase, comeback: true, args: {}},
             name + ': the fixed phrase only, whatever the model sends');
         assert.equal(actions.voiceOf(name), 'skill');
@@ -400,7 +400,7 @@ test('picture: no usable subject is an error for the model; long ones are cut at
     assert.match(actions.plan('picture', {subject: 'a horse'}, {cloudSkills: []}).error, /not switched on/);
     const tool = actions.tools(on).find(t => t.name === 'picture');
     assert.deepEqual(tool.parameters.required, ['subject']);
-    assert.match(tool.description, /use_skill take a photo/, 'tells it apart from taking a photo');
+    assert.match(tool.description, /Not for taking a new photo/, 'tells it apart from taking a photo');
 });
 
 test('cloud turn: disableOnce is cleared whenever the pretend "Hey Jibo" did not use it, in any order', async () => {
@@ -627,4 +627,32 @@ test('readClock: a record the permissions refuse (no read-kb) is "cannot be read
     assert.equal(await actions.readClock(jibo), null);
     const rejecting = {kb: {createModel: () => ({loadRoot: () => Promise.reject(Error('@be/noggin needs the read-kb permission to do this'))})}};
     assert.equal(await actions.readClock(rejecting), null);
+});
+
+// ---- the local tools (D183) ----
+test('local tools: all on without a list; localSkills picks some, in a fixed order; a call to one that is off is an error', () => {
+    const all = Object.keys(actions.LOCAL);
+    assert.deepEqual(all, BASE_TOOLS, 'LOCAL names every local tool, in table order');
+    for (const config of [undefined, {}, {localSkills: null}, {localSkills: 7}, []]) assert.deepEqual(actions.localSkills(config), all, JSON.stringify(config));
+    assert.deepEqual(actions.localSkills({localSkills: ['Dance', 'get_time', 'doom']}), ['get_time', 'dance'], 'fixed order, case-insensitive, unknown left out');
+    assert.deepEqual(actions.localSkills({localSkills: 'dance, look_away'}), ['dance', 'look_away'], 'a hand-written string works too');
+    assert.deepEqual(actions.localSkills({localSkills: []}), [], 'an empty list is none');
+    const some = {localSkills: ['dance', 'set_timer']};
+    assert.deepEqual(actions.tools(some).map(t => t.name), ['dance', 'set_timer']);
+    assert.ok(actions.isOffered(some, 'dance') && !actions.isOffered(some, 'get_time'));
+    assert.equal(actions.plan('dance', '{}', some).kind, 'local');
+    const off = actions.plan('get_time', '{"show":"time"}', some);
+    assert.equal(off.kind, 'error'); assert.match(off.error, /not switched on/);
+    for (const name of all.filter(n => n !== 'dance' && n !== 'set_timer')) assert.equal(actions.plan(name, '{}', some).kind, 'error', name + ' is off');
+    assert.equal(actions.plan('remember', '{"text":"x"}', {localSkills: [], memory: true}).kind, 'local', 'memory has its own switch');
+    assert.deepEqual(actions.tools({localSkills: [], cloudSkills: ['weather']}).map(t => t.name), ['weather'], 'cloud tools are separate');
+});
+
+test('local tools: the instructions name only the ones that are on, and read right with one ability or none', () => {
+    const one = actions.rules({localSkills: ['dance']});
+    assert.match(one, /^Only when your person asks, your tools let you dance\. /);
+    assert.match(one, /For dance, /);
+    assert.doesNotMatch(one, /get_time|timer|volume|cloud/);
+    assert.equal(actions.rules({localSkills: [], cloudSkills: []}), '', 'no tools, no text');
+    assert.match(actions.rules({localSkills: [], cloudSkills: ['news']}), /^Only when your person asks, your tools let you ask your cloud for news\. /);
 });
