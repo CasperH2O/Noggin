@@ -21,7 +21,7 @@ const SUSPECT = [
     /\b(ignore|disregard|forget|override)\b/i,
     /\b(instructions?|system prompt|system message|as an ai|language model)\b/i,
     /\b(you must|you should|you are|you will|do not tell|don't tell)\b/i,
-    /\b(open_app|use_skill|play_music|play_radio|tool call|function call)\b/i,
+    /\b(open_app|use_skill|play_game|play_music|play_radio|tool call|function call)\b/i,
     /https?:|www\.|[<>{}[\]`|\\]/i
 ];
 

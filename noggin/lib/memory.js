@@ -26,7 +26,7 @@ const SUSPECT = [
     /\b(ignore|disregard|override)\b.{0,30}\b(instructions?|rules?|previous|above|prompt)\b/i,
     /\b(system prompt|system message|developer message|instructions? (to|for) (the )?(model|assistant|ai))\b/i,
     /\b(you must|you have to|from now on,? you|always answer|never answer)\b/i,
-    /\b(remember|forget|recall|about_jibo|open_app|use_skill|play_music|play_radio|set_timer|set_alarm|get_time)_?\(/i,
+    /\b(remember|forget|recall|about_jibo|open_app|use_skill|play_game|play_music|play_radio|set_timer|set_alarm|get_time)_?\(/i,
     /https?:|www\.|[<>{}[\]`|\\]/i
 ];
 const STOP = ('the a an and or but of to in on at for with about from by is are was were be been am do does did have has had ' +

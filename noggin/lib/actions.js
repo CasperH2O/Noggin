@@ -41,9 +41,14 @@ const APPS = {
 const SKILLS = {
     'take a photo': {pkg: '@be/create', options: launch('createOnePhoto', 'create')},
     'photo booth': {pkg: '@be/create', options: launch('createSomePhotos', 'create')},
-    'word of the day': {pkg: '@be/word-of-the-day', options: launch('play', 'word-of-the-day')},
     'sing daisy bell': {pkg: '@be/daisy-bell', options: launch('sing', 'daisy-bell')},
     'who am i': {pkg: '@be/who-am-i', options: launch('launchWhoAmI', 'who-am-i')}
+};
+// Jibo's games for play_game: a tool of their own, so the Games switch can turn them off (D185).
+// Circuit Saver ignores its options and ends by itself when the game is over.
+const GAMES = {
+    'word of the day': {pkg: '@be/word-of-the-day', options: launch('play', 'word-of-the-day')},
+    'circuit saver': {pkg: '@be/circuit-saver', options: launch('launchGame', 'circuit-saver')}
 };
 // @be/radio's genres (its `station` entity takes these keys, case-sensitive).
 const RADIO = {'alternative': 'Alternative', 'blues': 'Blues', 'christian and gospel': 'ChristianAndGospel', 'classical': 'Classical',
@@ -78,20 +83,36 @@ function cloudSkills(config) {
     const wanted = list.map(key);
     return Object.keys(CLOUD).filter(name => wanted.indexOf(name) >= 0);
 }
-// The local tools with the name the settings page shows (D183); the memory tools have their own
-// `memory` setting and the cloud ones `cloudSkills`.
+// The timer and alarm tools share one switch.
+const CLOCK_TOOLS = ['check_clock', 'set_timer', 'cancel_timer', 'set_alarm', 'cancel_alarm'];
+// The switches of the local tools (D183, D185): name -> the label the settings page shows and the
+// tools it covers. The memory tools have their own `memory` setting and the cloud ones `cloudSkills`.
 const LOCAL = {
-    get_time: 'Time and date', about_jibo: 'Facts about Jibo', dance: 'Dance', set_volume: 'Volume', check_clock: 'Check timer and alarm',
-    set_timer: 'Set timer', cancel_timer: 'Cancel timer', set_alarm: 'Set alarm', cancel_alarm: 'Cancel alarm', use_skill: 'Photos and skills',
-    play_music: 'Play a song', play_radio: 'Radio', open_app: 'Open apps', go_to_sleep: 'Go to sleep', look_away: 'Look away'
+    get_time: {label: 'Time and date', tools: ['get_time']}, about_jibo: {label: 'Facts about Jibo', tools: ['about_jibo']},
+    dance: {label: 'Dance', tools: ['dance']}, set_volume: {label: 'Volume', tools: ['set_volume']},
+    timers: {label: 'Timers and alarms', tools: CLOCK_TOOLS}, use_skill: {label: 'Photos and skills', tools: ['use_skill']},
+    games: {label: 'Games', tools: ['play_game']}, play_music: {label: 'Play a song', tools: ['play_music']},
+    play_radio: {label: 'Radio', tools: ['play_radio']}, open_app: {label: 'Open apps', tools: ['open_app']},
+    go_to_sleep: {label: 'Go to sleep', tools: ['go_to_sleep']}, look_away: {label: 'Look away', tools: ['look_away']}
 };
-// The local tools the `localSkills` setting switches on, in LOCAL's order. Unlike the cloud list,
+// The switch a local tool belongs to; undefined for a cloud or memory tool.
+const switchOf = name => Object.keys(LOCAL).filter(k => LOCAL[k].tools.indexOf(name) >= 0)[0];
+// A list stored while every tool had its own switch (D185) is told by a timer or alarm tool name in
+// it: those names become `timers`, and `use_skill` (word of the day was one of its skills) also
+// switches `games` on. Any other list is returned as it is.
+function upgradeLocal(list) {
+    if (!Array.isArray(list) || !list.some(name => CLOCK_TOOLS.indexOf(key(name)) >= 0)) return list;
+    const out = list.map(name => CLOCK_TOOLS.indexOf(key(name)) >= 0 ? 'timers' : name);
+    if (out.map(key).indexOf('use_skill') >= 0) out.push('games');
+    return out.filter((name, at) => out.indexOf(name) === at);
+}
+// The switch names (LOCAL's keys, not tool names) the `localSkills` setting has on, in LOCAL's order. Unlike the cloud list,
 // no list (or one that is no list) means all of them, so nothing changes for an existing setup.
 function localSkills(config) {
     let list = config && !Array.isArray(config) ? config.localSkills : null;
     if (typeof list === 'string') list = list.split(',');
     if (!Array.isArray(list)) return Object.keys(LOCAL);
-    const wanted = list.map(key);
+    const wanted = upgradeLocal(list).map(key);
     return Object.keys(LOCAL).filter(name => wanted.indexOf(name) >= 0);
 }
 const copy = value => JSON.parse(JSON.stringify(value));
@@ -191,7 +212,7 @@ function suggestions(inventory, config) {
     const list = inventory && Array.isArray(inventory.skills) ? inventory.skills : [];
     const openApps = config && config.openApps && typeof config.openApps === 'object' ? config.openApps : {};
     const chosen = Object.keys(openApps).map(name => appEntry(openApps[name])).filter(Boolean).map(entry => entry.pkg);
-    const skip = [OWN].concat(Object.keys(APPS).map(name => APPS[name].pkg), Object.keys(SKILLS).map(name => SKILLS[name].pkg), chosen);
+    const skip = [OWN].concat(Object.keys(APPS).map(name => APPS[name].pkg), Object.keys(SKILLS).map(name => SKILLS[name].pkg), Object.keys(GAMES).map(name => GAMES[name].pkg), chosen);
     const out = [];
     list.forEach(skill => {
         const pkg = skill && skill.packageName;
@@ -269,8 +290,11 @@ const TOOLS = [
     {name: 'cancel_alarm', voice: 'skill', ability: CLOCK_ABILITY, parameters: NO_ARGS,
         description: 'Cancels Jibo\'s alarm. Jibo\'s clock does it and says so; then the conversation continues. If no alarm is set, the result says so and you tell the person.'},
     {name: 'use_skill', voice: 'skill', ability: 'take photos and use a few of your skills', parameters: enumOf(Object.keys(SKILLS)),
-        description: 'Starts one of Jibo\'s skills: take a photo, photo booth (four photos in a row), word of the day (a word guessing game), ' +
+        description: 'Starts one of Jibo\'s skills: take a photo, photo booth (four photos in a row), ' +
             'sing daisy bell (Jibo sings the song), who am i (Jibo tells who the person is). It ends by itself, then the conversation continues.'},
+    {name: 'play_game', voice: 'skill', ability: 'play a game with your person', parameters: enumOf(Object.keys(GAMES)),
+        description: 'Starts one of Jibo\'s games: word of the day (a word guessing game), circuit saver (a one-player game in front of Jibo, ' +
+            'leaning left and right). Only when the person asks to play a game; it ends by itself, then the conversation continues.'},
     // Jibo's cloud (CLOUD above), only those the `cloudSkills` setting names.
     {name: 'weather', cloud: true, voice: 'skill', parameters: NO_ARGS,
         description: 'Jibo\'s cloud tells the weather where Jibo lives (no other places).'},
@@ -331,7 +355,7 @@ const TOOLS = [
 // the local ones `localSkills` does not name, and the memory tools unless `memory` is on.
 function offered(config) {
     const cloud = cloudSkills(config), local = localSkills(config), memory = !!config && config.memory === true;
-    return TOOLS.filter(t => t.cloud ? cloud.indexOf(t.name) >= 0 : t.memory ? memory : local.indexOf(t.name) >= 0);
+    return TOOLS.filter(t => t.cloud ? cloud.indexOf(t.name) >= 0 : t.memory ? memory : local.indexOf(switchOf(t.name)) >= 0);
 }
 const isOffered = (config, name) => offered(config).some(t => t.name === name);
 // What the extra apps do, for open_app's description (D39).
@@ -452,7 +476,7 @@ function plan(name, argsText, config) {
         return {kind: 'cloud', target: NIMBUS, phrase: CLOUD[name].phrase + ' ' + subject, comeback: voiceOf(name) === 'skill', args: {subject: subject}};
     }
     // Only a tool that was offered, as for the cloud ones above (D183).
-    if (LOCAL[name] && localSkills(config).indexOf(name) < 0) return {kind: 'error', error: name + ' is not switched on for Jibo'};
+    if (switchOf(name) && localSkills(config).indexOf(switchOf(name)) < 0) return {kind: 'error', error: name + ' is not switched on for Jibo'};
     if (name === 'get_time') {
         // The weekday is on the calendar page too: anything but "date" is the time.
         const show = args.show === 'date' ? 'date' : 'time';
@@ -496,6 +520,11 @@ function plan(name, argsText, config) {
         const k = key(args.name), skill = SKILLS[k];
         if (!skill) return {kind: 'error', error: 'that is not one of Jibo\'s skills (' + Object.keys(SKILLS).join(', ') + ')'};
         return handover(name, skill.pkg, copy(skill.options), {name: k});
+    }
+    if (name === 'play_game') {
+        const k = key(args.name), game = GAMES[k];
+        if (!game) return {kind: 'error', error: 'that is not one of Jibo\'s games (' + Object.keys(GAMES).join(', ') + ')'};
+        return handover(name, game.pkg, copy(game.options), {name: k});
     }
     if (name === 'play_music') {
         const song = String(args.song || '').trim().slice(0, 160), artist = String(args.artist || '').trim().slice(0, 120);
@@ -593,5 +622,5 @@ function readClock(jibo, now, timeoutMs) {
     });
 }
 
-module.exports = {CLOCK, OWN, NIMBUS, IDLE, APPS, SKILLS, RADIO, CLOUD, LOCAL, VOICES, TOOLS, APP_NAME, APP_PACKAGE, MAX_APPS, NOTE_MAX, voiceOf, cloudSkills, localSkills, offered, isOffered, rules, apps, appEntry, cleanNote, cutNote, extras, spokenName, readmeNote, suggestions, tools,
+module.exports = {CLOCK, OWN, NIMBUS, IDLE, APPS, SKILLS, GAMES, RADIO, CLOUD, LOCAL, VOICES, TOOLS, APP_NAME, APP_PACKAGE, MAX_APPS, NOTE_MAX, voiceOf, cloudSkills, localSkills, upgradeLocal, offered, isOffered, rules, apps, appEntry, cleanNote, cutNote, extras, spokenName, readmeNote, suggestions, tools,
     plan, duration, clockQuery, clockCancel, installed, setVolume, localTime, describeTime, readClock};

@@ -68,15 +68,20 @@ test('built-in apps and skills: each launch carries what that skill\'s own code 
     assert.deepEqual(nlu('open_app', 'settings').options.nlu, {intent: 'menu', entities: {domain: 'settings'}});
     assert.equal(nlu('open_app', 'menu').target, '@be/main-menu');
     const skills = {'take a photo': ['@be/create', 'createOnePhoto'], 'photo booth': ['@be/create', 'createSomePhotos'],
-        'word of the day': ['@be/word-of-the-day', 'play'], 'sing daisy bell': ['@be/daisy-bell', 'sing'], 'who am i': ['@be/who-am-i', 'launchWhoAmI']};
-    for (const [name, [pkg, intent]] of Object.entries(skills)) {
-        const p = nlu('use_skill', name.toUpperCase());
+        'sing daisy bell': ['@be/daisy-bell', 'sing'], 'who am i': ['@be/who-am-i', 'launchWhoAmI']};
+    const games = {'word of the day': ['@be/word-of-the-day', 'play'], 'circuit saver': ['@be/circuit-saver', 'launchGame']};
+    for (const [tool, table, list] of [['use_skill', actions.SKILLS, skills], ['play_game', actions.GAMES, games]]) for (const [name, [pkg, intent]] of Object.entries(list)) {
+        const p = nlu(tool, name.toUpperCase());
         assert.equal(p.kind, 'handover'); assert.equal(p.target, pkg); assert.equal(p.options.nlu.intent, intent);
         assert.equal(p.comeback, true, name + ' comes back'); assert.equal(p.options.match.skipSurprises, true);
         assert.equal(p.check, undefined, name + ' is part of Jibo: not checked');
     }
     // Only skills that ship with Jibo; store skills are extra apps (openApps).
     assert.deepEqual(Object.keys(actions.SKILLS), Object.keys(skills));
+    assert.deepEqual(Object.keys(actions.GAMES), Object.keys(games));
+    assert.match(nlu('use_skill', 'word of the day').error, /not one of Jibo's skills/, 'the games are their own tool');
+    assert.match(nlu('play_game', 'photo booth').error, /not one of Jibo's games/);
+    assert.equal(nlu('play_game', 'circuit saver').options.nlu.entities.domain, 'circuit-saver');
     assert.match(nlu('use_skill', 'stargazer').error, /not one of Jibo's skills/);
     assert.match(nlu('use_skill', 'doom').error, /not one of Jibo's skills/);
     // The launch options are copies: changing one never changes the table.
@@ -290,7 +295,7 @@ test('who speaks: every tool declares it, and its description, the instructions 
 const MENU_PHRASES = {joke: 'tell me a joke', surprise: 'surprise me', personal_report: 'personal report', weather: 'tell me about the weather',
     news: 'tell me about the news', calendar: 'tell me about my calendar', commute: 'what does my commute look like'};
 const BASE_TOOLS = ['get_time', 'about_jibo', 'dance', 'set_volume', 'check_clock', 'set_timer', 'cancel_timer', 'set_alarm', 'cancel_alarm',
-    'use_skill', 'play_music', 'play_radio', 'open_app', 'go_to_sleep', 'look_away'];
+    'use_skill', 'play_game', 'play_music', 'play_radio', 'open_app', 'go_to_sleep', 'look_away'];
 
 test('cloud tools: none by default; only the ones cloudSkills names are offered, unknown names left out', () => {
     for (const config of [{}, {cloudSkills: []}, {cloudSkills: null}, {cloudSkills: ['story', 'hue']}, []]) {
@@ -301,7 +306,7 @@ test('cloud tools: none by default; only the ones cloudSkills names are offered,
     assert.deepEqual(actions.cloudSkills({cloudSkills: 'news, surprise'}), ['news', 'surprise'], 'a hand-written string works too');
     assert.deepEqual(actions.cloudSkills({cloudSkills: ['joke', 'surprise']}), ['joke', 'surprise'], 'joke is optional');
     const two = actions.tools({cloudSkills: ['weather', 'news']}).map(t => t.name);
-    assert.deepEqual(two, BASE_TOOLS.slice(0, 10).concat(['weather', 'news'], BASE_TOOLS.slice(10)));
+    assert.deepEqual(two, BASE_TOOLS.slice(0, 11).concat(['weather', 'news'], BASE_TOOLS.slice(11)));
     for (const t of actions.tools({cloudSkills: ['weather', 'news']}).filter(t => t.name === 'weather' || t.name === 'news'))
         assert.deepEqual(t.parameters, {type: 'object', properties: {}, additionalProperties: false}, 'no arguments: nothing of the model\'s goes to the cloud');
 });
@@ -311,7 +316,7 @@ const rulesWithout = name => actions.rules({cloudSkills: Object.keys(actions.CLO
 test('cloud tools: the instructions name only the enabled ones', () => {
     const one = actions.rules({cloudSkills: ['weather']});
     assert.match(one, /ask your cloud for weather, play songs/);
-    assert.match(one, /use_skill, open_app and your cloud tools, call the tool without saying anything first/);
+    assert.match(one, /use_skill, play_game, open_app and your cloud tools, call the tool without saying anything first/);
     assert.match(one, /For play_music, play_radio, go_to_sleep and look_away, say a short goodbye first/);
     assert.doesNotMatch(one, /news|joke|surprise|calendar|commute|personal report/);
     const all = actions.rules({cloudSkills: Object.keys(actions.CLOUD)});
@@ -632,18 +637,29 @@ test('readClock: a record the permissions refuse (no read-kb) is "cannot be read
 // ---- the local tools (D183) ----
 test('local tools: all on without a list; localSkills picks some, in a fixed order; a call to one that is off is an error', () => {
     const all = Object.keys(actions.LOCAL);
-    assert.deepEqual(all, BASE_TOOLS, 'LOCAL names every local tool, in table order');
+    assert.deepEqual(all, ['get_time', 'about_jibo', 'dance', 'set_volume', 'timers', 'use_skill', 'games', 'play_music', 'play_radio', 'open_app', 'go_to_sleep', 'look_away']);
+    assert.deepEqual([].concat(...all.map(name => actions.LOCAL[name].tools)), BASE_TOOLS, 'the switches cover every local tool once, in table order');
     for (const config of [undefined, {}, {localSkills: null}, {localSkills: 7}, []]) assert.deepEqual(actions.localSkills(config), all, JSON.stringify(config));
     assert.deepEqual(actions.localSkills({localSkills: ['Dance', 'get_time', 'doom']}), ['get_time', 'dance'], 'fixed order, case-insensitive, unknown left out');
     assert.deepEqual(actions.localSkills({localSkills: 'dance, look_away'}), ['dance', 'look_away'], 'a hand-written string works too');
     assert.deepEqual(actions.localSkills({localSkills: []}), [], 'an empty list is none');
-    const some = {localSkills: ['dance', 'set_timer']};
-    assert.deepEqual(actions.tools(some).map(t => t.name), ['dance', 'set_timer']);
-    assert.ok(actions.isOffered(some, 'dance') && !actions.isOffered(some, 'get_time'));
+    const some = {localSkills: ['dance', 'timers']};
+    const clock = ['check_clock', 'set_timer', 'cancel_timer', 'set_alarm', 'cancel_alarm'];
+    assert.deepEqual(actions.tools(some).map(t => t.name), ['dance'].concat(clock), 'one switch for the timer and the alarm tools');
+    assert.ok(actions.isOffered(some, 'dance') && actions.isOffered(some, 'cancel_alarm') && !actions.isOffered(some, 'get_time'));
     assert.equal(actions.plan('dance', '{}', some).kind, 'local');
+    assert.equal(actions.plan('set_alarm', '{"hour":7}', some).kind, 'handover');
     const off = actions.plan('get_time', '{"show":"time"}', some);
     assert.equal(off.kind, 'error'); assert.match(off.error, /not switched on/);
-    for (const name of all.filter(n => n !== 'dance' && n !== 'set_timer')) assert.equal(actions.plan(name, '{}', some).kind, 'error', name + ' is off');
+    for (const name of BASE_TOOLS.filter(n => n !== 'dance' && clock.indexOf(n) < 0)) assert.equal(actions.plan(name, '{}', some).kind, 'error', name + ' is off');
+    const noTimers = {localSkills: all.filter(n => n !== 'timers')};
+    for (const name of clock) assert.match(actions.plan(name, '{"hour":7,"minutes":1}', noTimers).error || '', /not switched on/, name + ' goes with the timers');
+    // Games are their own switch: off, the game tool and its names are gone, the other skills stay.
+    const noGames = {localSkills: all.filter(n => n !== 'games')};
+    assert.ok(!actions.isOffered(noGames, 'play_game') && actions.isOffered(noGames, 'use_skill'));
+    assert.match(actions.plan('play_game', '{"name":"circuit saver"}', noGames).error, /not switched on/);
+    assert.doesNotMatch(JSON.stringify(actions.tools(noGames)) + actions.rules(noGames), /word of the day|circuit saver/i, 'no game is named when games are off');
+    assert.equal(actions.plan('play_game', '{"name":"circuit saver"}', {}).kind, 'handover');
     assert.equal(actions.plan('remember', '{"text":"x"}', {localSkills: [], memory: true}).kind, 'local', 'memory has its own switch');
     assert.deepEqual(actions.tools({localSkills: [], cloudSkills: ['weather']}).map(t => t.name), ['weather'], 'cloud tools are separate');
 });
@@ -655,4 +671,15 @@ test('local tools: the instructions name only the ones that are on, and read rig
     assert.doesNotMatch(one, /get_time|timer|volume|cloud/);
     assert.equal(actions.rules({localSkills: [], cloudSkills: []}), '', 'no tools, no text');
     assert.match(actions.rules({localSkills: [], cloudSkills: ['news']}), /^Only when your person asks, your tools let you ask your cloud for news\. /);
+});
+
+test('local tools: a list stored with a switch per timer tool is read as the timers switch, and games follow use_skill (D185)', () => {
+    const was = ['get_time', 'set_timer', 'cancel_alarm', 'use_skill', 'look_away'];
+    assert.deepEqual(actions.upgradeLocal(was), ['get_time', 'timers', 'use_skill', 'look_away', 'games']);
+    assert.deepEqual(actions.localSkills({localSkills: was}), ['get_time', 'timers', 'use_skill', 'games', 'look_away']);
+    assert.deepEqual(actions.upgradeLocal(['dance', 'check_clock']), ['dance', 'timers'], 'no use_skill: no games');
+    const now = ['get_time', 'use_skill', 'look_away'];
+    assert.equal(actions.upgradeLocal(now), now, 'a list without a timer tool name is left alone');
+    assert.deepEqual(actions.localSkills({localSkills: now}), ['get_time', 'use_skill', 'look_away'], 'a new list with games unticked stays so');
+    assert.equal(actions.upgradeLocal(null), null);
 });

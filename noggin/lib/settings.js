@@ -28,10 +28,11 @@ function cloudOptions() {
     return Object.keys(actions.CLOUD).map(name => ({value: name}));
 }
 function localOptions() {
-    return Object.keys(actions.LOCAL).map(name => ({value: name, label: actions.LOCAL[name]}));
+    return Object.keys(actions.LOCAL).map(name => ({value: name, label: actions.LOCAL[name].label}));
 }
 
 // group: the page section; tab: the page tab. advanced: folded away under Advanced.
+// upgrade: a function that rewrites a stored value from an earlier version before it is checked.
 // empty: '' is a real value (no greeting), not "use the default".
 const SCHEMA = [
     {key: 'apiKey', type: 'secret', default: '', tab: 'brain', group: 'OpenAI', label: 'API key',
@@ -125,8 +126,8 @@ const SCHEMA = [
         help: 'Re-send the ring colour this often, besides after each line; 0: only after each line.', advanced: true},
 
     {key: 'actions', type: 'bool', default: true, tab: 'skills', group: 'Jibo\'s skills', label: 'Use Jibo\'s skills',
-        help: 'Timers, alarms, the clock, volume, music, radio, photos, dances, apps, sleep and looking away. When Noggin comes back after one, what Jibo said meanwhile goes to OpenAI so he can carry on. Off: conversation only.'},
-    {key: 'localSkills', type: 'set', default: Object.keys(actions.LOCAL), tab: 'skills', group: 'Jibo\'s skills', label: 'Local features',
+        help: 'Timers, alarms, the clock, volume, music, radio, photos, games, dances, apps, sleep and looking away. When Noggin comes back after one, what Jibo said meanwhile goes to OpenAI so he can carry on. Off: conversation only.'},
+    {key: 'localSkills', type: 'set', default: Object.keys(actions.LOCAL), tab: 'skills', group: 'Jibo\'s skills', label: 'Local features', upgrade: actions.upgradeLocal,
         help: 'What Jibo can do himself. Untick one and Jibo no longer offers it to the AI. The cloud features and his memory are set separately; the switch above turns every tool off.', options: localOptions},
     {key: 'cloudSkills', type: 'set', default: ['weather', 'news', 'calendar', 'commute', 'personal_report', 'surprise', 'picture'],
         tab: 'skills', group: 'Jibo\'s skills', label: 'Cloud features', help: 'Jibo\'s cloud answers these, then Noggin comes back. What Jibo said meanwhile (for example your calendar or commute) goes to OpenAI so he can carry on.', options: cloudOptions},
@@ -278,7 +279,7 @@ function overCap(field, value) {
 function effective(raw) {
     const config = {}, problems = {};
     SCHEMA.forEach(field => {
-        const value = raw[field.key];
+        const value = field.upgrade ? field.upgrade(raw[field.key]) : raw[field.key];
         const unset = value === undefined || value === null || (value === '' && !field.empty);
         // `language` comes before the fields whose default follows it.
         const fallback = defaultFor(field, config.language);

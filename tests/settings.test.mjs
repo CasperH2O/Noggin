@@ -336,3 +336,13 @@ test('language: English by default; the greeting and comeback line follow it whi
     assert.equal(settings.load(dir).config.greeting, 'Hallo allemaal');
     assert.equal(settings.update(dir, {language: 'fr'}).ok, false, 'only English or Dutch');
 });
+
+test('localSkills: a list saved with a switch per timer tool is read as the timers switch, without a problem (D185)', () => {
+    const dir = temp();
+    fs.writeFileSync(settings.file(dir), JSON.stringify({apiKey: KEY, localSkills: ['get_time', 'set_timer', 'cancel_alarm', 'use_skill', 'look_away']}));
+    assert.deepEqual(settings.read(dir).localSkills, ['get_time', 'timers', 'use_skill', 'games', 'look_away']);
+    assert.deepEqual(settings.publicView(dir).problems, {});
+    const saved = settings.update(dir, {localSkills: ['get_time', 'timers']});
+    assert.ok(saved.ok);
+    assert.deepEqual(JSON.parse(fs.readFileSync(settings.file(dir), 'utf8')).localSkills, ['get_time', 'timers'], 'the next save stores the new names');
+});

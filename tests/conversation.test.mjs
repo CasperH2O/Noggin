@@ -1076,7 +1076,7 @@ test('actions: tools go in session.update, open_app with the built-in apps and t
     const session = h.sent.find(e => e.type === 'session.update').session;
     assert.equal(session.tool_choice, 'auto');
     assert.deepEqual(session.tools.map(t => t.name), ['get_time', 'about_jibo', 'dance', 'set_volume', 'check_clock', 'set_timer', 'cancel_timer',
-        'set_alarm', 'cancel_alarm', 'use_skill', 'play_music', 'play_radio', 'open_app', 'go_to_sleep', 'look_away', 'remember', 'forget', 'recall']);
+        'set_alarm', 'cancel_alarm', 'use_skill', 'play_game', 'play_music', 'play_radio', 'open_app', 'go_to_sleep', 'look_away', 'remember', 'forget', 'recall']);
     assert.deepEqual(session.tools.find(t => t.name === 'open_app').parameters.properties.name.enum, ['clock', 'settings', 'menu', 'gallery', 'yoga', 'meet someone new', 'stargazer']);
     h.talk.close();
     const plain = await listening();
@@ -1419,15 +1419,23 @@ test('set_volume runs in Noggin; the result goes back to the model', async () =>
     h.talk.close();
 });
 
-test('use_skill hands over and comes back; play_music and play_radio leave', async () => {
+test('use_skill and play_game hand over and come back; play_music and play_radio leave', async () => {
     const acts = fakeActions();
     const h = await listening({actions: acts});
     await youSay(h, 'play word of the day');
-    callReply(h, 'r1', '', [['use_skill', {name: 'word of the day'}]]);
+    callReply(h, 'r1', '', [['play_game', {name: 'word of the day'}]]);
     await until(() => acts.redirects.length === 1);
     assert.deepEqual(acts.redirects[0], ['@be/word-of-the-day', {nlu: {intent: 'play', entities: {domain: 'word-of-the-day'}}, match: {skipSurprises: true}}]);
     assert.equal(acts.handovers[0].comeback, true);
     h.talk.close();
+    const skills = fakeActions();
+    const k = await listening({actions: skills});
+    await youSay(k, 'take a photo of us');
+    callReply(k, 'r1', '', [['use_skill', {name: 'take a photo'}]]);
+    await until(() => skills.redirects.length === 1);
+    assert.equal(skills.redirects[0][0], '@be/create');
+    assert.equal(skills.handovers[0].comeback, true);
+    k.talk.close();
     const music = fakeActions();
     const g = harness({actions: music});
     const ended = g.talk.open(); await untilListening(g);
@@ -1682,10 +1690,10 @@ test('the greeting smiles with the eye only (no body movement), outside the clas
 
 test('timer tools: the instructions and tool descriptions say to call them without words first', () => {
     const text = realtime.voiceSetup({apps: []});
-    assert.match(text, /For get_time, set_timer, cancel_timer, set_alarm, cancel_alarm, use_skill and open_app, call the tool without saying anything first/);
+    assert.match(text, /For get_time, set_timer, cancel_timer, set_alarm, cancel_alarm, use_skill, play_game and open_app, call the tool without saying anything first/);
     assert.doesNotMatch(text, /"Okay!"/);
     const tools = require(path.join(source, 'noggin/lib/actions.js')).tools({});
-    for (const name of ['get_time', 'set_timer', 'cancel_timer', 'set_alarm', 'cancel_alarm', 'use_skill', 'open_app']) assert.match(tools.find(t => t.name === name).description, /without saying anything first/);
+    for (const name of ['get_time', 'set_timer', 'cancel_timer', 'set_alarm', 'cancel_alarm', 'use_skill', 'play_game', 'open_app']) assert.match(tools.find(t => t.name === name).description, /without saying anything first/);
 });
 test('the instructions tell Jibo his emoji come from the words he says, and keep them apart from picture (D161)', () => {
     const text = realtime.voiceSetup({apps: [], config: {}});
