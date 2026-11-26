@@ -1236,6 +1236,104 @@ test('dance: no transcript in time means a random dance, never the previous turn
     h.talk.close();
 });
 
+test('a tool turn without a transcript: a quick follow-up is still spoken and Jibo listens again', async () => {
+    const h = await listening({actions: fakeActions()});
+    try {
+        h.emit({type: 'input_audio_buffer.speech_stopped'});   // no transcript ever comes
+        callReply(h, 'd1', '', [['dance', {}, 'call_dance_1']]);
+        await until(() => h.sent.some(e => e.type === 'response.create'));
+        reply(h, 'f1', 'That was fun!');   // well within transcriptWaitMs of the follow-up's start
+        await untilListening(h);
+        assert.equal(h.said.at(-1), 'That was fun!');
+        // An empty follow-up (only the tool result, no words) also ends in listening.
+        h.emit({type: 'input_audio_buffer.speech_stopped'});
+        callReply(h, 'd2', '', [['dance', {}, 'call_dance_2']]);
+        await until(() => h.sent.filter(e => e.type === 'response.create').length >= 2);
+        h.emit({type: 'response.created', response: {id: 'f2'}});
+        h.emit({type: 'response.done', response: {id: 'f2', status: 'completed'}});
+        await untilListening(h);
+    } finally { h.talk.close(); }
+});
+
+test('a tool turn without a transcript: words transcribed during the follow-up are logged and never drop it', async () => {
+    const h = await listening({actions: fakeActions()});
+    try {
+        h.emit({type: 'input_audio_buffer.speech_stopped'});
+        h.emit({type: 'input_audio_buffer.committed', item_id: 'item_d1'});
+        callReply(h, 'd1', '', [['dance', {}, 'call_dance_1']]);
+        await until(() => h.sent.some(e => e.type === 'response.create'));
+        h.emit({type: 'conversation.item.input_audio_transcription.completed', item_id: 'item_other', transcript: 'not these'});
+        h.emit({type: 'conversation.item.input_audio_transcription.completed', item_id: 'item_d1', transcript: ' '});
+        reply(h, 'f1', 'That was fun!');
+        await untilListening(h);
+        assert.equal(h.said.at(-1), 'That was fun!');
+        assert.deepEqual(h.logs.filter(e => e.kind === 'you' && e.late).map(e => e.text), ['']);
+        assert.ok(!h.logs.some(e => e.kind === 'skipped'), 'an empty late transcript never drops the follow-up');
+    } finally { h.talk.close(); }
+});
+
+test('a tool turn without a transcript: a goodbye transcribed during the follow-up ends the conversation', async () => {
+    const h = harness({actions: fakeActions()});
+    const ended = h.talk.open(); await untilListening(h);
+    try {
+        h.emit({type: 'input_audio_buffer.speech_stopped'});
+        callReply(h, 'd1', '', [['dance', {}, 'call_dance_1']]);
+        await until(() => h.sent.some(e => e.type === 'response.create'));
+        h.emit({type: 'conversation.item.input_audio_transcription.completed', transcript: 'Goodbye Jibo.'});
+        reply(h, 'f1', 'Bye!');
+        assert.equal(await ended, 'goodbye');
+        assert.equal(h.said.at(-1), 'Bye!');
+    } finally { h.talk.close(); }
+});
+
+test('reply guard: a complete reply that was held back with nothing to release it is spoken anyway', async () => {
+    const h = await listening({config: {replyWaitMs: 300}});
+    try {
+        h.emit({type: 'input_audio_buffer.speech_stopped'});
+        clearTimeout(h.talk.turn.waitTimer);   // the timer that would release it is gone
+        reply(h, 'r1', 'Still here.');
+        await sleep(200); assert.equal(h.said.length, 1, 'held back for the transcript');
+        await untilListening(h);
+        assert.equal(h.said.at(-1), 'Still here.');
+        assert.ok(h.logs.some(e => e.kind === 'reply_stalled'));
+    } finally { h.talk.close(); }
+});
+
+test('reply guard: a reply that stops coming after Jibo began to say it is cut there, and its late rest is ignored', async () => {
+    const h = await listening({config: {replyWaitMs: 300}});
+    try {
+        youSay(h, 'tell me a story');
+        reply(h, 'r1', 'Once upon a time. There was a', false);   // no response.done: the connection went quiet
+        await until(() => h.said.includes('Once upon a time.'));
+        await untilListening(h);
+        const cut = h.logs.find(e => e.kind === 'reply_stalled');
+        assert.ok(cut && cut.cut, 'logged as cut');
+        assert.ok(h.sent.some(e => e.type === 'response.cancel'));
+        assert.ok(!h.said.some(e => /There was/.test(e)), 'the unfinished sentence is not said');
+        h.emit({type: 'response.output_text.delta', response_id: 'r1', delta: ' dragon.'});
+        h.emit({type: 'response.done', response: {id: 'r1', status: 'completed', output: [{id: 'it1'}]}});
+        await sleep(100);
+        assert.equal(h.talk.state, 'listening');
+        assert.ok(h.sent.some(e => e.type === 'conversation.item.delete' && e.item_id === 'it1'), 'the late reply is forgotten');
+    } finally { h.talk.close(); }
+});
+
+test('reply guard: a long reply whose text keeps coming is not cut', async () => {
+    const h = await listening({config: {replyWaitMs: 300}});
+    try {
+        youSay(h, 'tell me a story');
+        h.emit({type: 'response.created', response: {id: 'r1'}});
+        // The first sentence at once, the rest slowly: 840 ms in all, over twice the guard's wait.
+        for (const w of ['Once upon a time. ', 'The ', 'dragon ', 'slept ', 'all ', 'day ', 'long. ', 'The end.']) {
+            h.emit({type: 'response.output_text.delta', response_id: 'r1', delta: w}); await sleep(120);
+        }
+        h.emit({type: 'response.done', response: {id: 'r1', status: 'completed'}});
+        await untilListening(h);
+        assert.ok(!h.logs.some(e => e.kind === 'reply_stalled'));
+        assert.deepEqual(h.said.slice(1), ['Once upon a time.', 'The dragon slept all day long. The end.']);
+    } finally { h.talk.close(); }
+});
+
 test('danceAnnounce: always names the dance first and tells the model; off never', async () => {
     const h = await listening({actions: fakeActions(), config: {danceAnnounce: 'always'}});
     await danceTurn(h, 'do the robot', 1);

@@ -355,6 +355,7 @@ class Conversation {
             // The words of a turn dropped because the person went on: kept for the next turn (D90).
             const carried = this.carriedFor(event.item_id);
             if (carried) { carried.own = said; this.log.write({kind: 'you', turn: carried.n, text: said, carried: true}); return; }
+            if (this.lateWords(turn, event.item_id, said)) return;
             if (!turn || turn.transcript !== undefined || !this.mine(turn, event.item_id)) return;
             const before = carriedText(turn.before);
             turn.own = said; turn.transcript = joinWords(before, said); turn.transcriptAt = this.now(); this.heard = turn.transcript;
@@ -376,9 +377,10 @@ class Conversation {
             if (!turn || turn.skipped) { if (id) { this.rt.send({type: 'response.cancel', response_id: id}); this.droppedReplies[id] = true; } }
             else if (!turn.responseId) turn.responseId = id;
         } else if (realtime.textDelta(event) !== null) {
-            if (!turn || turn.skipped || !this.ours(turn, event.response_id)) return;
+            if (!turn || turn.skipped || !this.ours(turn, event.response_id) || this.droppedReplies[event.response_id]) return;
             if (!this.startupLogged) this.mark('first_text');
             if (turn.firstTextAt === undefined) turn.firstTextAt = this.now();
+            turn.lastTextAt = this.now();
             turn.text += realtime.textDelta(event);
             this.pump();
         } else if (type === 'response.done') {
@@ -422,6 +424,17 @@ class Conversation {
         if (!this.rt) return;
         output.forEach(item => { if (item && item.id) this.rt.send({type: 'conversation.item.delete', item_id: item.id}); });
     }
+    // The words of the turn before a tool follow-up, transcribed only now: logged, and a goodbye in
+    // them still ends the conversation; the follow-up is not held for them (D186).
+    lateWords(turn, itemId, said) {
+        const late = turn && turn.followUp && turn.lateItem;
+        if (!late || (late !== true && itemId && late !== itemId)) return false;
+        turn.lateItem = null;
+        this.log.write({kind: 'you', turn: turn.n, text: said, late: true});
+        if (said) { turn.transcript = said; this.heard = said; }
+        if (ttsText.isStop(said)) turn.goodbye = true;
+        return true;
+    }
     // An event for this turn's words: its own item, or any when either id is not known.
     mine(turn, itemId) { return !itemId || !turn.itemId || turn.itemId === itemId; }
     thinkingGate() { return this.config.listenWhileThinking !== false && !this.held; }
@@ -442,11 +455,33 @@ class Conversation {
         this.playPendingPet('turn');
     }
     // A reply that never comes (a half-open connection, an error instead of a response) must not
-    // leave Jibo thinking with the hotword off: drop the turn and listen again.
+    // leave Jibo thinking with the hotword off: drop the turn and listen again. A reply that stopped
+    // half way is cut after what was said, and one held back with nothing left to release it is
+    // finished now (D186).
     guardReply(turn) {
+        const waitMs = this.config.replyWaitMs || REPLY_WAIT_MS;
         turn.guard = setTimeout(() => {
-            if (this.active && this.turn === turn && !turn.lines && !turn.done) this.skip(turn, 'no_reply');
-        }, this.config.replyWaitMs || REPLY_WAIT_MS);
+            if (!this.active || this.turn !== turn) return;
+            if (!turn.lines && !turn.done) return this.skip(turn, 'no_reply');
+            if (!turn.done) {
+                // Text still coming: a long reply, not a stalled one.
+                if (this.now() - (turn.lastTextAt || turn.stoppedAt) < waitMs) return this.guardReply(turn);
+                return this.cutStalled(turn);
+            }
+            if (!turn.ending) {
+                this.log.write({kind: 'reply_stalled', turn: turn.n});
+                this.pump();
+            }
+        }, waitMs);
+    }
+    // The reply stopped coming after Jibo began to say it: say no more of it, run none of its tools,
+    // and forget the rest of it if it ever arrives (D186).
+    cutStalled(turn) {
+        if (this.rt) this.rt.send({type: 'response.cancel'});
+        if (turn.responseId) this.droppedReplies[turn.responseId] = true;
+        turn.cut = true; turn.text = turn.text.slice(0, turn.sent); turn.done = true; turn.status = 'stalled';
+        this.log.write({kind: 'reply_stalled', turn: turn.n, cut: true, said: turn.sent});
+        this.pump();
     }
     // Nothing understood: drop this turn's reply and listen again.
     skip(turn, reason) {

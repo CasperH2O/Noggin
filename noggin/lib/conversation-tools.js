@@ -138,8 +138,11 @@ const methods = {
     // A reply without new words from the person: after tool results, or on coming back.
     followUp(previous, round) {
         const now = this.now();
+        // Never undefined: a follow-up has no words of its own to wait for, so pump() must not hold it (D186).
         const turn = this.turn = {n: previous ? previous.n : ++this.turns, round: round, followUp: true, stoppedAt: now, text: '', sent: 0, lines: 0,
-            transcript: previous ? previous.transcript : '', transcriptAt: now, expressions: [], lag: [], reactionDone: true, goodbye: previous ? previous.goodbye : false};
+            transcript: previous && previous.transcript || '', transcriptAt: now, expressions: [], lag: [], reactionDone: true, goodbye: previous ? previous.goodbye : false,
+            // The person's words for the turn before, if still to come: their item, or true when not known.
+            lateItem: previous && previous.transcript === undefined ? previous.itemId || true : null};
         this.state = 'thinking'; this.gate = false; this.busyRing();
         this.guardReply(turn);
         this.rt.send({type: 'response.create'});
