@@ -6,7 +6,7 @@
 'use strict';
 const voice = require('./voice');
 const catalog = require('./catalog'), ttsText = require('./tts-text'), actions = require('./actions');
-const delay = require('./http').delay;
+const delay = require('./timing').delay;
 const heyJibo = require('./hey-jibo');
 
 const MAX_ROUNDS = 2;        // tool rounds in a row before the model must answer without one

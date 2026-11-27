@@ -26,6 +26,8 @@ function plainLetters(text) {
 function fold(text) { return plainLetters(String(text || '').toLowerCase()); }
 
 function pad2(n) { return (n < 10 ? '0' : '') + n; }
+// A local time's day as YYYY-MM-DD.
+function dayKey(t) { return t.year + '-' + pad2(t.monthNum + 1) + '-' + pad2(t.date); }
 
 // The Responses API's answer text: output_text, or the first output_text part of its output.
 function responseText(body) {
@@ -45,4 +47,4 @@ function systemTime(ms) {
     return {year: d.getFullYear(), monthNum: d.getMonth(), date: d.getDate(), dayOfWeek: DAYS[d.getDay()], hour: d.getHours(), minute: d.getMinutes(), zone: null};
 }
 
-module.exports = {DAYS, MONTHS, plainLetters, fold, pad2, responseText, systemTime};
+module.exports = {DAYS, MONTHS, plainLetters, fold, pad2, dayKey, responseText, systemTime};

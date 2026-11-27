@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-// The shared helpers: one JSON request with its caps (lib/http.js), deadlines, whole-file writes
-// (lib/files.js), text and time (lib/text.js), and when an OpenAI call moves to the page's fetch
-// (lib/openai.js).
+// The shared helpers: one JSON request with its caps (lib/http.js), deadlines (lib/timing.js),
+// whole-file writes (lib/files.js), text and time (lib/text.js), and when an OpenAI call moves to
+// the page's fetch (lib/openai.js).
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import fs from 'node:fs';
@@ -12,6 +12,9 @@ import {createRequire} from 'node:module';
 const require = createRequire(import.meta.url);
 const source = path.resolve(import.meta.dirname, '..');
 const web = require(path.join(source, 'noggin/lib/http.js'));
+const timing = require(path.join(source, 'noggin/lib/timing.js'));
+const events = require(path.join(source, 'noggin/lib/events.js'));
+const ConversationLog = require(path.join(source, 'noggin/lib/conversation-log.js'));
 const files = require(path.join(source, 'noggin/lib/files.js'));
 const strings = require(path.join(source, 'noggin/lib/text.js'));
 const openai = require(path.join(source, 'noggin/lib/openai.js'));
@@ -57,14 +60,60 @@ test('requestJson: JSON in and out, not JSON is null, too large, too slow and ab
     } finally { await stub.stop(); }
 });
 
+test('delay waits at least its time', async () => {
+    const started = Date.now();
+    await timing.delay(30);
+    assert.ok(Date.now() - started >= 25);
+});
+
+test('subscribe: a Jibo event or a named Node emitter; the unsubscribe uses off or removeListener and never throws', () => {
+    const calls = [];
+    const jiboEvent = {on: fn => calls.push(['on', fn]), off: fn => calls.push(['off', fn])};
+    const handler = () => {};
+    const off = events.subscribe(jiboEvent, handler);
+    off();
+    assert.deepEqual(calls, [['on', handler], ['off', handler]]);
+    const emitter = {on: (name, fn) => calls.push(['on', name, fn]), removeListener: (name, fn) => calls.push(['remove', name, fn])};
+    events.subscribe(emitter, handler, 'addAnimation')();
+    assert.deepEqual(calls.slice(2), [['on', 'addAnimation', handler], ['remove', 'addAnimation', handler]]);
+    const broken = {on() {}, off() { throw Error('gone'); }};
+    assert.doesNotThrow(events.subscribe(broken, handler));
+    assert.doesNotThrow(events.subscribe({on() {}}, handler), 'no way to unsubscribe');
+    assert.equal(events.subscribe(null, handler), null);
+    assert.equal(events.subscribe({}, handler), null);
+});
+
+test('shared: one value on global per name, made again only when what is there does not fit', () => {
+    const name = 'nogginTestShared';
+    try {
+        const first = events.shared(name, () => ({n: 1}));
+        assert.equal(events.shared(name, () => ({n: 2})), first);
+        global[name] = 'not a list';
+        assert.deepEqual(events.shared(name, () => [], Array.isArray), []);
+    } finally { delete global[name]; }
+});
+
+test('ConversationLog.entries: JSON objects only; a cut line at the end or the start is skipped', () => {
+    const text = '{"kind":"a"}\nnot json\n5\n{"kind":"b"}\n{"kind":"c"';
+    assert.deepEqual(ConversationLog.entries(text).map(e => e.kind), ['a', 'b']);
+    assert.deepEqual(ConversationLog.entries('{"kind":"a"}\n{"kind":"b"}', 'end').map(e => e.kind), ['a'], 'the last line may be cut');
+    assert.deepEqual(ConversationLog.entries('{"kind":"a"}\n{"kind":"b"}\n', 'start').map(e => e.kind), ['b'], 'the first line may be cut');
+    assert.deepEqual(ConversationLog.entries(null), []);
+});
+
+test('dayKey: a local time as YYYY-MM-DD', () => {
+    assert.equal(strings.dayKey({year: 2026, monthNum: 0, date: 5}), '2026-01-05');
+    assert.equal(strings.dayKey({year: 2026, monthNum: 11, date: 31}), '2026-12-31');
+});
+
 test('withTimeout: the answer, or what onTimeout gives or throws; never both', async () => {
-    assert.equal(await web.withTimeout(Promise.resolve(1), 50, () => 2), 1);
-    assert.equal(await web.withTimeout(new Promise(() => {}), 10, () => 2), 2);
-    await assert.rejects(web.withTimeout(new Promise(() => {}), 10), /^Error: timeout$/);
-    await assert.rejects(web.withTimeout(new Promise(() => {}), 10, () => { throw Error('late'); }), /late/);
-    await assert.rejects(web.withTimeout(Promise.reject(Error('own')), 50, () => 2), /own/);
+    assert.equal(await timing.withTimeout(Promise.resolve(1), 50, () => 2), 1);
+    assert.equal(await timing.withTimeout(new Promise(() => {}), 10, () => 2), 2);
+    await assert.rejects(timing.withTimeout(new Promise(() => {}), 10), /^Error: timeout$/);
+    await assert.rejects(timing.withTimeout(new Promise(() => {}), 10, () => { throw Error('late'); }), /late/);
+    await assert.rejects(timing.withTimeout(Promise.reject(Error('own')), 50, () => 2), /own/);
     let called = 0;
-    await web.withTimeout(new Promise(r => setTimeout(() => r(1), 5)), 30, () => { called++; });
+    await timing.withTimeout(new Promise(r => setTimeout(() => r(1), 5)), 30, () => { called++; });
     await new Promise(r => setTimeout(r, 50));
     assert.equal(called, 0, 'the timer ends with the answer');
 });

@@ -134,7 +134,7 @@ function clean(text, max) {
 }
 
 // ---- dates (local to Jibo's home: a {year, monthNum, date, hour} from actions.localTime) ----
-function dayOf(t) { return t.year + '-' + strings.pad2(t.monthNum + 1) + '-' + strings.pad2(t.date); }
+const dayOf = strings.dayKey;
 function partOf(t) {
     if (t.hour < 5) return 'night';
     if (t.hour < 12) return 'morning';

@@ -4,14 +4,14 @@
 // the shared global object (like the recap nudge, D59), where the skill reads it when a
 // conversation opens. Node 6: ES2015 only.
 'use strict';
-const trouble = require('./trouble');
+const trouble = require('./trouble'), shared = require('./events').shared;
 
 const FIRST_MS = 2 * 60000;
 const EVERY_MS = 12 * 3600000;
 const TICK_MS = 60000;
 const HUB = 'nogginBudget';
 
-function hub() { return global[HUB] || (global[HUB] = {state: null, warnedDay: null}); }
+function hub() { return shared(HUB, () => ({state: null, warnedDay: null})); }
 
 // Low when what is left of the spend limit is at most `percent` of it. view: usage report.
 function isLow(view, percent) {

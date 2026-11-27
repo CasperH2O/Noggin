@@ -3,7 +3,7 @@
 // says it (D70). OpenAI's refusal of the realtime WebSocket only shows as "closed (1006)" in the
 // page, so the cause is asked again over plain HTTPS (D71). Node 6: ES2015 only.
 'use strict';
-const withTimeout = require('./http').withTimeout, lines = require('./lines');
+const withTimeout = require('./timing').withTimeout, lines = require('./lines');
 
 // Jibo's line for each cause is in lib/lines.js (cause() adds it in the conversation's language).
 // screen: show the setup screen with the QR code to the settings page (lib/setup-screen.js).

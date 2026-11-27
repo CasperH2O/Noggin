@@ -13,7 +13,7 @@ const TURN_MS = 10000;
 // Orange (busy) and off as Jibo's idle ring. Re-sent, since the end of Jibo's own listening switches
 // the ring off; given up after RING_MAX_MS (D135).
 const BUSY = require('./ring').BUSY, OFF = require('./ring').OFF;
-const embodiedListen = require('./embodied-listen');
+const embodiedListen = require('./embodied-listen'), subscribe = require('./events').subscribe, shared = require('./events').shared;
 const RING_MS = 400, RING_MAX_MS = 10000;
 // Jibo's own "Hey Jibo" action (turning toward the voice) holds Noggin's switch until it sees the
 // turn end. Opening Noggin restarts it about 150 ms later; a cancel before that restart is missed
@@ -24,11 +24,7 @@ const CANCEL_DELAY_MS = 600;
 // (each loads its own copy of this module): {claimedAt} or claimedAt null.
 const HUB = 'nogginHeyJibo';
 
-function hub() {
-    const shared = global[HUB];
-    if (shared && typeof shared === 'object') return shared;
-    return (global[HUB] = {claimedAt: null});
-}
+function hub() { return shared(HUB, () => ({claimedAt: null}), value => typeof value === 'object'); }
 // Noggin's own turns (a cloud handover) are never the hotword's: a handover releases first (D132).
 function release() { hub().claimedAt = null; }
 
@@ -60,12 +56,6 @@ function subscribeFirst(event, handler) {
     if (!event || !Array.isArray(event._events)) return null;
     event._events.unshift(handler);
     return () => { const at = event._events.indexOf(handler); if (at >= 0) event._events.splice(at, 1); };
-}
-
-function subscribe(event, handler) {
-    if (!event || typeof event.on !== 'function') return null;
-    event.on(handler);
-    return () => { try { if (event.off) event.off(handler); else event.removeListener(handler); } catch (_) {} };
 }
 
 // jibo: Jibo's SDK; api: BEam's background api ({open, isOpen, isIdle}).

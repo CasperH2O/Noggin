@@ -4,7 +4,7 @@
 // late label, a clip beside a later line, D99-D104), eye emoji (D98) and the speak itself.
 // Node 6 / Chrome 53: ES2015 only.
 'use strict';
-const catalog = require('./catalog'), ttsText = require('./tts-text'), delay = require('./http').delay;
+const catalog = require('./catalog'), ttsText = require('./tts-text'), delay = require('./timing').delay;
 const voice = require('./voice'), lines = require('./lines'), realtime = require('./realtime-session');
 
 // A notice's or trouble line's emoji stays on the eye about as long as Jibo says its line.

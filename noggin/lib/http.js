@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-// One JSON request over Node's http or https, and a deadline for any promise. Every request
-// ends: on its answer, on an error, after timeoutMs, or when the caller aborts it.
+// One JSON request over Node's http or https. Every request ends: on its answer, on an error,
+// after timeoutMs, or when the caller aborts it.
 // Node 6 / Chrome 53: ES2015 only.
 'use strict';
 
@@ -15,7 +15,6 @@ const MAX_BYTES = 1024 * 1024;
 // through track's abort(reason), Error(reason || 'stopped').
 function requestJson(options) {
     return new Promise((resolve, reject) => {
-        // Loaded here, so withTimeout() alone needs no network modules.
         const target = options.target || require('url').parse(options.url);
         const transport = options.transport || require(target.protocol === 'https:' ? 'https' : 'http');
         const maxBytes = options.maxBytes || MAX_BYTES, started = Date.now();
@@ -61,25 +60,4 @@ function requestJson(options) {
     });
 }
 
-// The promise, or what onTimeout() returns (or throws) once ms have passed first; without
-// onTimeout, Error('timeout'). The timer never outlives the answer.
-function withTimeout(promise, ms, onTimeout) {
-    let timer = null;
-    const late = new Promise((resolve, reject) => {
-        timer = setTimeout(() => {
-            if (!onTimeout) return reject(Error('timeout'));
-            try { resolve(onTimeout()); } catch (error) { reject(error); }
-        }, ms);
-    });
-    return Promise.race([Promise.resolve(promise), late]).then(value => {
-        clearTimeout(timer);
-        return value;
-    }, error => {
-        clearTimeout(timer);
-        throw error;
-    });
-}
-
-function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
-
-module.exports = {requestJson, withTimeout, delay, TIMEOUT_MS, MAX_BYTES};
+module.exports = {requestJson, TIMEOUT_MS, MAX_BYTES};

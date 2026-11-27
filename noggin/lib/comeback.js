@@ -10,6 +10,7 @@
 // Node 6 / Chrome 53: ES2015 only.
 'use strict';
 
+const subscribe = require('./events').subscribe;
 const TIMEOUT_MS = 180000, QUIET_MS = 1500, POLL_MS = 250, IDLE = '@be/idle';
 // What the other skill said goes back to the model; an app may talk for up to an hour (D40).
 const SAID_MAX = 2000;
@@ -50,8 +51,7 @@ function watch(jibo, be, back, options) {
     record(jibo.embodied && jibo.embodied.speech, 'speak');
     // The action's own listening fires hjHeard while it runs; only a "Hey Jibo" after Jibo is back on idle is a new request.
     const hotword = jibo.jetstream && jibo.jetstream.events && jibo.jetstream.events.hjHeard;
-    const onHotword = () => { if (quietSince !== null) finish(false, 'hotword'); };
-    if (hotword && hotword.on) hotword.on(onHotword);
+    const unhotword = subscribe(hotword, () => { if (quietSince !== null) finish(false, 'hotword'); });
     const talking = () => !!(jibo.tts && jibo.tts.isTalking);
     const timer = clock.setInterval(() => {
         const current = be && be.currentSkill, skill = current && current.assetPack;
@@ -69,7 +69,7 @@ function watch(jibo, be, back, options) {
         if (done) return; done = true;
         clock.clearInterval(timer);
         restore.forEach(undo => undo());
-        if (hotword) { if (hotword.off) hotword.off(onHotword); else if (hotword.removeListener) hotword.removeListener(onHotword); }
+        if (unhotword) unhotword();
         if (ok) back(said.join(' ').slice(0, SAID_MAX));
         else giveUp(reason || 'cancelled', clock.now() - start);
     }

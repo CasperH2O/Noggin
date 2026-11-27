@@ -4,7 +4,7 @@
 // leaving (music, radio: the conversation ends) and cloud (Jibo's cloud answers a fixed phrase).
 // Each tool's details are at TOOLS. Node 6 / Chrome 53: ES2015 only.
 'use strict';
-const withTimeout = require('./http').withTimeout, strings = require('./text');
+const withTimeout = require('./timing').withTimeout, strings = require('./text');
 
 const CLOCK = '@be/clock', OWN = '@be/noggin', NIMBUS = '@be/nimbus', IDLE = '@be/idle';
 const MIN_TIMER_S = 6, MAX_TIMER_S = 24 * 3600;    // @be/clock refuses 5 s or less and more than 24 h

@@ -6,7 +6,7 @@
 // (D64). Names and emails in OpenAI's answers never reach the page. Node 6: ES2015 only.
 'use strict';
 const https = require('https'), crypto = require('crypto');
-const {requestJson, withTimeout} = require('./http'), strings = require('./text');
+const requestJson = require('./http').requestJson, withTimeout = require('./timing').withTimeout, strings = require('./text');
 
 const HOST = 'api.openai.com';
 const BASE = '/v1/organization';
@@ -232,19 +232,18 @@ function build(input) {
 
 // Requests per hour of Jibo's local day, for the last 7 days: rows newest last.
 function hourGrid(buckets, now, local) {
-    const dayKey = t => t.year + '-' + (t.monthNum + 1) + '-' + t.date;
     const rows = [], index = {};
     for (let i = DAYS - 1; i >= 0; i--) {
-        const t = local(now - i * DAY_MS), key = dayKey(t);
+        const key = strings.dayKey(local(now - i * DAY_MS));
         if (index[key] !== undefined) continue;
         index[key] = rows.length;
-        rows.push({day: t.year + '-' + strings.pad2(t.monthNum + 1) + '-' + strings.pad2(t.date), counts: new Array(24).fill(0)});
+        rows.push({day: key, counts: new Array(24).fill(0)});
     }
     let max = 0;
     buckets.forEach(bucket => {
         const count = (bucket.results || []).reduce((sum, r) => sum + (Number(r.num_model_requests) || 0), 0);
         if (!count) return;
-        const t = local(bucket.start_time * 1000), row = index[dayKey(t)];
+        const t = local(bucket.start_time * 1000), row = index[strings.dayKey(t)];
         if (row === undefined || typeof t.hour !== 'number') return;
         rows[row].counts[t.hour] += count;
         max = Math.max(max, rows[row].counts[t.hour]);

@@ -8,15 +8,7 @@ const path = require('path');
 const files = require('./files'), strings = require('./text'), ConversationLog = require('./conversation-log');
 const DAYS = 7, RECENT = 8, PART = 8192;
 
-// cut: 'end' for the start of a file (its last line may be cut), 'start' for a tail, or none.
-function lines(text, cut) {
-    const out = [];
-    text.split('\n').forEach((line, i, all) => {
-        if ((cut === 'end' && i === all.length - 1) || (cut === 'start' && i === 0)) return;
-        try { const e = JSON.parse(line); if (e && typeof e === 'object') out.push(e); } catch (_) {}
-    });
-    return out;
-}
+const lines = ConversationLog.entries;
 const time = e => e && typeof e.t === 'string' ? Date.parse(e.t) : NaN;
 
 // Lines said in each language, from a conversation's end line (D171); zeros when it has none.
@@ -66,7 +58,7 @@ function scan(dataDir) {
 //   week: the last 7 local days {count, ms, averageMs, longestMs, lines: {nl, en}} (a stretch counts for the day it began),
 //   days: [{day, count, ms}] oldest first, recent: the newest stretches first with their day and time.
 function report(rows, now, local) {
-    const pad = strings.pad2, key = t => t.year + '-' + pad(t.monthNum + 1) + '-' + pad(t.date);
+    const pad = strings.pad2, key = strings.dayKey;
     const days = [], index = {};
     for (let i = DAYS - 1; i >= 0; i--) {
         const day = key(local(now - i * 86400000));

@@ -5,7 +5,7 @@
 // fails (the simulator). Node 6 / Chrome 53: ES2015 only.
 'use strict';
 const https = require('https'), http = require('http'), url = require('url');
-const labels = require('./labels'), web = require('./http'), models = require('./models');
+const labels = require('./labels'), web = require('./http'), timing = require('./timing'), models = require('./models');
 
 const ANSWER_MAX = 1024 * 1024;
 const CLASSIFY_TIMEOUT_MS = 10000;
@@ -155,7 +155,7 @@ function pageJson(config, route, body, method, timeoutMs) {
             try { json = JSON.parse(text); } catch (_) {}
             return {status: response.status, json: json, ms: Date.now() - started};
         }));
-    return web.withTimeout(asked, timeoutMs || web.TIMEOUT_MS);
+    return timing.withTimeout(asked, timeoutMs || web.TIMEOUT_MS);
 }
 // Only Node's own HTTPS failing (the simulator's TLS) moves a caller to the page's fetch. Being
 // offline, a timeout, a stop or an oversized answer fails just that call.
@@ -171,7 +171,7 @@ function poster(config) {
     let usePage = false;
     const cancels = new Set();
     function timed(promise, timeoutMs, stopped) {
-        return web.withTimeout(Promise.race([promise, stopped]), timeoutMs || 20000);
+        return timing.withTimeout(Promise.race([promise, stopped]), timeoutMs || 20000);
     }
     function viaNode(route, body, timeoutMs, stopped) {
         let abortNode = null;

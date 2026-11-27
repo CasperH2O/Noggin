@@ -5,7 +5,7 @@
 // Node 6 / Chrome 53: ES2015 only.
 'use strict';
 
-const delay = require('./http').delay;
+const delay = require('./timing').delay, subscribe = require('./events').subscribe;
 // A platform call that never answers must not leave Noggin "busy" for good: loading may take
 // LOAD_MS, playing the clip's own length plus SLACK_MS; then it counts as done and is stopped.
 
@@ -92,14 +92,10 @@ class ExpressionPlayer {
                 return finish(entry.cancel);
             }
             const events = playback.instance && playback.instance.events;
-            const started = events && events.started;
-            if (started && typeof started.on === 'function') {
-                const onStart = () => {
-                    if (entry.startAt === undefined) { entry.startAt = this.now(); startedResolve(true); }
-                    try { (started.off || started.removeListener || (() => {})).call(started, onStart); } catch (_) {}
-                };
-                started.on(onStart);
-            }
+            const offStarted = subscribe(events && events.started, () => {
+                if (entry.startAt === undefined) { entry.startAt = this.now(); startedResolve(true); }
+                if (offStarted) offStarted();
+            });
             const playing = playback.play({screenCenterOverride: true});
             playingResolve(true);
             return Promise.resolve(playing).then(result => {
@@ -157,8 +153,8 @@ function watchEye(eye) {
     const waiting = [];
     const add = () => { busy = true; };
     const remove = () => { busy = false; waiting.splice(0).forEach(done => done('free')); };
-    const on = !!(eye && typeof eye.on === 'function');
-    if (on) { eye.on('addAnimation', add); eye.on('removeAnimation', remove); }
+    const unsubscribe = [subscribe(eye, add, 'addAnimation'), subscribe(eye, remove, 'removeAnimation')].filter(Boolean);
+    const on = unsubscribe.length > 0;
     return {
         busy: () => busy,
         free(maxMs) {
@@ -172,7 +168,7 @@ function watchEye(eye) {
             });
         },
         stop() {
-            if (on) { try { const off = (eye.off || eye.removeListener).bind(eye); off('addAnimation', add); off('removeAnimation', remove); } catch (_) {} }
+            unsubscribe.forEach(off => off());
             waiting.splice(0).forEach(done => done('stopped'));
         }
     };

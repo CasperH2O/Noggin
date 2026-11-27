@@ -7,7 +7,7 @@
 // Node 6 / Chrome 53: ES2015 only.
 'use strict';
 const touch = require('./touch'), realtime = require('./realtime-session'), Presence = require('./presence');
-const delay = require('./http').delay;
+const delay = require('./timing').delay;
 
 // After a petting clip, touches only count for the note this long (Jibo's idle skill: 1 s).
 const PET_GAP_MS = 1000;

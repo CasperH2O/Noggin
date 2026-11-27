@@ -8,7 +8,7 @@
 'use strict';
 const fs = require('fs'), path = require('path');
 const memory = require('./memory'), ConversationLog = require('./conversation-log'), actions = require('./actions');
-const files = require('./files'), strings = require('./text');
+const files = require('./files'), strings = require('./text'), shared = require('./events').shared;
 
 const STALE_MS = 2 * 3600000;       // a log untouched this long is over, whatever it says (D54)
 const CONTINUE_MS = 10 * 60000;     // a comeback that opened no new log within this is over
@@ -48,14 +48,7 @@ const SYSTEM = 'You keep the memory of Jibo, a small social robot that lives wit
     'statement is clearly about the same person or thing. Put the corrected fact in add. Never remove a fact with source "asked".';
 
 // ---- logs ----
-function entries(text) {
-    const out = [];
-    String(text || '').split('\n').forEach(line => {
-        if (!line) return;
-        try { const e = JSON.parse(line); if (e && typeof e === 'object') out.push(e); } catch (_) {}
-    });
-    return out;
-}
+const entries = text => ConversationLog.entries(text);
 // What a log says about its conversation: {name, resumed, status, lines}. status: 'open' (still
 // talking), 'waiting' (handed over, the comeback may still come), 'continues' (came back: the
 // next log goes on) or 'done'.
@@ -353,12 +346,7 @@ function loop(options) {
     };
 }
 // The listeners on the shared global object, or null where there is none.
-function hub() {
-    const shared = typeof global === 'object' && global ? global : null;
-    if (!shared) return null;
-    if (!Array.isArray(shared[SIGNAL])) shared[SIGNAL] = [];
-    return shared[SIGNAL];
-}
+function hub() { return shared(SIGNAL, () => [], Array.isArray); }
 // From the skill, when a conversation ends (or its comeback gives up).
 function nudge() {
     const listeners = hub();

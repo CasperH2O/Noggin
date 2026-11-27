@@ -149,6 +149,16 @@ function dropRecap(dataDir, names) {
     names.filter(n => RECAP_NAME.test(n)).forEach(n => remove(folder(dataDir), n));
 }
 
+// The entries of a log's text, skipping lines that are not JSON objects. cut: 'end' for the start
+// of a file (its last line may be cut off), 'start' for its end (the first line may be), or none.
+function entries(text, cut) {
+    const out = [];
+    String(text || '').split('\n').forEach((line, i, all) => {
+        if (!line || (cut === 'end' && i === all.length - 1) || (cut === 'start' && i === 0)) return;
+        try { const e = JSON.parse(line); if (e && typeof e === 'object') out.push(e); } catch (_) {}
+    });
+    return out;
+}
 // When a log or recap transcript started (its name, in this process's local time): ms, or NaN.
 function startedAt(name) {
     const m = STAMP.exec(String(name));
@@ -167,12 +177,8 @@ function started(dataDir, sinceMs) {
         if (!(startedAt(item.name) >= sinceMs)) return;
         let resumed = false;
         try {
-            head(dir, item.name).split('\n').some(line => {
-                let e;
-                try { e = JSON.parse(line); } catch (_) { return false; }
-                if (e && e.kind === 'startup') { resumed = !!e.resumed; return true; }
-                return false;
-            });
+            const startup = entries(head(dir, item.name), 'end').filter(e => e.kind === 'startup')[0];
+            resumed = !!(startup && startup.resumed);
         } catch (_) { return; }
         if (!resumed) count++;
     });
@@ -184,6 +190,7 @@ function started(dataDir, sinceMs) {
 }
 
 ConversationLog.list = list;
+ConversationLog.entries = entries;
 ConversationLog.started = started;
 ConversationLog.startedAt = startedAt;
 ConversationLog.FLUSH_MS = FLUSH_MS;

@@ -15,7 +15,7 @@
 const catalog = require('./catalog'), ttsText = require('./tts-text'), realtime = require('./realtime-session');
 const actions = require('./actions'), trouble = require('./trouble'), ExpressionPlayer = require('./expression');
 const voice = require('./voice'), lines = require('./lines');
-const delay = require('./http').delay;
+const delay = require('./timing').delay, subscribe = require('./events').subscribe;
 const AudioClock = require('./audio-clock'), heyJibo = require('./hey-jibo');
 // Conversation's methods, by topic; mixed into the class below.
 const micMethods = require('./conversation-mic'), lineMethods = require('./conversation-lines'), toolMethods = require('./conversation-tools');
@@ -87,9 +87,8 @@ class Conversation {
     // Blue only once the microphone is open: a hold keeps it orange (D91).
     listeningRing() { this.led(this.held ? BUSY : LISTENING); }
     watch(event, handler) {
-        if (!event || typeof event.on !== 'function') return;
-        event.on(handler);
-        this.unwatch.push(() => { try { event.off ? event.off(handler) : event.removeListener(handler); } catch (_) {} });
+        const off = subscribe(event, handler);
+        if (off) this.unwatch.push(off);
     }
     // Resolves with the reason the conversation ended.
     open() {

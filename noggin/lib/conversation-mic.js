@@ -4,7 +4,7 @@
 // report, the thread-lag probe and where the server placed speech in the sent audio (D78, D87).
 // Node 6 / Chrome 53: ES2015 only.
 'use strict';
-const audio = require('./audio'), delay = require('./http').delay, lines = require('./lines');
+const audio = require('./audio'), delay = require('./timing').delay, lines = require('./lines');
 
 // The JavaScript thread's lag (a timer firing late), sampled every LAG_MS: a blocked thread would
 // also hold up an animation's first frame.

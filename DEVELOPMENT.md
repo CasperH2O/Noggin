@@ -249,7 +249,8 @@ The tests and tools run on a current Node.
 | `noggin/lib/trouble.js` | what went wrong when Noggin cannot talk, and how Jibo says it |
 | `noggin/lib/setup-screen.js` | the QR code screen to the settings page |
 | **Shared** | |
-| `noggin/lib/http.js`, `files.js`, `text.js` | JSON over HTTP with a timeout and size cap; safe file writes; small text and time helpers |
+| `noggin/lib/http.js`, `timing.js`, `files.js`, `text.js` | JSON over HTTP with a timeout and size cap; a pause and a deadline for any promise; safe file writes; small text and time helpers |
+| `noggin/lib/events.js` | listening to Jibo's events, and state the skill and `background.js` share on `global` |
 | `noggin/lib/migrate.js` | copies an earlier version's data folder into the skill's own Knowledge folder, once |
 | `noggin/vendor/qrcode.js` | qrcode-generator 1.4.4 (MIT), with its licence |
 | `noggin/web/` | the settings page: plain HTML, CSS and JavaScript |

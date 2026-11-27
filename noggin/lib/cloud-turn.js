@@ -10,7 +10,7 @@
 // back on within ORIENT_MAX_MS. The timers belong to this module, which outlives Noggin's close.
 // Node 6: ES2015 only.
 'use strict';
-const embodiedListen = require('./embodied-listen');
+const embodiedListen = require('./embodied-listen'), subscribe = require('./events').subscribe;
 
 const SETTLE_MS = 300;       // after the pretend turn's direction arrived
 const ORIENT_MAX_MS = 3000;  // back on even if it never arrives
@@ -24,8 +24,7 @@ function create(jibo, options) {
     let held = false, orient = null;
     function hjEvents() {
         const identity = jibo.lps && jibo.lps.identity;
-        const events = identity && identity.events && identity.events.hjEvent;
-        return events && typeof events.on === 'function' ? events : null;
+        return identity && identity.events && identity.events.hjEvent || null;
     }
     // Turning to "Hey Jibo" off, unless something else already turned it off (then it is theirs).
     function orientOff(note) {
@@ -34,27 +33,23 @@ function create(jibo, options) {
         if (action.hjGoalProvider && action.hjGoalProvider.listening === false) return;
         try { action.configure({orientToHJ: false}); } catch (_) { return; }
         // heard: the first direction; count and lastMs show whether more events came in the window.
-        const state = orient = {note: note, at: Date.now(), events: hjEvents(), onHj: null, timer: null, heard: null, count: 0, lastMs: null};
+        const state = orient = {note: note, at: Date.now(), off: null, timer: null, heard: null, count: 0, lastMs: null};
         state.timer = setTimeout(() => orientOn('timeout'), maxMs);
-        if (!state.events) return;
-        state.onHj = data => {
+        state.off = subscribe(hjEvents(), data => {
             if (orient !== state) return;
             state.count++; state.lastMs = Date.now() - state.at;
             if (state.count > 1) return;
             state.heard = direction(data);
             clearTimeout(state.timer);
             state.timer = setTimeout(() => orientOn('heard'), settleMs);
-        };
-        state.events.on(state.onHj);
+        });
     }
     function orientOn(why) {
         const state = orient;
         if (!state) return;
         orient = null;
         clearTimeout(state.timer);
-        if (state.events && state.onHj) {
-            try { (state.events.removeListener || state.events.off).call(state.events, state.onHj); } catch (_) {}
-        }
+        if (state.off) state.off();
         try { jibo.action.configure({orientToHJ: true}); } catch (_) {}
         if (typeof state.note === 'function') {
             const entry = {kind: 'orient_hj', on: why, ms: Date.now() - state.at, events: state.count};

@@ -158,10 +158,7 @@ const EMOJI_CANCEL = {
 };
 // Dutch: the same pictures through Dutch words (lib/emoji-nl.js).
 const EMOJI_NL = require('./emoji-nl');
-const ACCENTS = {'\u00e0': 'a', '\u00e1': 'a', '\u00e2': 'a', '\u00e4': 'a', '\u00e8': 'e', '\u00e9': 'e', '\u00ea': 'e', '\u00eb': 'e',
-    '\u00ec': 'i', '\u00ed': 'i', '\u00ee': 'i', '\u00ef': 'i', '\u00f2': 'o', '\u00f3': 'o', '\u00f4': 'o', '\u00f6': 'o',
-    '\u00f9': 'u', '\u00fa': 'u', '\u00fb': 'u', '\u00fc': 'u'};
-function plain(word) { return word.replace(/[\u00e0-\u00fc]/g, c => ACCENTS[c] || c); }
+const plain = require('./text').plainLetters;
 // A Dutch word and the singulars it may come from: plurals and diminutives ("honden", "hondje",
 // "katten", "bomen", "huizen", "zonnetje" -> hond, kat, boom, huis, zon).
 const NL_ENDINGS = ['etjes', 'etje', 'tjes', 'tje', 'pjes', 'pje', 'jes', 'je', 'en', 's'];

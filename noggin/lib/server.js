@@ -12,7 +12,7 @@ const fs = require('fs'), path = require('path');
 const settings = require('./settings'), realtime = require('./realtime-session'), actions = require('./actions');
 const openai = require('./openai'), ConversationLog = require('./conversation-log'), describe = require('./describe');
 const models = require('./models'), memory = require('./memory'), usage = require('./usage'), stats = require('./stats'), strings = require('./text'), voice = require('./voice');
-const {requestJson, withTimeout} = require('./http');
+const requestJson = require('./http').requestJson, withTimeout = require('./timing').withTimeout;
 
 const BODY_MAX = 128 * 1024;
 const IMPORT_BODY_MAX = 512 * 1024;   // a memory export is far smaller; the room is for files edited by hand (D156)
