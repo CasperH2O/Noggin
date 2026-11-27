@@ -32,6 +32,8 @@ const STATIC = {
     '/index.html': {file: 'index.html', type: 'text/html; charset=utf-8'},
     '/style.css': {file: 'style.css', type: 'text/css; charset=utf-8'},
     '/app.js': {file: 'app.js', type: 'application/javascript; charset=utf-8'},
+    '/memory.js': {file: 'memory.js', type: 'application/javascript; charset=utf-8'},
+    '/usage.js': {file: 'usage.js', type: 'application/javascript; charset=utf-8'},
     '/logo.png': {file: 'logo.png', type: 'image/png'},
     '/favicon.png': {file: 'logo.png', type: 'image/png'}
 };

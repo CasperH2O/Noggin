@@ -35,8 +35,8 @@ test('the page and its files are served; anything else is not', async () => {
         assert.equal(page.status, 200);
         assert.match(page.headers.get('content-type'), /text\/html/);
         assert.match(page.headers.get('content-security-policy'), /default-src 'self'/);
-        assert.match(await page.text(), /<script src="app.js">/);
-        for (const file of ['/style.css', '/app.js', '/logo.png', '/favicon.png']) assert.equal((await r.call('GET', file)).status, 200, file);
+        assert.match(await page.text(), /<script src="app.js"><\/script>\s*<script src="memory.js"><\/script>\s*<script src="usage.js">/);
+        for (const file of ['/style.css', '/app.js', '/memory.js', '/usage.js', '/logo.png', '/favicon.png']) assert.equal((await r.call('GET', file)).status, 200, file);
         for (const bad of ['/../lib/settings.js', '/lib/server.js', '/web/app.js', '/%2e%2e/package.json']) assert.equal((await r.call('GET', bad)).status, 404, bad);
     } finally { await r.stop(); }
 });
