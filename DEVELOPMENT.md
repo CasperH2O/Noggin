@@ -131,7 +131,7 @@ list is left out without a message, and the conversation goes on without it.
 | `microphone` | `jibo.jetstream.setHotwordMode` while Noggin has the microphone; the page's `getUserMedia({audio})` in the simulator. Works only while Noggin's own screen is open |
 | `run-programs` | the `arecord` child process that captures the microphone on the robot (`noggin/lib/mic.js`): an ALSA failure in its own process cannot take Be, and with it Jibo's face and body, down. The page's capture (`micSource` `webaudio`, microphone only) is the simulator's path |
 | `jibo-apis` | the settings page asks BEacon on `127.0.0.1` for the installed skills (`noggin/lib/server.js`) |
-| `read-kb` | the clock's timer record (`/jibo/clock/alarm_timer`) and Jibo's family list, for names (`noggin/lib/actions.js`, `noggin/lib/presence.js`); once, an earlier version's data folder (`noggin/lib/migrate.js`) |
+| `read-kb` | the clock's timer record (`/jibo/clock/alarm_timer`) and Jibo's family list, for names (`noggin/lib/clock.js`, `noggin/lib/presence.js`); once, an earlier version's data folder (`noggin/lib/migrate.js`) |
 
 Not needed, so not declared: `camera`, `local-network`, `edit-kb`, `read-jibo-files`,
 `edit-jibo-files`. The internet (OpenAI) needs no permission. `tests/package.test.mjs` keeps the
@@ -230,7 +230,9 @@ The tests and tools run on a current Node.
 | `noggin/lib/conversation-log.js` | the conversation logs and recap transcripts, with their caps |
 | `noggin/lib/log.js` | the system log lines, cut to a length |
 | **Tools and coming back** | |
-| `noggin/lib/actions.js` | the tools the model may call and how each one is planned; Jibo's local time |
+| `noggin/lib/actions.js` | the tools the model may call and how each one is planned |
+| `noggin/lib/apps.js` | the skills, apps and games the tools open, the extra apps of `openApps`, and suggestions from BEacon |
+| `noggin/lib/clock.js` | Jibo's local time, how a time is said, and the clock's timer and alarm |
 | `noggin/lib/comeback.js`, `cloud-turn.js` | coming back to Noggin after another skill or Jibo's cloud answered |
 | **Memory** | |
 | `noggin/lib/memory.js` | the facts and notes Jibo keeps, and the memory tools |

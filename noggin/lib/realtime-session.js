@@ -4,7 +4,7 @@
 // time, memory) and the notes after a handover or a dropped connection. Pure: no I/O.
 // Node 6 / Chrome 53: ES2015 only.
 'use strict';
-const actions = require('./actions'), RATE = require('./audio').RATE;
+const actions = require('./actions'), clock = require('./clock'), RATE = require('./audio').RATE;
 
 // The transcript is for the log and stop phrases; the hint stops "Jibo" becoming "Thibaut".
 const TRANSCRIBE_HINT = 'A person talking to Jibo, a small social robot.';
@@ -138,9 +138,9 @@ function forConfig(config, persona, memory, language) {
 }
 // The first system message of every session (D181): what changes from one conversation to the
 // next. Built once per conversation, so a reconnect sends the same text and keeps the cache.
-// now: a Date or actions.localTime() (Jibo's home timezone); memory as for instructions().
+// now: a Date or clock.localTime() (Jibo's home timezone); memory as for instructions().
 function sessionNote(now, memory) {
-    const at = actions.describeTime(now);
+    const at = clock.describeTime(now);
     return 'Session note. This conversation started on ' + at.date + ', ' + at.time + ' local time on the robot (the clock may be off if Jibo was offline).' +
         (memory && memory.block ? '\n\n' + memory.block : '');
 }
@@ -153,31 +153,50 @@ function englishNote() {
 function pairsText(pairs) {
     return (pairs || []).map(p => (p.you ? 'Person: ' + p.you + '\n' : '') + (p.jibo ? 'Jibo: ' + p.jibo : '')).join('\n').slice(-6000);
 }
+// What a tool did, in the words of the resume note: "set_timer for 10 minutes".
+function toolDid(tool, args) {
+    if (tool === 'get_time') return 'get_time (the ' + (args.show === 'date' ? 'date' : 'time') + ')';
+    if (tool === 'set_timer') return 'set_timer for ' + (args.duration || 'the time asked');
+    if (tool === 'set_alarm') return 'set_alarm for ' + (args.time || 'the time asked');
+    const named = tool === 'use_skill' || tool === 'play_game' || tool === 'open_app';
+    if (named && args.name) return tool + ' (' + args.name + ')';
+    if (tool === 'picture' && args.subject) return 'picture (of ' + args.subject + ')';
+    return tool;
+}
+// Who took over for a tool: "your clock", "your cloud", "that app" or "that skill".
+function whoTookOver(tool, clockTool) {
+    if (clockTool || tool === 'get_time') return 'your clock';
+    if (actions.CLOUD[tool]) return 'your cloud';
+    return tool === 'open_app' ? 'that app' : 'that skill';
+}
+// What the clock's record shows now, for a timer or alarm tool; '' without a record.
+function clockNow(record, timer, alarm) {
+    let now = '';
+    if (timer && record && record.timer) {
+        now += record.timer.set ? 'A timer is now running with ' + record.timer.remaining + ' left. ' : 'No timer is running now. ';
+    }
+    if (alarm && record && record.alarm) {
+        now += record.alarm.set ? 'Your alarm is now set for ' + record.alarm.time + ', ' + record.alarm.day + '. ' : 'No alarm is set now. ';
+    }
+    return now;
+}
 // Back in Noggin after another skill did something: one system message with the conversation so
 // far, what happened and, for the clock, what is true now, so the model carries on from there.
-// resume: {pairs: [{you, jibo}], tool, args, said}; clock: actions.readClock() result or null.
+// resume: {pairs: [{you, jibo}], tool, args, said}; record: clock.readClock()'s result or null.
 // said: what Jibo already said on coming back (e.g. "Anything else?"), or '' to let the model speak.
-function resumeNote(resume, clock, said) {
+function resumeNote(resume, record, said) {
     const lines = pairsText(resume.pairs);
     const args = resume.args || {}, tool = String(resume.tool || 'a tool');
     const timer = /_timer$|^check_clock$/.test(tool), alarm = /_alarm$|^check_clock$/.test(tool);
-    const did = tool === 'get_time' ? 'get_time (the ' + (args.show === 'date' ? 'date' : 'time') + ')'
-        : tool === 'set_timer' ? 'set_timer for ' + (args.duration || 'the time asked')
-        : tool === 'set_alarm' ? 'set_alarm for ' + (args.time || 'the time asked')
-        : (tool === 'use_skill' || tool === 'play_game' || tool === 'open_app') && args.name ? tool + ' (' + args.name + ')'
-        : tool === 'picture' && args.subject ? 'picture (of ' + args.subject + ')' : tool;
-    const who = timer || alarm || tool === 'get_time' ? 'your clock' : actions.CLOUD[tool] ? 'your cloud' : tool === 'open_app' ? 'that app' : 'that skill', Who = who.charAt(0).toUpperCase() + who.slice(1);
-    let now = '';
-    if (timer && clock && clock.timer) now += clock.timer.set ? 'A timer is now running with ' + clock.timer.remaining + ' left. ' : 'No timer is running now. ';
-    if (alarm && clock && clock.alarm) now += clock.alarm.set ? 'Your alarm is now set for ' + clock.alarm.time + ', ' + clock.alarm.day + '. ' : 'No alarm is set now. ';
+    const who = whoTookOver(tool, timer || alarm), Who = who.charAt(0).toUpperCase() + who.slice(1);
+    const dontRepeat = 'do not repeat what ' + who + ' already said, and do not claim anything the facts above do not show.';
+    const carryOn = said
+        ? 'Now you are back in the conversation and have just said: "' + said + '". Wait for your person\'s answer; ' + dontRepeat
+        : 'Now you are back in the conversation. Continue in one short sentence, for example by asking whether there is anything else; ' + dontRepeat;
     return 'This is the conversation so far, in which you are Jibo:\n' + (lines || '(nothing yet)') + '\n\n' +
-        'Then you used ' + did + ' and ' + who + ' took over. ' +
-        (resume.said ? Who + ' said: "' + String(resume.said).slice(0, 600) + '". ' : '') + now +
-        (said
-            ? 'Now you are back in the conversation and have just said: "' + said + '". Wait for your person\'s answer; ' +
-              'do not repeat what ' + who + ' already said, and do not claim anything the facts above do not show.'
-            : 'Now you are back in the conversation. Continue in one short sentence, for example by asking whether there is anything else; ' +
-              'do not repeat what ' + who + ' already said, and do not claim anything the facts above do not show.');
+        'Then you used ' + toolDid(tool, args) + ' and ' + who + ' took over. ' +
+        (resume.said ? Who + ' said: "' + String(resume.said).slice(0, 600) + '". ' : '') + clockNow(record, timer, alarm) +
+        carryOn;
 }
 
 // After a dropped connection (D73): the new session hears the conversation so far, once.

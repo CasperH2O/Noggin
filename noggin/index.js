@@ -11,7 +11,7 @@ const BeSkill = require('@be/be-framework').BeSkill;
 const jibo = require('jibo');
 const settings = require('./lib/settings'), Conversation = require('./lib/controller'), Microphone = require('./lib/mic');
 const openai = require('./lib/openai'), ttsText = require('./lib/tts-text'), realtime = require('./lib/realtime-session'), ConversationLog = require('./lib/conversation-log');
-const actions = require('./lib/actions'), comeback = require('./lib/comeback'), createLog = require('./lib/log');
+const actions = require('./lib/actions'), clock = require('./lib/clock'), comeback = require('./lib/comeback'), createLog = require('./lib/log');
 const memory = require('./lib/memory'), recap = require('./lib/recap'), trouble = require('./lib/trouble'), budget = require('./lib/budget');
 const SetupScreen = require('./lib/setup-screen'), ExpressionPlayer = require('./lib/expression'), heyJibo = require('./lib/hey-jibo');
 const voice = require('./lib/voice'), lines = require('./lib/lines');
@@ -117,7 +117,7 @@ class Noggin extends BeSkill {
         // Chosen once: the instructions and the conversation start in the same language (D172).
         const speechVoice = voice.create(), language = speechVoice.choose(config.language);
         const instructions = realtime.forConfig(config, persona, notes, language.language);
-        const note = realtime.sessionNote(actions.localTime(jibo), notes);
+        const note = realtime.sessionNote(clock.localTime(jibo), notes);
         session = this.session = new Conversation({
             jibo: jibo, config: config, log: log, version: VERSION, voice: speechVoice, language: language,
             instructions: instructions, sessionNote: note,
@@ -131,19 +131,19 @@ class Noggin extends BeSkill {
                 cloud: phrase => cloudTurn.ask(phrase, entry => log.write(entry)),
                 handover: state => this.watchHandover(state, config, log),
                 handoverFailed: () => { stopWatching(); cloudTurn.release(); },
-                readClock: () => actions.readClock(jibo),
+                readClock: () => clock.readClock(jibo),
                 setVolume: args => actions.setVolume(jibo, args),
                 installed: pkg => actions.installed(name => require.resolve(name), pkg),
-                localTime: () => actions.localTime(jibo),
+                localTime: () => clock.localTime(jibo),
                 facts: () => persona.facts,
-                memory: config.memory ? args => memory.tool(dataDir, args, memory.dayOf(actions.localTime(jibo))) : null
+                memory: config.memory ? args => memory.tool(dataDir, args, memory.dayOf(clock.localTime(jibo))) : null
             } : null,
             resume: back,
             heyJibo: hey || null,
             openedAt: openedAt,
             startup: startup,
             diagnose: () => trouble.diagnose(config, openai.asker(config), {stopped: () => this.session !== session}),
-            notice: back ? null : budget.notice(memory.dayOf(actions.localTime(jibo)), config.budgetWarnPercent)
+            notice: back ? null : budget.notice(memory.dayOf(clock.localTime(jibo)), config.budgetWarnPercent)
         });
         return session.open().then(reason => {
             if (this.session === session) this.session = null;
@@ -182,7 +182,7 @@ class Noggin extends BeSkill {
         if (!config.memory) return null;
         try {
             if (config.memoryLearn) recap.start(dataDir, openedAt);
-            const state = memory.read(dataDir), today = memory.dayOf(actions.localTime(jibo));
+            const state = memory.read(dataDir), today = memory.dayOf(clock.localTime(jibo));
             const tail = back ? '' : recap.tail(dataDir, state, Date.now(), log.file);
             return realtime.memorySetup(config, memory.block(state, today, tail, config.presence !== false));
         } catch (error) {

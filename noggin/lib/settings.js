@@ -5,7 +5,7 @@
 // Node 6: ES2015 only.
 'use strict';
 const fs = require('fs'), path = require('path'), url = require('url');
-const catalog = require('./catalog'), models = require('./models'), realtime = require('./realtime-session'), actions = require('./actions'), files = require('./files'), migrate = require('./migrate');
+const catalog = require('./catalog'), models = require('./models'), realtime = require('./realtime-session'), actions = require('./actions'), apps = require('./apps'), files = require('./files'), migrate = require('./migrate');
 const lines = require('./lines');
 
 const ROBOT_SKILLS = '/opt/jibo/Jibo/Skills';
@@ -130,7 +130,7 @@ const SCHEMA = [
         help: 'What Jibo can do himself. Untick one and Jibo no longer offers it to the AI. The cloud features and his memory are set separately; the switch above turns every tool off.', options: localOptions},
     {key: 'cloudSkills', type: 'set', default: ['weather', 'news', 'calendar', 'commute', 'personal_report', 'surprise', 'picture'],
         tab: 'skills', group: 'Jibo\'s skills', label: 'Cloud features', help: 'Jibo\'s cloud answers these, then Noggin comes back. What Jibo said meanwhile (for example your calendar or commute) goes to OpenAI so he can carry on.', options: cloudOptions},
-    {key: 'openApps', type: 'map', max: actions.MAX_APPS, noteMax: actions.NOTE_MAX, default: {}, tab: 'skills', group: 'Jibo\'s skills', label: 'Extra apps',
+    {key: 'openApps', type: 'map', max: apps.MAX_APPS, noteMax: apps.NOTE_MAX, default: {}, tab: 'skills', group: 'Jibo\'s skills', label: 'Extra apps',
         help: 'Apps Jibo may open by name, next to his own. Say what each one does, so Noggin knows when to open it.'},
     {key: 'comebackMinutes', type: 'number', min: 1, max: 60, unit: 'min', default: 5, tab: 'skills', group: 'Jibo\'s skills', label: 'Come back within',
         help: 'After an app or skill, Noggin comes back once it is done, if that is within this time.', advanced: true},
@@ -218,10 +218,10 @@ function check(field, value) {
         const names = Object.keys(value), out = {};
         if (names.length > field.max) return fail('At most ' + field.max + ' apps.');
         for (let i = 0; i < names.length; i++) {
-            const name = names[i], given = value[name], entry = actions.appEntry(given);
-            if (!actions.APP_NAME.test(name)) return fail('"' + name + '" is not a name: letters, digits and spaces.');
+            const name = names[i], given = value[name], entry = apps.appEntry(given);
+            if (!apps.APP_NAME.test(name)) return fail('"' + name + '" is not a name: letters, digits and spaces.');
             const pkg = entry ? entry.pkg : given && typeof given === 'object' ? given.pkg : given;
-            if (typeof pkg !== 'string' || !actions.APP_PACKAGE.test(pkg)) return fail('"' + pkg + '" is not a package name such as @be/stargazer.');
+            if (typeof pkg !== 'string' || !apps.APP_PACKAGE.test(pkg)) return fail('"' + pkg + '" is not a package name such as @be/stargazer.');
             if (given && typeof given === 'object' && given.about !== undefined && given.about !== null && typeof given.about !== 'string') return fail(name + ': what it does is text.');
             if (entry.about.length > field.noteMax) return fail(name + ': at most ' + field.noteMax + ' characters for what it does.');
             out[name] = entry;

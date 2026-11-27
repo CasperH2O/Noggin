@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-// Noggin's actions (lib/actions.js) and the comeback after a handover (lib/comeback.js).
+// Noggin's actions (lib/actions.js), the apps they open (lib/apps.js), time (lib/clock.js) and the
+// comeback after a handover (lib/comeback.js).
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import path from 'node:path';
@@ -7,6 +8,8 @@ import {createRequire} from 'node:module';
 const require = createRequire(import.meta.url);
 const source = path.resolve(import.meta.dirname, '..');
 const actions = require(path.join(source, 'noggin/lib/actions.js'));
+const jiboApps = require(path.join(source, 'noggin/lib/apps.js'));
+const jiboClock = require(path.join(source, 'noggin/lib/clock.js'));
 const comeback = require(path.join(source, 'noggin/lib/comeback.js'));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -45,10 +48,10 @@ test('cancel, query, local tools, unknown tools', () => {
 
 test('open_app: Jibo\'s built-in apps plus the openApps setting\'s extras; the clock opens on its menu; never Noggin itself', () => {
     const builtin = {clock: '@be/clock', settings: '@be/settings', menu: '@be/main-menu', gallery: '@be/gallery', yoga: '@be/exercise', 'meet someone new': '@be/introductions'};
-    assert.deepEqual(actions.apps({openApps: null}), builtin);
-    assert.deepEqual(actions.apps({}), builtin, 'the default openApps is {}');
+    assert.deepEqual(jiboApps.all({openApps: null}), builtin);
+    assert.deepEqual(jiboApps.all({}), builtin, 'the default openApps is {}');
     const config = {openApps: {Clock: '@be/clock', 'My Stars': '@be/stargazer', talk: '@be/noggin', evil: '../../x', list: ['a']}};
-    assert.deepEqual(actions.apps(config), Object.assign({}, builtin, {'my stars': '@be/stargazer'}));
+    assert.deepEqual(jiboApps.all(config), Object.assign({}, builtin, {'my stars': '@be/stargazer'}));
     assert.deepEqual(actions.plan('open_app', '{"name":"clock"}', config).options, {nlu: {intent: 'menu', entities: {domain: 'clock'}}, match: {skipSurprises: true}});
     const stars = actions.plan('open_app', '{"name":"my  stars"}', config);
     assert.equal(stars.target, '@be/stargazer'); assert.equal(stars.check, true, 'an extra app is checked before it opens');
@@ -56,7 +59,7 @@ test('open_app: Jibo\'s built-in apps plus the openApps setting\'s extras; the c
     assert.equal(actions.plan('open_app', '{"name":"gallery"}', config).check, undefined, 'built-in apps are not checked');
     assert.match(actions.plan('open_app', '{"name":"telejibo"}', config).error, /not on Jibo's list \(clock, settings, .*my stars\)/);
     // An extra entry for a built-in package gets that app's own launch.
-    assert.deepEqual(actions.plan('open_app', '{"name":"exercise"}', {openApps: {exercise: '@be/exercise'}}).options, actions.APPS.yoga.options);
+    assert.deepEqual(actions.plan('open_app', '{"name":"exercise"}', {openApps: {exercise: '@be/exercise'}}).options, jiboApps.APPS.yoga.options);
     for (const name of ['recipes', 'doom', 'hue']) assert.equal(actions.plan('open_app', JSON.stringify({name}), {}).kind, 'error', name + ' is not built in');
 });
 
@@ -70,15 +73,15 @@ test('built-in apps and skills: each launch carries what that skill\'s own code 
     const skills = {'take a photo': ['@be/create', 'createOnePhoto'], 'photo booth': ['@be/create', 'createSomePhotos'],
         'sing daisy bell': ['@be/daisy-bell', 'sing'], 'who am i': ['@be/who-am-i', 'launchWhoAmI']};
     const games = {'word of the day': ['@be/word-of-the-day', 'play'], 'circuit saver': ['@be/circuit-saver', 'launchGame']};
-    for (const [tool, table, list] of [['use_skill', actions.SKILLS, skills], ['play_game', actions.GAMES, games]]) for (const [name, [pkg, intent]] of Object.entries(list)) {
+    for (const [tool, table, list] of [['use_skill', jiboApps.SKILLS, skills], ['play_game', jiboApps.GAMES, games]]) for (const [name, [pkg, intent]] of Object.entries(list)) {
         const p = nlu(tool, name.toUpperCase());
         assert.equal(p.kind, 'handover'); assert.equal(p.target, pkg); assert.equal(p.options.nlu.intent, intent);
         assert.equal(p.comeback, true, name + ' comes back'); assert.equal(p.options.match.skipSurprises, true);
         assert.equal(p.check, undefined, name + ' is part of Jibo: not checked');
     }
     // Only skills that ship with Jibo; store skills are extra apps (openApps).
-    assert.deepEqual(Object.keys(actions.SKILLS), Object.keys(skills));
-    assert.deepEqual(Object.keys(actions.GAMES), Object.keys(games));
+    assert.deepEqual(Object.keys(jiboApps.SKILLS), Object.keys(skills));
+    assert.deepEqual(Object.keys(jiboApps.GAMES), Object.keys(games));
     assert.match(nlu('use_skill', 'word of the day').error, /not one of Jibo's skills/, 'the games are their own tool');
     assert.match(nlu('play_game', 'photo booth').error, /not one of Jibo's games/);
     assert.equal(nlu('play_game', 'circuit saver').options.nlu.entities.domain, 'circuit-saver');
@@ -86,7 +89,7 @@ test('built-in apps and skills: each launch carries what that skill\'s own code 
     assert.match(nlu('use_skill', 'doom').error, /not one of Jibo's skills/);
     // The launch options are copies: changing one never changes the table.
     nlu('use_skill', 'photo booth').options.nlu.intent = 'x';
-    assert.equal(actions.SKILLS['photo booth'].options.nlu.intent, 'createSomePhotos');
+    assert.equal(jiboApps.SKILLS['photo booth'].options.nlu.intent, 'createSomePhotos');
 });
 
 test('set_alarm: the 24-hour time becomes the clock\'s 12-hour "H:MM" and upper-case AM/PM', () => {
@@ -155,30 +158,30 @@ test('readClock: the timer and the alarm from the clock\'s record; null when it 
     const now = () => Date.UTC(2026, 10, 14, 12, 0);
     const jibo = data => ({kb: kb(data)});
     const later = new Date(2026, 10, 15, 7, 30).getTime();
-    const both = await actions.readClock(jibo({timer: {endTime: now() + 60000, length: 120000}, alarm: {dateTimeInstance: {utc: later}, jobID: 'a'}}), now);
+    const both = await jiboClock.readClock(jibo({timer: {endTime: now() + 60000, length: 120000}, alarm: {dateTimeInstance: {utc: later}, jobID: 'a'}}), now);
     assert.equal(both.timer.remaining, '1 minute');
     assert.deepEqual(both.alarm, {set: true, time: '7:30 AM', day: 'Sunday, November 15, 2026'});
-    assert.deepEqual(await actions.readClock(jibo({alarm: {dateTimeInstance: {utc: now() - 1}}}), now), {timer: {set: false}, alarm: {set: false}});
-    assert.deepEqual(await actions.readClock(jibo({}), now), {timer: {set: false}, alarm: {set: false}});
-    assert.equal(await actions.readClock({}, now), null);
+    assert.deepEqual(await jiboClock.readClock(jibo({alarm: {dateTimeInstance: {utc: now() - 1}}}), now), {timer: {set: false}, alarm: {set: false}});
+    assert.deepEqual(await jiboClock.readClock(jibo({}), now), {timer: {set: false}, alarm: {set: false}});
+    assert.equal(await jiboClock.readClock({}, now), null);
 });
 
 test('time: Jibo\'s home timezone through jibo.utils.DateTime, else the system clock', () => {
     const calls = [];
     class DateTime { constructor(ms, zone) { calls.push([ms, zone.id]); } getLocalTime() { return {year: 2026, monthNum: 10, date: 13, dayOfWeek: 'Friday', hour: 0, minute: 4}; } }
     const jibo = {utils: {DateTime, Location: {jiboHome: {timezone: {id: 'Europe/Amsterdam'}}}}};
-    const t = actions.localTime(jibo, 123);
+    const t = jiboClock.localTime(jibo, 123);
     assert.deepEqual(calls, [[123, 'Europe/Amsterdam']]);
-    assert.deepEqual(actions.describeTime(t), {time: '12:04 AM', date: 'Friday, November 13, 2026', timezone: 'Europe/Amsterdam'});
-    assert.equal(actions.describeTime(Object.assign({}, t, {dayOfWeek: 'friday'})).date, 'Friday, November 13, 2026', 'the runtime\'s lower-case weekday');
-    const fallback = actions.localTime({utils: {DateTime, Location: {jiboHome: {}}}}, new Date(2026, 10, 12, 19, 30).getTime());
-    assert.deepEqual(actions.describeTime(fallback), {time: '7:30 PM', date: 'Thursday, November 12, 2026', timezone: null});
-    const broken = actions.localTime({utils: {DateTime: class { constructor() { throw Error('no tz'); } }, Location: {jiboHome: {timezone: {}}}}}, 0);
+    assert.deepEqual(jiboClock.describeTime(t), {time: '12:04 AM', date: 'Friday, November 13, 2026', timezone: 'Europe/Amsterdam'});
+    assert.equal(jiboClock.describeTime(Object.assign({}, t, {dayOfWeek: 'friday'})).date, 'Friday, November 13, 2026', 'the runtime\'s lower-case weekday');
+    const fallback = jiboClock.localTime({utils: {DateTime, Location: {jiboHome: {}}}}, new Date(2026, 10, 12, 19, 30).getTime());
+    assert.deepEqual(jiboClock.describeTime(fallback), {time: '7:30 PM', date: 'Thursday, November 12, 2026', timezone: null});
+    const broken = jiboClock.localTime({utils: {DateTime: class { constructor() { throw Error('no tz'); } }, Location: {jiboHome: {timezone: {}}}}}, 0);
     assert.equal(typeof broken.hour, 'number');
 });
 
 test('duration: spoken lengths', () => {
-    assert.equal(actions.duration(3600), '1 hour'); assert.equal(actions.duration(3661), '1 hour, 1 minute and 1 second');
+    assert.equal(jiboClock.duration(3600), '1 hour'); assert.equal(jiboClock.duration(3661), '1 hour, 1 minute and 1 second');
 });
 
 function fakeWorld() {
@@ -499,17 +502,17 @@ test('cloud turn: turning to "Hey Jibo" that something else switched off is left
 });
 
 test('extras: at most MAX_APPS extra apps reach open_app, the first ones in the setting', () => {
-    assert.equal(actions.MAX_APPS, 8);
+    assert.equal(jiboApps.MAX_APPS, 8);
     const openApps = {};
     for (let i = 1; i <= 12; i++) openApps['app ' + String.fromCharCode(96 + i)] = '@be/app-' + i;
-    const more = actions.extras({openApps});
+    const more = jiboApps.extras({openApps});
     assert.deepEqual(Object.keys(more), ['app a', 'app b', 'app c', 'app d', 'app e', 'app f', 'app g', 'app h']);
     // Invalid entries do not use up a place.
     const mixed = Object.assign({bad: '../x', self: '@be/noggin'}, openApps);
-    assert.equal(Object.keys(actions.extras({openApps: mixed})).length, 8);
-    assert.equal(actions.extras({openApps: mixed})['app h'], '@be/app-8');
+    assert.equal(Object.keys(jiboApps.extras({openApps: mixed})).length, 8);
+    assert.equal(jiboApps.extras({openApps: mixed})['app h'], '@be/app-8');
     const names = actions.tools({openApps}).find(t => t.name === 'open_app').parameters.properties.name.enum;
-    assert.equal(names.length, Object.keys(actions.APPS).length + 8, 'built-in apps plus 8 in the model\'s list');
+    assert.equal(names.length, Object.keys(jiboApps.APPS).length + 8, 'built-in apps plus 8 in the model\'s list');
 });
 
 test('spokenName: a menu label cut to the openApps name rule', () => {
@@ -519,18 +522,18 @@ test('spokenName: a menu label cut to the openApps name rule', () => {
         'A very long skill name that keeps going on': 'A very long skill name that', 'Supercalifragilisticexpialidociousness': 'Supercalifragilisticexpialidocio'
     };
     for (const [label, name] of Object.entries(cases)) {
-        assert.equal(actions.spokenName(label), name, JSON.stringify(label));
-        if (name) assert.match(name, actions.APP_NAME);
+        assert.equal(jiboApps.spokenName(label), name, JSON.stringify(label));
+        if (name) assert.match(name, jiboApps.APP_NAME);
     }
     // Node 6.9.2 (small ICU) cannot decompose accents: the fallback table still gives plain letters.
     const normalize = String.prototype.normalize;
     String.prototype.normalize = function () { return String(this); };
     try {
-        assert.equal(actions.spokenName('Café Radio!'), 'Cafe Radio');
-        assert.equal(actions.spokenName('ÉCOLE Straße Smørrebrød'), 'ECOLE Strasse Smorrebrod');
+        assert.equal(jiboApps.spokenName('Café Radio!'), 'Cafe Radio');
+        assert.equal(jiboApps.spokenName('ÉCOLE Straße Smørrebrød'), 'ECOLE Strasse Smorrebrod');
     } finally { String.prototype.normalize = normalize; }
-    assert.equal(actions.spokenName(null), '');
-    assert.equal(actions.spokenName({}), 'object Object', 'anything is turned into text first');
+    assert.equal(jiboApps.spokenName(null), '');
+    assert.equal(jiboApps.spokenName({}), 'object Object', 'anything is turned into text first');
 });
 
 test('suggestions: BEacon\'s installed skills (store or ZIP alike), without Noggin, what is chosen, odd and incompatible ones', () => {
@@ -543,7 +546,7 @@ test('suggestions: BEacon\'s installed skills (store or ZIP alike), without Nogg
         skill('@be/bluetooth-settings', 'Bluetooth Settings'), skill('@be/recipes', 'Recipes'), skill('@be/old', 'Old', {compatibility: {status: 'incompatible', minimum: '9.0.0'}}),
         skill('@be/x!', 'Bad'), skill('@be/telejibo', 'TeleJibo again'), skill('@be/hue', '★'), {packageName: 42}, null
     ]};
-    const found = actions.suggestions(inventory, {openApps: {Cooking: {pkg: '@be/recipes', about: 'Recipes'}}});
+    const found = jiboApps.suggestions(inventory, {openApps: {Cooking: {pkg: '@be/recipes', about: 'Recipes'}}});
     assert.deepEqual(found, [
         {name: 'Bluetooth Settings', pkg: '@be/bluetooth-settings', label: 'Bluetooth Settings', about: ''},
         {name: 'hue', pkg: '@be/hue', label: '★', about: ''},
@@ -551,12 +554,12 @@ test('suggestions: BEacon\'s installed skills (store or ZIP alike), without Nogg
         {name: 'TeleJibo', pkg: '@be/telejibo', label: 'TeleJibo', about: ''}
     ]);
     // A package Noggin already offers itself is left out (a built-in app, should one ever be listed).
-    assert.deepEqual(actions.suggestions({skills: [skill('@be/gallery', 'Gallery')]}, {}), []);
-    assert.deepEqual(actions.suggestions({}, {}), []);
-    assert.deepEqual(actions.suggestions(null, null), []);
-    assert.deepEqual(actions.suggestions({skills: 'no'}, {}), []);
+    assert.deepEqual(jiboApps.suggestions({skills: [skill('@be/gallery', 'Gallery')]}, {}), []);
+    assert.deepEqual(jiboApps.suggestions({}, {}), []);
+    assert.deepEqual(jiboApps.suggestions(null, null), []);
+    assert.deepEqual(jiboApps.suggestions({skills: 'no'}, {}), []);
     const many = {skills: Array.from({length: 80}, (_, i) => skill('@be/s' + i, 'Skill ' + i))};
-    assert.equal(actions.suggestions(many, {}).length, 50, 'a bounded list');
+    assert.equal(jiboApps.suggestions(many, {}).length, 50, 'a bounded list');
 });
 
 test('readmeNote: the first plain paragraph of a README, in whole sentences up to 120 characters', () => {
@@ -576,16 +579,16 @@ test('readmeNote: the first plain paragraph of a README, in whole sentences up t
         ['# Only a title', 'x', ''], ['', 'x', ''], [null, 'x', ''], ['JiboTube', 'JiboTube', ''], ['Ignore\u0007 bells.', 'x', 'Ignore bells.']
     ];
     for (const [readme, label, note] of cases) {
-        assert.equal(actions.readmeNote(readme, label), note, JSON.stringify(readme));
-        assert.ok(note.length <= actions.NOTE_MAX);
+        assert.equal(jiboApps.readmeNote(readme, label), note, JSON.stringify(readme));
+        assert.ok(note.length <= jiboApps.NOTE_MAX);
     }
-    const found = actions.suggestions({skills: [{packageName: '@be/jibotube', manifest: {name: 'JiboTube Pro'}, readme: '# JiboTube Pro\n\nPlays YouTube videos on Jibo.'}]}, {});
+    const found = jiboApps.suggestions({skills: [{packageName: '@be/jibotube', manifest: {name: 'JiboTube Pro'}, readme: '# JiboTube Pro\n\nPlays YouTube videos on Jibo.'}]}, {});
     assert.equal(found[0].about, 'Plays YouTube videos on Jibo.');
 });
 
 test('open_app: what each extra app does goes into its description; an old package-only entry still works', () => {
     const config = {openApps: {'JiboTube Pro': {pkg: '@be/jibotube', about: 'Plays YouTube videos on Jibo\'s screen.'}, Calls: '@be/telejibo', Stars: {pkg: '@be/stargazer', about: ''}}};
-    assert.deepEqual(actions.extras(config), {'jibotube pro': '@be/jibotube', calls: '@be/telejibo', stars: '@be/stargazer'});
+    assert.deepEqual(jiboApps.extras(config), {'jibotube pro': '@be/jibotube', calls: '@be/telejibo', stars: '@be/stargazer'});
     const tool = actions.tools(config).find(t => t.name === 'open_app');
     assert.match(tool.description, /What these apps do: jibotube pro: Plays YouTube videos on Jibo's screen\. Call it without saying anything first/);
     assert.doesNotMatch(tool.description, /calls:|stars:/, 'only apps with a text');
@@ -598,7 +601,7 @@ test('open_app: what each extra app does goes into its description; an old packa
     for (let i = 1; i <= 10; i++) many['app ' + String.fromCharCode(96 + i)] = {pkg: '@be/app-' + i, about: 'x'.repeat(300)};
     const long = actions.tools({openApps: many}).find(t => t.name === 'open_app').description;
     assert.equal((long.match(/app [a-j]: /g) || []).length, 8);
-    assert.ok(long.length < 8 * (actions.NOTE_MAX + 12) + 300, long.length);
+    assert.ok(long.length < 8 * (jiboApps.NOTE_MAX + 12) + 300, long.length);
 });
 
 test('lines without spaces are cut to NOTE_MAX too, so Noggin never writes a line Save refuses', () => {
@@ -606,15 +609,15 @@ test('lines without spaces are cut to NOTE_MAX too, so Noggin never writes a lin
     const settings = require(path.join(source, 'noggin/lib/settings.js'));
     const field = settings.SCHEMA.find(f => f.key === 'openApps');
     for (const text of ['Plays' + 'x'.repeat(200) + '.', 'Plays ' + 'word '.repeat(60), 'y'.repeat(119) + ' z'.repeat(5)]) {
-        const fromReadme = actions.readmeNote('# T\n\n' + text, 'T');
+        const fromReadme = jiboApps.readmeNote('# T\n\n' + text, 'T');
         const fromAi = describe.result({output_text: JSON.stringify({line: text})}).about;
         for (const line of [fromReadme, fromAi]) {
-            assert.ok(line.length <= actions.NOTE_MAX && line.endsWith('…'), line.length + ': ' + line);
+            assert.ok(line.length <= jiboApps.NOTE_MAX && line.endsWith('…'), line.length + ': ' + line);
             assert.equal(settings.check(field, {T: {pkg: '@be/t', about: line}}).error, undefined);
         }
     }
-    assert.equal(actions.cutNote('a'.repeat(300)), 'a'.repeat(119) + '…');
-    assert.equal(actions.cutNote('one two ' + 'b'.repeat(200)), 'one two…');
+    assert.equal(jiboApps.cutNote('a'.repeat(300)), 'a'.repeat(119) + '…');
+    assert.equal(jiboApps.cutNote('one two ' + 'b'.repeat(200)), 'one two…');
 });
 
 test('comeback: what the other skill says is recorded up to 2000 characters, however long it talks', () => {
@@ -629,9 +632,9 @@ test('comeback: what the other skill says is recorded up to 2000 characters, how
 
 test('readClock: a record the permissions refuse (no read-kb) is "cannot be read", not a failure', async () => {
     const jibo = {kb: {createModel: () => { throw Error('@be/noggin needs the read-kb permission to do this'); }}};
-    assert.equal(await actions.readClock(jibo), null);
+    assert.equal(await jiboClock.readClock(jibo), null);
     const rejecting = {kb: {createModel: () => ({loadRoot: () => Promise.reject(Error('@be/noggin needs the read-kb permission to do this'))})}};
-    assert.equal(await actions.readClock(rejecting), null);
+    assert.equal(await jiboClock.readClock(rejecting), null);
 });
 
 // ---- the local tools (D183) ----

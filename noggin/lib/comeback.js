@@ -10,8 +10,8 @@
 // Node 6 / Chrome 53: ES2015 only.
 'use strict';
 
-const subscribe = require('./events').subscribe;
-const TIMEOUT_MS = 180000, QUIET_MS = 1500, POLL_MS = 250, IDLE = '@be/idle';
+const subscribe = require('./events').subscribe, IDLE = require('./apps').IDLE;
+const TIMEOUT_MS = 180000, QUIET_MS = 1500, POLL_MS = 250;
 // What the other skill said goes back to the model; an app may talk for up to an hour (D40).
 const SAID_MAX = 2000;
 

@@ -5,7 +5,7 @@
 // Node 6 / Chrome 53: ES2015 only.
 'use strict';
 const voice = require('./voice');
-const catalog = require('./catalog'), ttsText = require('./tts-text'), actions = require('./actions');
+const catalog = require('./catalog'), ttsText = require('./tts-text'), actions = require('./actions'), clock = require('./clock'), apps = require('./apps');
 const delay = require('./timing').delay;
 const heyJibo = require('./hey-jibo');
 
@@ -118,10 +118,10 @@ const methods = {
         if (run === 'clock' || run === 'cancel') {
             // Read the clock's record. check_clock answers from it, and if it can't be read the
             // clock itself answers; a cancel goes to the clock only if there is something to cancel.
-            return Promise.resolve().then(() => acts.readClock ? acts.readClock() : null).catch(() => null).then(clock => {
-                if (run === 'clock') return clock ? {ok: true, timer: clock.timer, alarm: clock.alarm} : {handover: actions.clockQuery()};
+            return Promise.resolve().then(() => acts.readClock ? acts.readClock() : null).catch(() => null).then(record => {
+                if (run === 'clock') return record ? {ok: true, timer: record.timer, alarm: record.alarm} : {handover: actions.clockQuery()};
                 const domain = args && args.domain === 'alarm' ? 'alarm' : 'timer';
-                if (clock && clock[domain] && clock[domain].set === false) return {ok: true, cancelled: false, note: domain === 'alarm' ? 'no alarm is set' : 'no timer is running'};
+                if (record && record[domain] && record[domain].set === false) return {ok: true, cancelled: false, note: domain === 'alarm' ? 'no alarm is set' : 'no timer is running'};
                 return {handover: actions.clockCancel(domain)};
             });
         }
@@ -168,7 +168,7 @@ const methods = {
             const result = {ok: false, error: error};
             // The clock did not show the time: the model can still say it.
             if (call.name === 'get_time') {
-                const at = actions.describeTime(acts.localTime ? acts.localTime() : new Date(this.now()));
+                const at = clock.describeTime(acts.localTime ? acts.localTime() : new Date(this.now()));
                 Object.assign(result, {time: at.time, date: at.date, note: 'say it yourself'});
             }
             this.answer(turn, outputs.concat([{call: call, result: result}]), round);
@@ -192,7 +192,7 @@ const methods = {
         }
         // An app from the `openApps` setting that is not installed: say so at once (Be would only log it).
         if (plan.check && acts.installed && !acts.installed(plan.target)) return failed('that app is not installed on Jibo');
-        this.handoverTimer = setTimeout(() => failed(plan.target === actions.CLOCK ? 'the clock did not open' : 'it did not open'), wait);
+        this.handoverTimer = setTimeout(() => failed(plan.target === apps.CLOCK ? 'the clock did not open' : 'it did not open'), wait);
         try { acts.redirect(plan.target, plan.options); }
         catch (error) { failed('could not open ' + plan.target + ': ' + String(error && error.message || error).slice(0, 100)); }
     },

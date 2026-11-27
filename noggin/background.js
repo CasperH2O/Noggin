@@ -28,10 +28,10 @@ function logger(api) {
 
 // Jibo's local time in his home timezone, as the skill sees it.
 function localTime() {
-    const actions = require('./lib/actions');
+    const clock = require('./lib/clock');
     let jibo = null;
     try { jibo = require('jibo'); } catch (_) {}
-    return ms => actions.localTime(jibo, ms);
+    return ms => clock.localTime(jibo, ms);
 }
 
 function start(api) {

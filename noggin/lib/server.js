@@ -9,7 +9,7 @@
 // Node 6: ES2015 only.
 'use strict';
 const fs = require('fs'), path = require('path');
-const settings = require('./settings'), realtime = require('./realtime-session'), actions = require('./actions');
+const settings = require('./settings'), realtime = require('./realtime-session'), apps = require('./apps');
 const openai = require('./openai'), ConversationLog = require('./conversation-log'), describe = require('./describe');
 const models = require('./models'), memory = require('./memory'), usage = require('./usage'), stats = require('./stats'), strings = require('./text'), voice = require('./voice');
 const requestJson = require('./http').requestJson, withTimeout = require('./timing').withTimeout;
@@ -97,7 +97,7 @@ function create(options) {
     let describing = false;
     const now = options.now || (() => new Date());
     // Jibo's local time ({year, monthNum, date, ...}), as the skill sees it (background.js passes
-    // actions.localTime with Jibo's home timezone).
+    // clock.localTime with Jibo's home timezone).
     const local = options.local || strings.systemTime;
     const http = options.http || require('http');
     const beacon = Object.assign({host: '127.0.0.1', port: Number(process.env.BEACON_PORT) || BEACON_PORT, timeoutMs: BEACON_TIMEOUT_MS}, options.beacon);
@@ -234,7 +234,7 @@ function create(options) {
     function found() {
         return installedSkills().then(list => {
             const config = settings.publicView(dataDir()).values;
-            return {httpStatus: 200, body: {ok: true, found: actions.suggestions(list, config), builtIn: Object.keys(actions.APPS)}};
+            return {httpStatus: 200, body: {ok: true, found: apps.suggestions(list, config), builtIn: Object.keys(apps.APPS)}};
         }, error => {
             log.warn('skill scan: BEacon ' + error.message);
             return {httpStatus: 502, body: {ok: false, error: 'BEacon did not answer (' + error.message + ').'}};
@@ -246,7 +246,7 @@ function create(options) {
     // so this never sends other text to OpenAI. One at a time.
     function describeApp(body) {
         const pkg = typeof body.pkg === 'string' ? body.pkg : '';
-        if (!actions.APP_PACKAGE.test(pkg)) return {httpStatus: 400, body: {ok: false, error: 'not a package name'}};
+        if (!apps.APP_PACKAGE.test(pkg)) return {httpStatus: 400, body: {ok: false, error: 'not a package name'}};
         let config;
         try { config = settings.read(dataDir()); } catch (_) { return {httpStatus: 400, body: {ok: false, error: 'save an API key first'}}; }
         if (describing) return {httpStatus: 429, body: {ok: false, error: 'Jibo is already describing an app'}};

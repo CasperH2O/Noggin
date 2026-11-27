@@ -133,7 +133,7 @@ function clean(text, max) {
     return {text: s.charAt(0).toUpperCase() + s.slice(1)};
 }
 
-// ---- dates (local to Jibo's home: a {year, monthNum, date, hour} from actions.localTime) ----
+// ---- dates (local to Jibo's home: a {year, monthNum, date, hour} from clock.localTime) ----
 const dayOf = strings.dayKey;
 function partOf(t) {
     if (t.hour < 5) return 'night';

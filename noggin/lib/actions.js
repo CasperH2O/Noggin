@@ -2,54 +2,15 @@
 // Noggin actions: the tools the realtime model may call, and how each one runs. Four kinds:
 // local (Noggin does it), handover (another of Jibo's skills does it, then Noggin comes back),
 // leaving (music, radio: the conversation ends) and cloud (Jibo's cloud answers a fixed phrase).
-// Each tool's details are at TOOLS. Node 6 / Chrome 53: ES2015 only.
+// Each tool's details are at TOOLS; the skills and apps they open are in lib/apps.js.
+// Node 6 / Chrome 53: ES2015 only.
 'use strict';
-const withTimeout = require('./timing').withTimeout, strings = require('./text');
+const strings = require('./text'), apps = require('./apps'), clock = require('./clock');
+const CLOCK = apps.CLOCK, NIMBUS = apps.NIMBUS, IDLE = apps.IDLE, SKILLS = apps.SKILLS, GAMES = apps.GAMES, launch = apps.launch;
 
-const CLOCK = '@be/clock', OWN = '@be/noggin', NIMBUS = '@be/nimbus', IDLE = '@be/idle';
 const MIN_TIMER_S = 6, MAX_TIMER_S = 24 * 3600;    // @be/clock refuses 5 s or less and more than 24 h
-const PACKAGE = /^(@[a-z0-9-]+\/)?[a-z0-9._-]+$/;
-// The `openApps` setting: a spoken name and a scoped package per extra app, at most MAX_APPS (D32).
-const APP_NAME = /^[A-Za-z][A-Za-z0-9 ]{0,31}$/;
-const APP_PACKAGE = /^@[a-z0-9-]+\/[a-z0-9._-]+$/;
-const MAX_APPS = 8;
-// What an extra app does, for the model (D39): one short line each.
-const NOTE_MAX = 120;
-const MAX_FOUND = 50;
 const NO_ARGS = {type: 'object', properties: {}, additionalProperties: false};
 
-// Redirect options: the NLU result a skill's launch would get from the cloud. The domain is the
-// bare skill name, as the main menu sends it (@be/clock refuses '@be/clock'). skipSurprises:
-// when the skill is done Jibo goes straight back to idle.
-function launch(intent, domain, entities) {
-    return {nlu: {intent: intent, entities: Object.assign(domain ? {domain: domain} : {}, entities || {})}, match: {skipSurprises: true}};
-}
-
-// Jibo's built-in apps for open_app; Noggin comes back when the app is done (D38).
-const APPS = {
-    clock: {pkg: CLOCK, options: launch('menu', 'clock')},
-    settings: {pkg: '@be/settings', options: launch('menu', 'settings')},
-    menu: {pkg: '@be/main-menu', options: launch('menu', 'main-menu')},
-    gallery: {pkg: '@be/gallery', options: launch('menu', 'gallery')},
-    // @be/exercise reads intent and entities from the top level of its options, not from nlu.
-    yoga: {pkg: '@be/exercise', options: Object.assign(launch('exerciseDoYoga', 'exercise'), {intent: 'exerciseDoYoga', entities: {}})},
-    // @be/introductions reads nlu.entities without a check: it must be there.
-    'meet someone new': {pkg: '@be/introductions', options: launch('enrollment', 'introductions')}
-};
-// Jibo's skills for use_skill: each speaks, ends by itself within a minute or two, and Noggin
-// comes back afterwards.
-const SKILLS = {
-    'take a photo': {pkg: '@be/create', options: launch('createOnePhoto', 'create')},
-    'photo booth': {pkg: '@be/create', options: launch('createSomePhotos', 'create')},
-    'sing daisy bell': {pkg: '@be/daisy-bell', options: launch('sing', 'daisy-bell')},
-    'who am i': {pkg: '@be/who-am-i', options: launch('launchWhoAmI', 'who-am-i')}
-};
-// Jibo's games for play_game: a tool of their own, so the Games switch can turn them off (D185).
-// Circuit Saver ignores its options and ends by itself when the game is over.
-const GAMES = {
-    'word of the day': {pkg: '@be/word-of-the-day', options: launch('play', 'word-of-the-day')},
-    'circuit saver': {pkg: '@be/circuit-saver', options: launch('launchGame', 'circuit-saver')}
-};
 // @be/radio's genres (its `station` entity takes these keys, case-sensitive).
 const RADIO = {'alternative': 'Alternative', 'blues': 'Blues', 'christian and gospel': 'ChristianAndGospel', 'classical': 'Classical',
     'classic rock': 'ClassicRock', 'college radio': 'CollegeRadio', 'comedy': 'Comedy', 'country': 'Country', 'dance': 'Dance',
@@ -73,7 +34,7 @@ const CLOUD = {
     picture: {phrase: 'show me a picture of', topic: 'pictures of things', subject: true}
 };
 
-const key = text => String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+const key = strings.nameKey;
 // The cloud features the `cloudSkills` setting switches on, in CLOUD's order (unknown names
 // are left out).
 function cloudSkills(config) {
@@ -115,7 +76,6 @@ function localSkills(config) {
     const wanted = upgradeLocal(list).map(key);
     return Object.keys(LOCAL).filter(name => wanted.indexOf(name) >= 0);
 }
-const copy = value => JSON.parse(JSON.stringify(value));
 const PICTURE_MAX = 60;
 // picture's subject as it goes into the cloud's sentence: "a horse", "the eiffel tower". Plain
 // words only (the cloud matches the whole sentence, and speaks the subject back), lower case,
@@ -126,113 +86,6 @@ function pictureSubject(text) {
     if (s.length > PICTURE_MAX) s = s.slice(0, PICTURE_MAX + 1).replace(/ [^ ]*$/, '').trim();
     return /[a-z0-9\u00c0-\u024f]/.test(s) ? s : '';
 }
-// One `openApps` entry as {pkg, about}, from a package name alone or {pkg, about}.
-function appEntry(value) {
-    if (typeof value === 'string') return {pkg: value, about: ''};
-    if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.pkg !== 'string') return null;
-    return {pkg: value.pkg, about: cleanNote(value.about)};
-}
-// A line too long for NOTE_MAX, cut at a word (or anywhere, without spaces) with "…" added.
-function cutNote(text) {
-    const cut = text.slice(0, NOTE_MAX - 1), word = cut.replace(/ [^ ]*$/, '');
-    return (word.length < cut.length && word ? word : cut) + '…';
-}
-// "What it does" as one plain line: no control characters, single spaces.
-function cleanNote(text) {
-    return typeof text === 'string' ? text.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim() : '';
-}
-// The usable extra apps, the first MAX_APPS (D32): [{name, pkg, about}], name in lower case.
-function extraList(config) {
-    const list = config && config.openApps, out = [], seen = {};
-    if (!list || typeof list !== 'object' || Array.isArray(list)) return out;
-    Object.keys(list).forEach(name => {
-        const entry = appEntry(list[name]), k = key(name);
-        if (!k || !entry || !PACKAGE.test(entry.pkg) || entry.pkg === OWN) return;
-        if (seen[k]) { seen[k].pkg = entry.pkg; seen[k].about = entry.about.slice(0, NOTE_MAX); return; }
-        if (out.length >= MAX_APPS) return;
-        seen[k] = {name: k, pkg: entry.pkg, about: entry.about.slice(0, NOTE_MAX)};
-        out.push(seen[k]);
-    });
-    return out;
-}
-// Extra apps from the `openApps` setting: name -> package.
-function extras(config) {
-    const out = {};
-    extraList(config).forEach(app => { out[app.name] = app.pkg; });
-    return out;
-}
-// A label cut to the `openApps` name rule (D34): accents dropped, anything else a space, starting
-// with a letter, at most 32 characters cut at a word. '' when nothing is left.
-function spokenName(label) {
-    let s = String(label || '');
-    try { s = s.normalize('NFD'); } catch (_) {}
-    s = strings.plainLetters(s).replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9]+/g, ' ').replace(/^[^A-Za-z]+/, '').trim();
-    if (s.length > 32) {
-        const cut = s.slice(0, 33).replace(/ [^ ]*$/, '');
-        s = (cut.length <= 32 ? cut : s.slice(0, 32)).trim();
-    }
-    return APP_NAME.test(s) ? s : '';
-}
-// The start of a README as "what it does" (D39): the first plain paragraph without its markdown,
-// in whole sentences up to NOTE_MAX characters (a longer first sentence is cut at a word).
-function readmeNote(readme, label) {
-    const lines = String(readme || '').slice(0, 20000).split(/\r?\n/), paragraph = [];
-    let code = false;
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (/^(```|~~~)/.test(line)) { code = !code; if (paragraph.length) break; continue; }
-        if (code) continue;
-        // A heading underlined with === or --- is not prose either.
-        const underlined = i + 1 < lines.length && /^[=-]+$/.test(lines[i + 1].trim());
-        const prose = line && !underlined && !/^(#|!\[|\[!\[|<|\||>|[-*+] |\d+\. |[=-]+$)/.test(line);
-        if (prose) paragraph.push(line);
-        else if (paragraph.length) break;
-    }
-    const text = cleanNote(paragraph.join(' ').replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/\*\*|__|`|\*/g, ''));
-    if (!text || text.toLowerCase() === String(label || '').toLowerCase()) return '';
-    const sentences = [];
-    let start = 0;
-    for (let i = 0; i < text.length; i++) {
-        if ('.!?'.indexOf(text[i]) >= 0 && (i + 1 === text.length || text[i + 1] === ' ')) { sentences.push(text.slice(start, i + 1).trim()); start = i + 1; }
-    }
-    if (text.slice(start).trim()) sentences.push(text.slice(start).trim());
-    let note = '', full = false;
-    sentences.forEach(sentence => {
-        const next = note ? note + ' ' + sentence : sentence;
-        if (!full && next.length <= NOTE_MAX) note = next;
-        else full = true;
-    });
-    if (!note) note = cutNote(text);
-    return note;
-}
-// The custom skills BEacon lists (GET /api/skills/custom) that could become extra apps, as
-// [{name, pkg, label, about}] sorted by name. Left out (D37): Noggin, what Noggin already offers, what
-// `openApps` already has, odd package names and skills BEacon marks incompatible.
-function suggestions(inventory, config) {
-    const list = inventory && Array.isArray(inventory.skills) ? inventory.skills : [];
-    const openApps = config && config.openApps && typeof config.openApps === 'object' ? config.openApps : {};
-    const chosen = Object.keys(openApps).map(name => appEntry(openApps[name])).filter(Boolean).map(entry => entry.pkg);
-    const skip = [OWN].concat(Object.keys(APPS).map(name => APPS[name].pkg), Object.keys(SKILLS).map(name => SKILLS[name].pkg), Object.keys(GAMES).map(name => GAMES[name].pkg), chosen);
-    const out = [];
-    list.forEach(skill => {
-        const pkg = skill && skill.packageName;
-        if (typeof pkg !== 'string' || !APP_PACKAGE.test(pkg) || skip.indexOf(pkg) >= 0) return;
-        if (skill.compatibility && skill.compatibility.status === 'incompatible') return;
-        skip.push(pkg);
-        const label = skill.manifest && typeof skill.manifest.name === 'string' ? skill.manifest.name.slice(0, 120) : '';
-        out.push({name: spokenName(label) || spokenName(pkg.replace(/^@[^/]+\//, '')), pkg: pkg, label: label, about: readmeNote(skill.readme, label)});
-    });
-    out.sort((a, b) => a.name.toLowerCase() < b.name.toLowerCase() ? -1 : a.name.toLowerCase() > b.name.toLowerCase() ? 1 : 0);
-    return out.slice(0, MAX_FOUND);
-}
-// Every app open_app may open: name -> package (the built-in ones, then the `openApps` setting's extras).
-function apps(config) {
-    const out = {}, more = extras(config);
-    Object.keys(APPS).forEach(name => { out[name] = APPS[name].pkg; });
-    Object.keys(more).forEach(name => { out[name] = more[name]; });
-    return out;
-}
-
 // Who speaks when a tool runs: whoever performs the action, once (D118).
 //   talk:   Noggin does it; the model says the result once, after.
 //   skill:  another Jibo skill takes over and speaks; Noggin comes back with comebackLine.
@@ -358,15 +211,10 @@ function offered(config) {
     return TOOLS.filter(t => t.cloud ? cloud.indexOf(t.name) >= 0 : t.memory ? memory : local.indexOf(switchOf(t.name)) >= 0);
 }
 const isOffered = (config, name) => offered(config).some(t => t.name === name);
-// What the extra apps do, for open_app's description (D39).
-function appNotes(config) {
-    const told = extraList(config).filter(app => app.about);
-    return told.length ? ' What these apps do: ' + told.map(app => app.name + ': ' + app.about.replace(/[.!?\u2026]+$/, '')).join('; ') + '.' : '';
-}
 // The function tools for session.update: each description ends with its voice rule.
 function tools(config) {
-    const names = Object.keys(apps(config));
-    return offered(config).map(t => ({type: 'function', name: t.name, description: t.description + (t.apps ? appNotes(config) : '') + ' ' + VOICES[t.voice].tool,
+    const names = Object.keys(apps.all(config));
+    return offered(config).map(t => ({type: 'function', name: t.name, description: t.description + (t.apps ? apps.notes(config) : '') + ' ' + VOICES[t.voice].tool,
         parameters: t.apps ? enumOf(names) : t.parameters}));
 }
 const join = items => items.length > 1 ? items.slice(0, -1).join(', ') + ' and ' + items[items.length - 1] : items[0];
@@ -394,15 +242,6 @@ function rules(config) {
 function voiceOf(name) { const tool = TOOLS.filter(t => t.name === name)[0]; return tool ? tool.voice : null; }
 const isCloud = name => !!CLOUD[name] && TOOLS.some(t => t.cloud && t.name === name);
 
-// "1 hour and 30 minutes"
-function duration(totalSeconds) {
-    const h = Math.floor(totalSeconds / 3600), m = Math.floor(totalSeconds % 3600 / 60), s = Math.round(totalSeconds % 60);
-    const parts = [];
-    if (h) parts.push(h + (h === 1 ? ' hour' : ' hours'));
-    if (m) parts.push(m + (m === 1 ? ' minute' : ' minutes'));
-    if (s || !parts.length) parts.push(s + (s === 1 ? ' second' : ' seconds'));
-    return parts.length > 1 ? parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1] : parts[0];
-}
 const whole = v => isFinite(v) && v >= 0 && Math.floor(v) === v;
 const given = (args, name) => args && args[name] !== undefined && args[name] !== null && args[name] !== '';
 // set_timer's arguments -> {total, hours, minutes, seconds} or {error}.
@@ -423,8 +262,8 @@ function alarmTime(args) {
     if (!given(args, 'hour')) return {error: 'no time given: ask the person what time'};
     const h = Number(args.hour), m = given(args, 'minute') ? Number(args.minute) : 0;
     if (!whole(h) || !whole(m) || h > 23 || m > 59) return {error: 'hour must be 0 to 23 and minute 0 to 59'};
-    const time = ((h % 12) || 12) + ':' + (m < 10 ? '0' : '') + m, ampm = h < 12 ? 'AM' : 'PM';
-    return {time: time, ampm: ampm, spoken: time + ' ' + ampm};
+    const at = clock.twelveHour(h, m);
+    return {time: at.time, ampm: at.ampm, spoken: at.time + ' ' + at.ampm};
 }
 function setTimerOptions(length) {
     // The clock parses each part with parseInt and treats "null" as absent.
@@ -433,12 +272,6 @@ function setTimerOptions(length) {
 }
 function setAlarmOptions(at) {
     return launch('set', 'alarm', {time: at.time, ampm: at.ampm, hours: 'null', minutes: 'null', seconds: 'null'});
-}
-// An app from the `openApps` setting: the generic launch (BEam's Agent Mode), unless it is one of
-// the built-in ones.
-function openAppOptions(pkg) {
-    const builtin = Object.keys(APPS).filter(name => APPS[name].pkg === pkg)[0];
-    return builtin ? copy(APPS[builtin].options) : {nlu: {intent: 'menu', entities: {domain: pkg}}, match: {skipSurprises: true}};
 }
 // check_clock's fallback: the clock answers out loud, so it comes back like a `skill` tool.
 function clockQuery() {
@@ -507,7 +340,7 @@ function plan(name, argsText, config) {
     if (name === 'set_timer') {
         const length = timerLength(args);
         if (length.error) return {kind: 'error', error: length.error};
-        return handover(name, CLOCK, setTimerOptions(length), {seconds: length.total, duration: duration(length.total)});
+        return handover(name, CLOCK, setTimerOptions(length), {seconds: length.total, duration: clock.duration(length.total)});
     }
     if (name === 'set_alarm') {
         const at = alarmTime(args);
@@ -519,12 +352,12 @@ function plan(name, argsText, config) {
     if (name === 'use_skill') {
         const k = key(args.name), skill = SKILLS[k];
         if (!skill) return {kind: 'error', error: 'that is not one of Jibo\'s skills (' + Object.keys(SKILLS).join(', ') + ')'};
-        return handover(name, skill.pkg, copy(skill.options), {name: k});
+        return handover(name, skill.pkg, apps.optionsOf(skill), {name: k});
     }
     if (name === 'play_game') {
         const k = key(args.name), game = GAMES[k];
         if (!game) return {kind: 'error', error: 'that is not one of Jibo\'s games (' + Object.keys(GAMES).join(', ') + ')'};
-        return handover(name, game.pkg, copy(game.options), {name: k});
+        return handover(name, game.pkg, apps.optionsOf(game), {name: k});
     }
     if (name === 'play_music') {
         const song = String(args.song || '').trim().slice(0, 160), artist = String(args.artist || '').trim().slice(0, 120);
@@ -539,10 +372,11 @@ function plan(name, argsText, config) {
     if (name === 'go_to_sleep') return handover(name, IDLE, launch('sleep', 'idle'));
     if (name === 'look_away') return handover(name, IDLE, launch('turnAway', 'idle'));
     if (name === 'open_app') {
-        const list = apps(config), k = key(args.name);
+        const list = apps.all(config), k = key(args.name);
         if (!list[k]) return {kind: 'error', error: 'that app is not on Jibo\'s list (' + Object.keys(list).join(', ') + ')'};
-        const builtin = APPS[k] && APPS[k].pkg === list[k];
-        return handover(name, list[k], builtin ? copy(APPS[k].options) : openAppOptions(list[k]), {name: k}, !builtin);
+        // An extra app from the `openApps` setting is checked first; a built-in one is always there.
+        const builtin = apps.APPS[k] && apps.APPS[k].pkg === list[k];
+        return handover(name, list[k], apps.openOptions(list[k]), {name: k}, !builtin);
     }
     return {kind: 'error', error: 'unknown tool ' + String(name).slice(0, 40)};
 }
@@ -568,59 +402,5 @@ function setVolume(jibo, args) {
     return now === null ? {ok: true} : {ok: true, volume: now, of: 10};
 }
 
-// Local time where Jibo lives, as @be/clock tells it: jibo.utils.DateTime in the home
-// timezone (the robot's system clock may run on UTC). Falls back to the system's local time.
-function localTime(jibo, ms) {
-    ms = ms === undefined ? Date.now() : ms;
-    try {
-        const utils = jibo && jibo.utils, home = utils && utils.Location && utils.Location.jiboHome, zone = home && home.timezone;
-        if (utils && utils.DateTime && zone) {
-            const t = new utils.DateTime(ms, zone).getLocalTime();
-            if (t && typeof t.hour === 'number' && typeof t.minute === 'number' && typeof t.monthNum === 'number')
-                return {year: t.year, monthNum: t.monthNum, date: t.date, dayOfWeek: t.dayOfWeek || null, hour: t.hour, minute: t.minute, zone: zone.id || null};
-        }
-    } catch (_) {}
-    return strings.systemTime(ms);
-}
-// Date or localTime() -> {time: "7:30 PM", date: "Thursday, November 12, 2026", timezone}
-function describeTime(t) {
-    if (t && typeof t.getDay === 'function') t = strings.systemTime(t.getTime());
-    const time = ((t.hour % 12) || 12) + ':' + (t.minute < 10 ? '0' : '') + t.minute + ' ' + (t.hour < 12 ? 'AM' : 'PM');
-    // Jibo's DateTime gives the weekday in lower case ("sunday").
-    const named = t.dayOfWeek || strings.DAYS[new Date(t.year, t.monthNum, t.date).getDay()], day = named.charAt(0).toUpperCase() + named.slice(1);
-    return {time: time, date: day + ', ' + strings.MONTHS[t.monthNum] + ' ' + t.date + ', ' + t.year, timezone: t.zone || null};
-}
-
-// @be/clock's record in the knowledge base (read-only): its `data`, or null if it can't be read in time.
-function clockRecord(jibo, timeoutMs) {
-    const kb = jibo && jibo.kb;
-    if (!kb || typeof kb.createModel !== 'function') return Promise.resolve(null);
-    const read = Promise.resolve().then(() => kb.onInit ? kb.onInit() : null)
-        .then(() => kb.createModel('/jibo/clock/alarm_timer').loadRoot())
-        .then(root => root && root.data || {});
-    return withTimeout(read, timeoutMs || 2000, () => null).catch(() => null);
-}
-function timerState(data, at) {
-    const timer = data.timer;
-    if (!timer || typeof timer.endTime !== 'number' || timer.endTime <= at) return {set: false};
-    const left = Math.round((timer.endTime - at) / 1000);
-    return {set: true, remaining_s: left, remaining: duration(left), length_s: typeof timer.length === 'number' ? Math.round(timer.length / 1000) : null};
-}
-// The alarm keeps its time as a serialised DateTime; `utc` is the moment it goes off.
-function alarmState(jibo, data, at) {
-    const alarm = data.alarm, when = alarm && alarm.dateTimeInstance && alarm.dateTimeInstance.utc;
-    if (typeof when !== 'number' || when <= at) return {set: false};
-    const t = describeTime(localTime(jibo, when));
-    return {set: true, time: t.time, day: t.date};
-}
-// The timer and the alarm: {timer, alarm}, or null if the record can't be read.
-function readClock(jibo, now, timeoutMs) {
-    return clockRecord(jibo, timeoutMs).then(data => {
-        if (!data) return null;
-        const at = now ? now() : Date.now();
-        return {timer: timerState(data, at), alarm: alarmState(jibo, data, at)};
-    });
-}
-
-module.exports = {CLOCK, APPS, SKILLS, GAMES, RADIO, CLOUD, LOCAL, VOICES, TOOLS, APP_NAME, APP_PACKAGE, MAX_APPS, NOTE_MAX, voiceOf, cloudSkills, localSkills, upgradeLocal, offered, isOffered, rules, apps, appEntry, cleanNote, cutNote, extras, spokenName, readmeNote, suggestions, tools,
-    plan, duration, clockQuery, clockCancel, installed, setVolume, localTime, describeTime, readClock};
+module.exports = {RADIO, CLOUD, LOCAL, VOICES, TOOLS, voiceOf, cloudSkills, localSkills, upgradeLocal, offered, isOffered, rules, tools,
+    plan, clockQuery, clockCancel, installed, setVolume};

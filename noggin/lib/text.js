@@ -22,6 +22,8 @@ function plainLetters(text) {
         return lower === letter ? plain : capitalized(plain);
     });
 }
+// A name as a lookup key: lower case, single spaces.
+const nameKey = text => String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
 // For comparing words: lower case, accents dropped.
 function fold(text) { return plainLetters(String(text || '').toLowerCase()); }
 
@@ -41,10 +43,10 @@ function responseText(body) {
     return text;
 }
 
-// Local time by this system's clock, in actions.localTime()'s shape.
+// Local time by this system's clock, in clock.localTime()'s shape.
 function systemTime(ms) {
     const d = new Date(ms === undefined ? Date.now() : ms);
     return {year: d.getFullYear(), monthNum: d.getMonth(), date: d.getDate(), dayOfWeek: DAYS[d.getDay()], hour: d.getHours(), minute: d.getMinutes(), zone: null};
 }
 
-module.exports = {DAYS, MONTHS, plainLetters, fold, pad2, dayKey, responseText, systemTime};
+module.exports = {DAYS, MONTHS, plainLetters, nameKey, fold, pad2, dayKey, responseText, systemTime};

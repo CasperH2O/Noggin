@@ -7,7 +7,7 @@
 // and summary cleaned and checked before it is stored (lib/memory.js). Node 6: ES2015 only.
 'use strict';
 const fs = require('fs'), path = require('path');
-const memory = require('./memory'), ConversationLog = require('./conversation-log'), actions = require('./actions');
+const memory = require('./memory'), ConversationLog = require('./conversation-log'), clock = require('./clock');
 const files = require('./files'), strings = require('./text'), shared = require('./events').shared;
 
 const STALE_MS = 2 * 3600000;       // a log untouched this long is over, whatever it says (D54)
@@ -103,14 +103,14 @@ function nextDays(at) {
     const out = [];
     for (let i = 0; i < 14; i++) {
         const d = new Date(at.year, at.monthNum, at.date + i, 12);
-        const day = actions.describeTime(d).date.replace(/, \d{4}$/, '');
+        const day = clock.describeTime(d).date.replace(/, \d{4}$/, '');
         out.push((i === 0 ? 'today, ' : '') + day + ': ' + memory.dayOf({year: d.getFullYear(), monthNum: d.getMonth(), date: d.getDate()}));
     }
     return out;
 }
 // at: a local time {year, monthNum, date, dayOfWeek, hour, minute} of the conversation's start.
 function request(model, chain, facts, at) {
-    const when = actions.describeTime(at);
+    const when = clock.describeTime(at);
     return {
         model: model,
         input: [

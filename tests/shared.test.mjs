@@ -18,7 +18,7 @@ const ConversationLog = require(path.join(source, 'noggin/lib/conversation-log.j
 const files = require(path.join(source, 'noggin/lib/files.js'));
 const strings = require(path.join(source, 'noggin/lib/text.js'));
 const openai = require(path.join(source, 'noggin/lib/openai.js'));
-const actions = require(path.join(source, 'noggin/lib/actions.js'));
+const jiboApps = require(path.join(source, 'noggin/lib/apps.js'));
 const memory = require(path.join(source, 'noggin/lib/memory.js'));
 
 // A local server in place of OpenAI; answer(req, res) answers each request. Resolves {url, hits, stop()}.
@@ -137,7 +137,7 @@ test('atomic: a failed write leaves the old file and no temporary file behind', 
 test('fold: one accent table for memory search and spoken app names', () => {
     assert.equal(strings.fold('Łódź Čapek ā ß Æ ĳ'), 'lodz capek a ss ae ij');
     assert.equal(strings.plainLetters('Łódź'), 'Lodz');
-    assert.equal(actions.spokenName('Čapek Łódź ā'), 'Capek Lodz a');
+    assert.equal(jiboApps.spokenName('Čapek Łódź ā'), 'Capek Lodz a');
     const state = memory.empty();
     memory.addFact(state, 'Babcia lives in Łódź.', 'asked');
     assert.equal(memory.search(state, 'lodz', 3, '2026-11-19')[0], 'Babcia lives in Łódź.');
