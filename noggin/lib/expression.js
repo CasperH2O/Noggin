@@ -86,8 +86,11 @@ class ExpressionPlayer {
                 Promise.resolve().then(() => playback.stop()).catch(() => {});
                 finish('play_timeout');
             }, Math.round(frames / FPS * 1000) + ExpressionPlayer.SLACK_MS);
-            // Stopped (or Noggin closed) while it was loading: never play it.
-            if (entry.cancel) return finish(entry.cancel);
+            // Stopped (or Noggin closed) while it was loading: never play it, and let it go.
+            if (entry.cancel) {
+                Promise.resolve().then(() => playback.stop()).catch(() => {});
+                return finish(entry.cancel);
+            }
             const events = playback.instance && playback.instance.events;
             const started = events && events.started;
             if (started && typeof started.on === 'function') {

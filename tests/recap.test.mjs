@@ -363,6 +363,28 @@ test('pass: a log written to in the last 15 s is the live conversation: not read
     assert.equal(calls, 1);
 });
 
+test('pass: a pending log that did not change is not read again on the next pass', async () => {
+    const dir = setup(), t0 = new Date(2026, 10, 19, 10, 0, 0).getTime();
+    let now = t0, calls = 0;
+    const deps = {dataDir: dir, config, now: () => now, local, post: () => { calls++; return Promise.resolve({status: 200, json: answer({summary: 's', add: [], remove: []})}); }};
+    await recap.pass(deps);
+    const capped = memory.read(dir);
+    capped.recap.day = memory.dayOf(local(t0));
+    capped.recap.calls = recap.DAILY_CALLS;
+    memory.write(dir, capped);
+    const name = writeLog(dir, t0 + 1000, [{kind: 'you', text: 'hello'}, {kind: 'session_end'}], t0 + 2000);
+    const file = path.join(dir, 'logs', name);
+    now = t0 + 30000;
+    const first = readsOf(file, () => recap.pass(deps));
+    assert.equal((await first.result).waiting, 'daily limit');
+    assert.equal(first.whole, 1);
+    now += 60000;
+    const second = readsOf(file, () => recap.pass(deps));
+    assert.equal((await second.result).waiting, 'daily limit');
+    assert.equal(second.whole, 0, 'unchanged since the last pass');
+    assert.equal(calls, 0);
+});
+
 test('tail: only the last 64 KB of the previous log is read', () => {
     const dir = setup(), t0 = new Date(2026, 10, 19, 10, 0, 0).getTime();
     const early = Array.from({length: 400}, (_, i) => ({kind: 'you', text: 'early line ' + i + ' ' + 'x'.repeat(400)}));

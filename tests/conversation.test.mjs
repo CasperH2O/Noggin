@@ -1951,6 +1951,24 @@ test('an animation database that never answers: load and play time out, are logg
     } finally { [Player.LOAD_MS, Player.SLACK_MS] = saved; }
 });
 
+test('a clip stopped while it loads is never played, and its playback is stopped once it arrives', async () => {
+    const Player = require(path.join(source, 'noggin/lib/expression.js'));
+    let arrive = null;
+    const calls = [];
+    const playback = {instance: {events: {}}, play: () => { calls.push('play'); return Promise.resolve('STOPPED'); }, stop: () => { calls.push('stop'); return Promise.resolve(); }};
+    const jibo = {expression: {dofs: DOFS}, animDB: {getAnimByName: () => ({meta: {duration: 3, endsNeutral: true},
+        createFromConfig: () => new Promise(resolve => { arrive = () => resolve(playback); })})}};
+    const player = new Player(jibo, {write() {}});
+    const clip = player.play('slow_to_load');
+    await sleep(5);
+    await player.stopCurrent('closed');
+    arrive();
+    assert.equal(await clip.done, 'closed');
+    assert.equal(await clip.started, false);
+    await sleep(5);
+    assert.deepEqual(calls, ['stop']);
+});
+
 // ---- moods, sizes and the catalogue ----
 test('catalogue: every mood has animations, each a real, silent animation that starts neutral and fits its size', {skip: !fs.existsSync(ANIMDB) && 'no animdb.json here'}, () => {
     const anims = JSON.parse(fs.readFileSync(ANIMDB, 'utf8')), json = require(path.join(source, 'noggin/lib/catalog.json'));

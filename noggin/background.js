@@ -36,6 +36,9 @@ function localTime() {
 
 function start(api) {
     const log = logger(api);
+    // A start without a stop between must not leave a second loop or watch running; the old
+    // socket may still hold the port, which listen() retries.
+    stop();
     stopped = false;
     adoptOldData(log);
     startRecap(log);
@@ -89,7 +92,6 @@ function startBudget(log, owner) {
 
 // Always watching; the setting is read at every "Hey Jibo", so switching it needs no restart.
 function startHeyJibo(log, api) {
-    if (heyJiboWatch) { heyJiboWatch.stop(); heyJiboWatch = null; }
     let jibo;
     try { jibo = require('jibo'); } catch (_) { log.warn('hey jibo off: no Jibo SDK in this runtime'); return; }
     try {

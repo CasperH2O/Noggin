@@ -459,6 +459,7 @@ class Conversation {
     // half way is cut after what was said, and one held back with nothing left to release it is
     // finished now (D186).
     guardReply(turn) {
+        // replyWaitMs is a test hook, not a setting (D20).
         const waitMs = this.config.replyWaitMs || REPLY_WAIT_MS;
         turn.guard = setTimeout(() => {
             if (!this.active || this.turn !== turn) return;

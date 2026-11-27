@@ -205,6 +205,17 @@ test('conversation logs: named per conversation, newest first, only log names ca
     assert.equal(new ConversationLog(dir, false).file, null, 'logging off writes nothing');
 });
 
+test('conversation logs: a second conversation in the same second gets its own file', () => {
+    const dir = temp();
+    const first = new ConversationLog(dir, true);
+    first.write({kind: 'you', text: 'one'});
+    const second = new ConversationLog(dir, true);
+    second.write({kind: 'you', text: 'two'});
+    assert.notEqual(first.file, second.file);
+    assert.equal(second.bytes, Buffer.byteLength(ConversationLog.read(dir, path.basename(second.file)), 'utf8'), 'its size count starts from its own file');
+    assert.doesNotMatch(ConversationLog.read(dir, path.basename(first.file)), /two/);
+});
+
 test('conversation logs: multi-byte text counts in bytes, and the oldest go when count or total size is reached', () => {
     const dir = temp();
     const log = new ConversationLog(dir, true);

@@ -205,16 +205,38 @@ function tail(dir, state, now, current) {
 }
 
 // ---- one pass of the loop ----
-// A transcript as recap needs it: what info() says, and when the log last changed. A live log
-// stands in as open and resumed, so the conversation it may continue waits for it.
-function readLog(logsDir, name, now) {
-    let mtime = 0, text = '';
-    try { mtime = fs.statSync(path.join(logsDir, name)).mtime.getTime(); } catch (_) {}
-    if (now - mtime < LIVE_MS) return {name: name, resumed: true, status: 'open', lines: [], mtime: mtime};
-    try { text = fs.readFileSync(path.join(logsDir, name), 'utf8'); } catch (_) {}
-    return Object.assign(info(name, entries(text)), {mtime: mtime});
+function readText(file) {
+    try { return fs.readFileSync(file, 'utf8'); } catch (_) { return ''; }
 }
-function saidSomething(chain) { return chain.some(log => log.lines.some(line => line.speaker === 'person')); }
+// What a log says about its conversation, without its lines: {name, resumed, status, said, mtime}.
+// Kept by path while the file keeps its size and time, so the pass every minute reads a pending
+// log again only when it changed (D190); the logs on disk bound how many are kept. A live log
+// stands in as open and resumed, so the conversation it may continue waits for it.
+const statuses = new Map();
+function readLog(logsDir, name, now) {
+    const file = path.join(logsDir, name);
+    let mtime = 0, size = 0;
+    try { const stat = fs.statSync(file); mtime = stat.mtime.getTime(); size = stat.size; } catch (_) {}
+    if (now - mtime < LIVE_MS) return {name: name, resumed: true, status: 'open', said: false, mtime: mtime};
+    const kept = statuses.get(file);
+    if (kept && kept.mtime === mtime && kept.size === size) return kept;
+    const found = info(name, entries(readText(file)));
+    const said = found.lines.some(line => line.speaker === 'person');
+    const log = {name: name, resumed: found.resumed, status: found.status, said: said, mtime: mtime, size: size};
+    statuses.set(file, log);
+    return log;
+}
+// Forget the statuses of logs that are no longer on disk.
+function forgetGone(logsDir, names) {
+    statuses.forEach((log, file) => {
+        if (path.dirname(file) === logsDir && names.indexOf(log.name) < 0) statuses.delete(file);
+    });
+}
+// The chain with each log's lines, read only for the conversation that is recapped.
+function withLines(logsDir, chain) {
+    return chain.map(log => Object.assign({}, log, {lines: info(log.name, entries(readText(path.join(logsDir, log.name)))).lines}));
+}
+function saidSomething(chain) { return chain.some(log => log.said); }
 // deps: {dataDir, config, post(route, body, timeoutMs) -> Promise<{status, json}>, now(), local(ms) -> local
 // time, stopped() -> true once the loop stopped}. Resolves what it did: {skipped} | {waiting} |
 // {recapped, report} | {failed}.
@@ -236,6 +258,7 @@ function pass(deps) {
         ConversationLog.pruneRecap(dir, now);
         if (state.recap.day !== today) { state.recap.day = today; state.recap.calls = 0; changed = true; }
         const logsDir = path.join(dir, 'logs'), names = ConversationLog.transcripts(dir).reverse();
+        forgetGone(logsDir, names);
         // Forget the bookkeeping of logs that are gone.
         const done = state.recap.done.filter(n => names.indexOf(n) >= 0);
         if (done.length !== state.recap.done.length) { state.recap.done = done; changed = true; }
@@ -258,7 +281,7 @@ function pass(deps) {
         state.recap.calls++;
         state.recap.tries[first] = (state.recap.tries[first] || 0) + 1;
         const at = ConversationLog.startedAt(first) || now;
-        plan = {chain: ready, logs: logNames, first: first, at: at, local: deps.local(at), facts: state.facts.slice()};
+        plan = {chain: withLines(logsDir, ready), logs: logNames, first: first, at: at, local: deps.local(at), facts: state.facts.slice()};
         return {calling: true};
     });
     if (!plan) return Promise.resolve(decided);

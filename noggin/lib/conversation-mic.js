@@ -46,7 +46,7 @@ const methods = {
         if (level <= -119) {
             if (this.state !== 'listening' || this.restarting || !this.active) return;
             this.zeroMs = (this.zeroMs || 0) + (pcm && pcm.length ? pcm.length / (audio.RATE / 1000) : 0);
-            if (this.zeroMs >= (this.config.micSilentMs || 3000)) this.restartMic('silent');
+            if (this.zeroMs >= this.config.micSilentMs) this.restartMic('silent');
             return;
         }
         if (this.restarting) return;

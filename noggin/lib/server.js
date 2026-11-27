@@ -101,7 +101,8 @@ function create(options) {
     const local = options.local || strings.systemTime;
     const http = options.http || require('http');
     const beacon = Object.assign({host: '127.0.0.1', port: Number(process.env.BEACON_PORT) || BEACON_PORT, timeoutMs: BEACON_TIMEOUT_MS}, options.beacon);
-    let server = null, inventory = null;
+    // binding: a server still binding its port; close() makes it let go once bound.
+    let server = null, binding = null, inventory = null;
     const sockets = new Set(), fetches = new Set();
     // Whether the Dutch Voice skill can speak Dutch (D169): asked fresh for every page load.
     const voiceStatus = options.voiceStatus || (() => voice.create().status());
@@ -444,15 +445,23 @@ function create(options) {
             s.setTimeout(REQUEST_TIMEOUT_MS);
             s.maxConnections = MAX_CONNECTIONS;
             s.on('connection', socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
-            const failedToListen = error => { s.removeListener('listening', listening); reject(error); };
+            const failedToListen = error => {
+                s.removeListener('listening', listening);
+                if (binding === s) binding = null;
+                reject(error);
+            };
             const listening = () => {
                 s.removeListener('error', failedToListen);
+                // Closed while it was still binding: let the port go at once.
+                if (binding !== s) { try { s.close(); } catch (_) {} reject(Error('closed')); return; }
+                binding = null;
                 s.on('error', error => log.error('settings server: ' + error.message));
                 server = s;
                 resolve(s.address());
             };
             s.once('error', failedToListen);
             s.once('listening', listening);
+            binding = s;
             s.listen(port, host);
         });
     }
@@ -460,7 +469,7 @@ function create(options) {
     // Stops listening and drops open connections, so the port is free for the next revision.
     function close() {
         const s = server;
-        server = null;
+        server = null; binding = null;
         sockets.forEach(socket => { try { socket.destroy(); } catch (_) {} });
         sockets.clear();
         fetches.forEach(abort => abort('stopped'));

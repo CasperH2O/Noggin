@@ -251,6 +251,38 @@ test('background: without an HTTP server (the simulator) it logs and does nothin
     assert.ok(logs.some(l => /settings page off: no HTTP server/.test(l)));
 });
 
+test('close() while the server is still binding: it lets the port go once bound', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'noggin-server-'));
+    const s = server.create({dataDir: dir, webDir: path.join(source, 'noggin/web'), version: '9.9.9', log: {info() {}, warn() {}, error() {}}});
+    const probe = net.createServer();
+    const port = await new Promise(resolve => probe.listen(0, '127.0.0.1', () => resolve(probe.address().port)));
+    await new Promise(resolve => probe.close(resolve));
+    const bound = s.listen(port, '127.0.0.1');
+    await s.close();
+    await assert.rejects(bound, /^Error: closed$/);
+    const again = net.createServer();
+    await new Promise((resolve, reject) => again.once('error', reject).listen(port, '127.0.0.1', resolve));
+    await new Promise(resolve => again.close(resolve));
+});
+
+test('background: a second start without a stop stops what the first one started', () => {
+    const recap = require(path.join(source, 'noggin/lib/recap.js'));
+    const original = recap.loop;
+    let loops = 0, stops = 0;
+    recap.loop = () => { loops++; return {stop: () => { stops++; }}; };
+    const http = require('http'), createServer = http.createServer;
+    http.createServer = undefined;   // no port needed
+    try {
+        const background = freshBackground();
+        background.start(fakeApi([]));
+        background.start(fakeApi([]));
+        assert.equal(loops, 2);
+        assert.equal(stops, 1, 'the first recap loop was stopped');
+        background.stop();
+        assert.equal(stops, 2);
+    } finally { recap.loop = original; http.createServer = createServer; }
+});
+
 test('background: logs through Jibo\'s own logger when there is one, so lines reach the robot\'s system log', async () => {
     const Module = require('module');
     const lines = [];

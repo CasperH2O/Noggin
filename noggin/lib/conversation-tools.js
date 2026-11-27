@@ -175,7 +175,7 @@ const methods = {
         };
         try { if (acts.handover) acts.handover({tool: call.name, target: plan.target, args: plan.args, comeback: plan.comeback, pairs: this.pairs.slice()}); }
         catch (_) {}
-        const wait = this.config.actionTimeoutMs || 6000;
+        const wait = this.config.actionTimeoutMs;
         if (cloud) {
             // Speech drops a mimicked turn while the hotword is off: give it back first, at most 1.5 s.
             // Not returned, so a cloud call that never answers cannot hold up the speech chain.

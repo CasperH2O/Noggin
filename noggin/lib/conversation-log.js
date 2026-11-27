@@ -31,6 +31,16 @@ function stamp(date) {
     return date.getFullYear() + two(date.getMonth() + 1) + two(date.getDate()) + '-' + two(date.getHours()) + two(date.getMinutes()) + two(date.getSeconds());
 }
 function folder(dataDir) { return path.join(dataDir, 'logs'); }
+// A name already taken (a conversation opened again within the same second) moves to the next
+// free second, so two conversations never share a file or its size count.
+const NAME_TRIES = 60;
+function freeName(dir, prefix, ms) {
+    for (let i = 0; i < NAME_TRIES; i++) {
+        const name = prefix + stamp(new Date(ms + i * 1000)) + '.jsonl';
+        if (!fs.existsSync(path.join(dir, name))) return name;
+    }
+    throw Error('no free log name');
+}
 
 class ConversationLog {
     // options.recap: keep a recap transcript when the log itself is off.
@@ -41,7 +51,7 @@ class ConversationLog {
         if (!this.enabled && !this.recapOnly) return;
         try {
             files.makeDir(this.dir);
-            this.file = path.join(this.dir, (this.recapOnly ? 'recap-' : 'conversation-') + stamp(new Date()) + '.jsonl');
+            this.file = path.join(this.dir, freeName(this.dir, this.recapOnly ? 'recap-' : 'conversation-', Date.now()));
             prune(this.dir);
             pruneRecap(this.dir, Date.now());
         } catch (error) { this.file = null; this.error = error.message; }
