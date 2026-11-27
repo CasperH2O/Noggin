@@ -5,7 +5,8 @@
 // Node 6: ES2015 only.
 'use strict';
 const fs = require('fs'), path = require('path'), url = require('url');
-const catalog = require('./catalog'), models = require('./models'), realtime = require('./realtime-session'), actions = require('./actions'), apps = require('./apps'), files = require('./files'), migrate = require('./migrate');
+const catalog = require('./catalog'), models = require('./models'), realtime = require('./realtime-session');
+const actions = require('./actions'), apps = require('./apps'), files = require('./files'), migrate = require('./migrate');
 const lines = require('./lines');
 
 const ROBOT_SKILLS = '/opt/jibo/Jibo/Skills';
@@ -220,9 +221,12 @@ function check(field, value) {
         for (let i = 0; i < names.length; i++) {
             const name = names[i], given = value[name], entry = apps.appEntry(given);
             if (!apps.APP_NAME.test(name)) return fail('"' + name + '" is not a name: letters, digits and spaces.');
-            const pkg = entry ? entry.pkg : given && typeof given === 'object' ? given.pkg : given;
+            let pkg = given;
+            if (entry) pkg = entry.pkg;
+            else if (given && typeof given === 'object') pkg = given.pkg;
             if (typeof pkg !== 'string' || !apps.APP_PACKAGE.test(pkg)) return fail('"' + pkg + '" is not a package name such as @be/stargazer.');
-            if (given && typeof given === 'object' && given.about !== undefined && given.about !== null && typeof given.about !== 'string') return fail(name + ': what it does is text.');
+            const about = given && typeof given === 'object' ? given.about : undefined;
+            if (about !== undefined && about !== null && typeof about !== 'string') return fail(name + ': what it does is text.');
             if (entry.about.length > field.noteMax) return fail(name + ': at most ' + field.noteMax + ' characters for what it does.');
             out[name] = entry;
         }

@@ -36,7 +36,9 @@ class Presence {
             if (!person) return;
             const known = typeof person.id === 'string' && !!person.id && NOT_A_PERSON.indexOf(person.id) < 0;
             // By entity, so a face that is recognised after a while stays one face.
-            const key = person.entityId !== undefined && person.entityId !== null ? 'entity:' + person.entityId : known ? 'id:' + person.id : null;
+            let key = null;
+            if (person.entityId !== undefined && person.entityId !== null) key = 'entity:' + person.entityId;
+            else if (known) key = 'id:' + person.id;
             if (!key) return;
             const face = this.faces.get(key) || {id: null, first: now};
             face.last = now;

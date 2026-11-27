@@ -115,12 +115,14 @@ class Conversation {
         this.done = new Promise(resolve => { this.finish = resolve; });
         this.active = true; this.state = 'starting'; this.mark('talk_open');
         const jibo = this.jibo, config = this.config;
-        this.log.write({kind: 'session', version: this.version || undefined, realtimeModel: config.realtimeModel, reasoning: realtime.reasoningEffort(config), transcribeModel: config.transcribeModel,
+        this.log.write({kind: 'session', version: this.version || undefined, realtimeModel: config.realtimeModel,
+            reasoning: realtime.reasoningEffort(config), transcribeModel: config.transcribeModel,
             transcribeLanguages: realtime.transcription(config).languages || null, turnDetection: config.turnDetection,
             classifierModel: config.expressions ? config.classifierModel : null, actions: !!this.acts, resumed: this.resume ? this.resume.tool || true : undefined,
             language: this.language, dutch_missing: this.dutchMissing || undefined,
             persona: this.persona || undefined,
-            timing: {thinkingEye: config.thinkingEye !== false, expressionWaitMs: config.expressionWaitMs, expressionLeadMs: config.expressionLeadMs, echoTailMs: config.echoTailMs}});
+            timing: {thinkingEye: config.thinkingEye !== false, expressionWaitMs: config.expressionWaitMs, expressionLeadMs: config.expressionLeadMs,
+                echoTailMs: config.echoTailMs}});
         if (this.isPrivate()) { this.close('privacy'); return this.done; }
         this.monitor = setInterval(() => { if (this.isPrivate()) this.close('privacy'); }, 250);
         // Only measured when the full log keeps it (D78).
@@ -133,7 +135,37 @@ class Conversation {
         }
         this.busyRing();
         if (config.ringRefreshMs > 0) this.ringTimer = setInterval(() => this.refreshRing(), Math.max(100, config.ringRefreshMs));
-        const js = jibo.jetstream;
+        this.watchEndings();
+        this.watchSenses();
+        // Opened from the menu, the menu view would stay: Jibo's own eye for the conversation.
+        const eye = ExpressionPlayer.showEye(jibo).then(result => { this.mark('eye'); this.boot.eye = result; });
+        // The rest starts side by side; Jibo listens when all of it is done.
+        const hotword = this.startHotwordOff();
+        const first = this.firstLine = this.firstLineText();
+        const greeted = (first ? eye.then(() => this.sayFirstLine(first)) : eye).then(() => this.sayDutchMissing()).then(() => this.sayNotice());
+        // A failure waits for the greeting, so Jibo finishes his "Hi!" before he apologises.
+        const afterGreeting = promise => promise.catch(error => greeted.then(() => { throw error; }));
+        // The classifier does not need the realtime session: its slow first answers (D93) happen
+        // while Jibo greets. After the greeting is queued, so its start is not held up.
+        eye.then(() => { if (this.active) this.warm('start'); });
+        const connected = afterGreeting(this.connect().catch(error => { throw openaiError(error); }));
+        const micReady = afterGreeting(this.startMicrophone());
+        Promise.all([eye, hotword, greeted, connected, micReady]).then(() => {
+            if (!this.active) return;
+            return this.resume ? this.resumeConversation() : false;
+        }).then(replying => {
+            // The model speaks next (a comeback without a fixed line): listening starts after its reply.
+            if (replying === true || !this.active) return;
+            // After the first line too, the mic stays closed for echoTailMs, so Jibo never hears his own voice.
+            const tail = first && this.marks.first_speech_done !== undefined ? Math.max(0, config.echoTailMs - (this.now() - this.t0 - this.marks.first_speech_done)) : 0;
+            return Promise.all([delay(tail), this.settle()]).then(() => this.listen());
+        }).catch(error => this.fail(error));
+        return this.done;
+    }
+    // What ends the conversation from outside: a skill switch, another global turn, a swipe down.
+    // The eye watch tells when an eye animation is playing.
+    watchEndings() {
+        const jibo = this.jibo, js = jibo.jetstream;
         if (js && js.events) {
             this.watch(js.events.skillSwitch, () => this.close('skill_switch'));
             this.watch(js.events.globalTurnStarted, () => {
@@ -151,43 +183,39 @@ class Conversation {
         const gestures = jibo.face && jibo.face.gestures;
         if (gestures && gestures.addStageGesture && gestures.hammer) {
             try {
-                const gesture = gestures.addStageGesture(gestures.hammer.Swipe, {event: 'nogginSwipeDown', direction: gestures.hammer.DIRECTION_DOWN, threshold: 50, velocity: 0.3}, () => this.close('swipe'));
+                const swipe = {event: 'nogginSwipeDown', direction: gestures.hammer.DIRECTION_DOWN, threshold: 50, velocity: 0.3};
+                const gesture = gestures.addStageGesture(gestures.hammer.Swipe, swipe, () => this.close('swipe'));
                 this.unwatch.push(() => { try { gestures.removeStageGesture(gesture); } catch (_) {} });
             } catch (_) {}
         }
-        this.watchSenses();
-        // Opened from the menu, the menu view would stay: Jibo's own eye for the conversation.
-        const eye = ExpressionPlayer.showEye(jibo).then(result => { this.mark('eye'); this.boot.eye = result; });
-        // The rest starts side by side; Jibo listens when all of it is done. "Hey Jibo" goes off
-        // (the microphone is ours); only listening waits for that, at most 2 s.
+    }
+    // "Hey Jibo" goes off while Noggin has the microphone; listening waits for that, at most 2 s.
+    startHotwordOff() {
         let hotword = Promise.resolve('none');
         if (this.hotwordOff()) {
             hotword = Promise.race([Promise.resolve(this.hotword && this.hotword.activated).then(() => 'off', () => 'error'), delay(2000).then(() => 'timeout')]);
         }
-        hotword = hotword.then(result => { this.mark('hotword'); this.boot.hotword = result; });
-        // The first line is fixed text: Jibo says it as soon as his eye shows, while OpenAI connects.
-        // That is the greeting, or, back from the clock, the comeback line ("Anything else?").
-        // Dutch asked for but not possible: the unedited "Hoi!" becomes "Hi!"; anything else as written (D170).
-        const written = (this.resume ? config.comebackLine : config.greeting) || '';
-        const first = this.dutchMissing ? lines.firstLine(this.resume ? 'comeback' : 'greeting', written, this.language) : written;
-        this.firstLine = first;
-        const greeted = (!first ? eye : eye.then(() => {
-            if (!this.active) return;
-            this.mark('first_speech_queued');
-            const label = this.resume ? null : config.greetingExpression;
-            const expression = (catalog.EXTRA[label] || catalog.MOODS[label]) && label !== 'dance' ? label : null;
-            if (catalog.MOODS[expression]) this.policy.used(expression, this.now());
-            // The unedited Dutch default has an English twin for when the Dutch voice refuses (D175).
-            const key = this.resume ? 'comeback' : 'greeting';
-            return this.speak(first, expression, first === lines.LINES.nl[key] ? {english: lines.LINES.en[key]} : null);
-        })).then(() => this.sayDutchMissing()).then(() => this.sayNotice());
-        // A failure waits for the greeting, so Jibo finishes his "Hi!" before he apologises.
-        const afterGreeting = promise => promise.catch(error => greeted.then(() => { throw error; }));
-        // The classifier does not need the realtime session: its slow first answers (D93) happen
-        // while Jibo greets. After the greeting is queued, so its start is not held up.
-        eye.then(() => { if (this.active) this.warm('start'); });
-        const connected = afterGreeting(this.connect().catch(error => { throw openaiError(error); }));
-        const micReady = afterGreeting(Promise.resolve().then(() => {
+        return hotword.then(result => { this.mark('hotword'); this.boot.hotword = result; });
+    }
+    // The first line is fixed text: Jibo says it as soon as his eye shows, while OpenAI connects.
+    // That is the greeting, or, back from the clock, the comeback line ("Anything else?").
+    // Dutch asked for but not possible: the unedited "Hoi!" becomes "Hi!"; anything else as written (D170).
+    firstLineText() {
+        const written = (this.resume ? this.config.comebackLine : this.config.greeting) || '';
+        return this.dutchMissing ? lines.firstLine(this.resume ? 'comeback' : 'greeting', written, this.language) : written;
+    }
+    sayFirstLine(first) {
+        if (!this.active) return;
+        this.mark('first_speech_queued');
+        const label = this.resume ? null : this.config.greetingExpression;
+        const expression = (catalog.EXTRA[label] || catalog.MOODS[label]) && label !== 'dance' ? label : null;
+        if (catalog.MOODS[expression]) this.policy.used(expression, this.now());
+        // The unedited Dutch default has an English twin for when the Dutch voice refuses (D175).
+        const key = this.resume ? 'comeback' : 'greeting';
+        return this.speak(first, expression, first === lines.LINES.nl[key] ? {english: lines.LINES.en[key]} : null);
+    }
+    startMicrophone() {
+        return Promise.resolve().then(() => {
             this.mark('mic_start');
             return this.startMic();
         }).then(() => {
@@ -196,18 +224,7 @@ class Conversation {
             this.mark('mic_ready');
             this.log.write({kind: 'microphone', source: this.mic.kind || null, label: this.mic.label || null, rate: this.mic.rate || null});
             this.audioTimer = setInterval(() => this.audioReport(), 10000);
-        }));
-        Promise.all([eye, hotword, greeted, connected, micReady]).then(() => {
-            if (!this.active) return;
-            return this.resume ? this.resumeConversation() : false;
-        }).then(replying => {
-            // The model speaks next (a comeback without a fixed line): listening starts after its reply.
-            if (replying === true || !this.active) return;
-            // After the first line too, the mic stays closed for echoTailMs, so Jibo never hears his own voice.
-            const tail = first && this.marks.first_speech_done !== undefined ? Math.max(0, config.echoTailMs - (this.now() - this.t0 - this.marks.first_speech_done)) : 0;
-            return Promise.all([delay(tail), this.settle()]).then(() => this.listen());
-        }).catch(error => this.fail(error));
-        return this.done;
+        });
     }
     // The realtime session: connect, then session.update until session.updated.
     connect() {
@@ -226,7 +243,8 @@ class Conversation {
             // conversation and its reconnect, so a wrong guess costs a log line and not every conversation (D168).
             const update = withReasoning => {
                 const updated = this.waitFor(['session.updated'], 10000);
-                rt.send(realtime.sessionUpdate(withReasoning ? config : Object.assign({}, config, {realtimeReasoning: 'default'}), this.instructions, this.acts ? actions.tools(config) : null));
+                const sessionConfig = withReasoning ? config : Object.assign({}, config, {realtimeReasoning: 'default'});
+                rt.send(realtime.sessionUpdate(sessionConfig, this.instructions, this.acts ? actions.tools(config) : null));
                 return updated;
             };
             const asked = !this.reasoningRefused && !!realtime.reasoningEffort(config);
@@ -275,7 +293,8 @@ class Conversation {
         this.notice = null;
         const text = lines.say(notice.line, this.language);
         this.log.write({kind: 'notice', text: text});
-        return this.speak(text, null, Object.assign({english: lines.say(notice.line, 'en')}, notice.emoji ? {anim: notice.emoji, emoji: 'notice', via: 'notice', hotWords: false} : {}))
+        const emoji = notice.emoji ? {anim: notice.emoji, emoji: 'notice', via: 'notice', hotWords: false} : {};
+        return this.speak(text, null, Object.assign({english: lines.say(notice.line, 'en')}, emoji))
             .then(() => { try { if (notice.said) notice.said(); } catch (_) {} });
     }
     // The connection dropped after the session was set up: once per conversation, a new session
@@ -370,20 +389,7 @@ class Conversation {
             // Which conversation item holds this turn's words: its transcript is matched by it.
             if (turn && turn.itemId === undefined && event.item_id) turn.itemId = event.item_id;
         } else if (type === 'conversation.item.input_audio_transcription.completed') {
-            const said = String(event.transcript || '').trim();
-            // The words of a turn dropped because the person went on: kept for the next turn (D90).
-            const carried = this.carriedFor(event.item_id);
-            if (carried) { carried.own = said; this.log.write({kind: 'you', turn: carried.n, text: said, carried: true}); return; }
-            if (this.lateWords(turn, event.item_id, said)) return;
-            if (!turn || turn.transcript !== undefined || !this.mine(turn, event.item_id)) return;
-            const before = carriedText(turn.before);
-            turn.own = said; turn.transcript = joinWords(before, said); turn.transcriptAt = this.now(); this.heard = turn.transcript;
-            this.log.write({kind: 'you', turn: turn.n, text: said, before: before ? true : undefined});
-            if (!turn.transcript) return this.skip(turn, 'empty_transcript');
-            // The turn's own words too: carried words in front of a goodbye would hide it.
-            if (ttsText.isStop(said) || ttsText.isStop(turn.transcript)) turn.goodbye = true;
-            if (this.config.expressions && this.config.reaction && this.classify) this.react(turn);
-            this.pump();
+            this.onTranscript(turn, event);
         } else if (type === 'conversation.item.input_audio_transcription.failed') {
             const carried = this.carriedFor(event.item_id);
             if (carried) { if (carried.own === undefined) carried.own = ''; return; }
@@ -403,32 +409,53 @@ class Conversation {
             turn.text += realtime.textDelta(event);
             this.pump();
         } else if (type === 'response.done') {
-            const response = event.response || {};
-            const failure = response.status === 'failed' && response.status_details && response.status_details.error || null;
-            if (failure && isFatal(failure.code)) return this.fail(Error('OpenAI: ' + failure.code));
-            const output = Array.isArray(response.output) ? response.output : [];
-            // A reply Jibo never said leaves the model's context (D90).
-            if (response.id && this.droppedReplies[response.id]) { delete this.droppedReplies[response.id]; return this.forget(output); }
-            if (!turn || turn.skipped || !this.ours(turn, response.id)) return;
-            if (response.status === 'cancelled') {
-                // The person went on: before Jibo spoke, drop the turn; once he spoke, say no more
-                // of the reply and run none of its tools (D90).
-                if (this.state === 'thinking' && !turn.followUp) { turn.output = output; return this.carryOn(turn); }
-                turn.cut = true; turn.text = turn.text.slice(0, turn.sent);
-                this.log.write({kind: 'cut', turn: turn.n, said: turn.sent});
-            }
-            turn.done = true; turn.status = response.status; turn.usage = response.usage || null; turn.output = output;
-            // Function calls come as their own output items, next to (or instead of) the text.
-            turn.calls = turn.cut ? [] : output.filter(item => item && item.type === 'function_call')
-                .map(item => ({name: item.name, callId: item.call_id, args: item.arguments}));
-            this.pump();
+            this.onResponseDone(turn, event.response || {});
         } else if (type === 'error') {
             const error = event.error || {};
-            if (error.code !== 'response_cancel_not_active') this.log.write({kind: 'error', code: error.code || null, message: error.message ? String(error.message).slice(0, 300) : null});
+            if (error.code !== 'response_cancel_not_active') this.log.write({kind: 'error', code: error.code || null,
+                message: error.message ? String(error.message).slice(0, 300) : null});
             if (isFatal(error.code)) this.fail(Error('OpenAI: ' + error.code));
         } else if (type === 'transport.closed') {
             this.dropped();
         }
+    }
+    // The person's words for a turn, transcribed.
+    onTranscript(turn, event) {
+        const said = String(event.transcript || '').trim();
+        // The words of a turn dropped because the person went on: kept for the next turn (D90).
+        const carried = this.carriedFor(event.item_id);
+        if (carried) { carried.own = said; this.log.write({kind: 'you', turn: carried.n, text: said, carried: true}); return; }
+        if (this.lateWords(turn, event.item_id, said)) return;
+        if (!turn || turn.transcript !== undefined || !this.mine(turn, event.item_id)) return;
+        const before = carriedText(turn.before);
+        turn.own = said; turn.transcript = joinWords(before, said); turn.transcriptAt = this.now(); this.heard = turn.transcript;
+        this.log.write({kind: 'you', turn: turn.n, text: said, before: before ? true : undefined});
+        if (!turn.transcript) return this.skip(turn, 'empty_transcript');
+        // The turn's own words too: carried words in front of a goodbye would hide it.
+        if (ttsText.isStop(said) || ttsText.isStop(turn.transcript)) turn.goodbye = true;
+        if (this.config.expressions && this.config.reaction && this.classify) this.react(turn);
+        this.pump();
+    }
+    // A reply is complete: its text, status, usage and tool calls.
+    onResponseDone(turn, response) {
+        const failure = response.status === 'failed' && response.status_details && response.status_details.error || null;
+        if (failure && isFatal(failure.code)) return this.fail(Error('OpenAI: ' + failure.code));
+        const output = Array.isArray(response.output) ? response.output : [];
+        // A reply Jibo never said leaves the model's context (D90).
+        if (response.id && this.droppedReplies[response.id]) { delete this.droppedReplies[response.id]; return this.forget(output); }
+        if (!turn || turn.skipped || !this.ours(turn, response.id)) return;
+        if (response.status === 'cancelled') {
+            // The person went on: before Jibo spoke, drop the turn; once he spoke, say no more
+            // of the reply and run none of its tools (D90).
+            if (this.state === 'thinking' && !turn.followUp) { turn.output = output; return this.carryOn(turn); }
+            turn.cut = true; turn.text = turn.text.slice(0, turn.sent);
+            this.log.write({kind: 'cut', turn: turn.n, said: turn.sent});
+        }
+        turn.done = true; turn.status = response.status; turn.usage = response.usage || null; turn.output = output;
+        // Function calls come as their own output items, next to (or instead of) the text.
+        turn.calls = turn.cut ? [] : output.filter(item => item && item.type === 'function_call')
+            .map(item => ({name: item.name, callId: item.call_id, args: item.arguments}));
+        this.pump();
     }
     // The dropped turn whose words arrive as item `itemId`: the one waiting to be carried, or the
     // one the current turn carries. null when the words are the current turn's own.
@@ -534,7 +561,8 @@ class Conversation {
         if (!this.active || turn.skipped) return;
         const at = t => t === undefined ? null : t - turn.stoppedAt;
         const calls = this.acts && turn.calls && turn.calls.length ? turn.calls : null;
-        this.log.write({kind: 'jibo', turn: turn.n, text: replyWords(turn), language: turn.language || undefined, status: turn.status || null, reaction: turn.reaction || null, expressions: turn.expressions,
+        this.log.write({kind: 'jibo', turn: turn.n, text: replyWords(turn), language: turn.language || undefined, status: turn.status || null,
+            reaction: turn.reaction || null, expressions: turn.expressions,
             ms: {transcript: at(turn.transcriptAt), first_text: at(turn.firstTextAt), first_speech: at(turn.firstSpeechAt), end: this.now() - turn.stoppedAt},
             usage: turn.usage || null, followUp: turn.followUp || undefined, calls: turn.calls && turn.calls.length ? turn.calls.map(c => c.name) : undefined,
             lag: turn.lag && turn.lag.length ? turn.lag : undefined});
@@ -591,10 +619,7 @@ class Conversation {
         const message = String(error && error.message || error);
         if (!this.startupLogged) { this.mark('failed'); this.logStartup({failed: message.slice(0, 200)}); }
         this.log.write({kind: 'failed', error: message.slice(0, 300)});
-        const known = trouble.fromMessage(message);
-        const found = known ? Promise.resolve({cause: known, detail: message.slice(0, 80)})
-            : error && error.openai && this.diagnoseFn ? Promise.resolve().then(() => this.diagnoseFn()).catch(() => ({cause: 'unknown', detail: 'check failed'}))
-            : Promise.resolve({cause: 'unknown', detail: null});
+        const found = this.findCause(error, message);
         // No more of the current reply, and no turn timer reopening the microphone meanwhile.
         if (this.turn) this.dropTurn(this.turn);
         this.thinking.stop();
@@ -613,6 +638,13 @@ class Conversation {
                 return this.speak(t.line, null, Object.assign({english: english}, t.emoji ? {anim: t.emoji, emoji: cause, via: 'trouble', hotWords: false} : {}));
             });
         }).then(() => this.close(cause === 'unknown' ? 'error' : 'trouble_' + cause), () => this.close('error'));
+    }
+    // What went wrong: {cause, detail}. A known message says it; an OpenAI failure is checked (D71).
+    findCause(error, message) {
+        const known = trouble.fromMessage(message);
+        if (known) return Promise.resolve({cause: known, detail: message.slice(0, 80)});
+        if (!(error && error.openai && this.diagnoseFn)) return Promise.resolve({cause: 'unknown', detail: null});
+        return Promise.resolve().then(() => this.diagnoseFn()).catch(() => ({cause: 'unknown', detail: 'check failed'}));
     }
     // Resolves once Jibo is not speaking, or after `ms`.
     untilQuiet(ms) {

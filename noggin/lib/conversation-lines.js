@@ -113,7 +113,8 @@ const methods = {
         const eyeOnly = this.player.moves(anim) === false, from = this.now();
         const late = turn.late = {label: label, size: size, played: false, carry: !eyeOnly, trying: false};
         const live = () => this.active && !turn.skipped && !turn.firstSpoken;
-        const dropped = (result, eye) => { if (this.active) this.log.write({kind: 'late_dropped', turn: turn.n, line: 0, label: label, name: anim, eye: eye, tries: result.tries, result: result.result}); };
+        const dropped = (result, eye) => { if (this.active) this.log.write({kind: 'late_dropped', turn: turn.n, line: 0, label: label, name: anim,
+            eye: eye, tries: result.tries, result: result.result}); };
         (eyeOnly ? this.eyeWatch.free(EYE_FREE_MS) : Promise.resolve(null)).then(how => {
             const eye = how ? {how: how, ms: this.now() - from} : undefined;
             // The wait for the eye may have run into another clip: that one keeps the stage.
@@ -179,87 +180,113 @@ const methods = {
             this.speechChain = this.speechChain.then(() => this.endTurn(turn));
         }
     },
+    // Each piece of the text becomes a line: its label is asked at once, and it waits its turn in
+    // the speech queue.
     enqueue(turn, text) {
         ttsText.chunks(text).forEach(piece => {
             if (!ttsText.speechText(piece)) return;
-            const index = turn.lines++, config = this.config;
-            let ready = null, readySize = null, labelAt = null, labelConn = null, released = false;
-            const queuedAt = this.now();
-            // A classifier problem only costs the expression, never the words.
-            const asked = !!(config.expressions && this.classify);
-            if (asked) this.lastClassify = this.now();
-            const label = asked ? Promise.resolve().then(() => this.classify(turn.transcript || '', piece, 'line')).then(result => {
-                if (result) this.noteClassifier(result);
-                ready = result && result.label !== undefined ? result.label : null;
-                readySize = result && result.size || null;
-                labelAt = this.now(); labelConn = result && result.conn || null;
-                if (released && this.active) this.log.write({kind: 'label_late', turn: turn.n, line: index, label: ready, ms: labelAt - queuedAt, at: this.since(labelAt), conn: labelConn || undefined});
-                // Too late for the first line: it still plays on that line while it is said (D99, D102);
-                // when it cannot, it is offered to the next line.
-                if (index === 0 && turn.firstLate && ready && ready !== 'none' && !this.playLate(turn, ready, readySize)) turn.carried = {label: ready, size: readySize};
-                return ready;
-            }, () => null) : Promise.resolve(null);
-            this.speechChain = this.speechChain.then(() => {
-                if (!this.active || turn.skipped) return;
-                const reached = this.now();
-                let by = null;
-                // The first line waits (at most expressionWaitMs) for the quick reaction, never for its
-                // own label; a later label plays on the line or on line 2 (D104).
-                const reacting = index === 0 && turn.reacting;
-                const wait = reacting ? config.expressionWaitMs : 0;
-                const awaited = reacting ? turn.reacting.then(() => { by = by || 'reaction'; return ready; }) : label;
-                if (!asked && !reacting) by = 'no_classifier';
-                // 'timeout': the reaction wait ran out; 'no_wait': this line had nothing to wait for.
-                const waited = delay(wait).then(() => { by = by || (wait > 0 ? 'timeout' : 'no_wait'); return ready; });
-                return Promise.race([awaited.then(found => { by = by || 'answers'; return found; }), waited]).then(found => {
-                    released = true;
-                    // The person went on while this line waited (D89): it is never said.
-                    if (!this.active || turn.skipped) return;
-                    if (index === 0 && found === null) turn.firstLate = true;
-                    let size = readySize;
-                    if (index === 1 && (found === null || found === 'none') && turn.carried) { found = turn.carried.label; size = turn.carried.size; }
-                    let use = null;
-                    // A reaction that was not played yet goes with the first line, before its own expression.
-                    const reaction = turn.reaction;
-                    if (index === 0 && reaction && !turn.reactionDone) {
-                        turn.reactionDone = true;
-                        if (this.policy.allow(reaction.label, this.now(), turn.transcript)) { use = reaction.label; size = reaction.size; this.policy.used(use, this.now()); reaction.played = 'with first line'; }
-                        else if (reaction.label && reaction.label !== 'none') reaction.played = 'limit';
-                    }
-                    // With actions on, dancing is the dance tool's job, never a line's expression.
-                    if (!use && !(found === 'dance' && this.acts) && this.policy.allow(found, this.now(), turn.transcript)) { use = found; this.policy.used(found, this.now()); }
-                    // What this line waited for, and whose expression it got (ms since open).
-                    this.log.write({kind: 'line_wait', turn: turn.n, line: index, queued: this.since(queuedAt), reached: this.since(reached), released: this.since(), by: by,
-                        label: labelAt === null ? null : ready, label_ms: labelAt === null ? null : labelAt - queuedAt,
-                        reaction: index === 0 && reaction ? reaction.label : undefined, reaction_at: index === 0 && reaction ? reaction.at : undefined, used: use || null,
-                        conn: labelConn || undefined});
-                    if (index === 0) turn.firstEntry = turn.expressions.length;
-                    // "late": the first line's label was not there yet and no reaction stood in for it.
-                    const reacted = index === 0 && reaction && (reaction.played === 'before' || reaction.played === 'with first line');
-                    turn.expressions.push(found === null ? (index === 0 && !reacted ? 'late' : null) : found + (use === found || found === 'none' ? '' : ' (held back)'));
-                    if (index === 0) turn.firstSpeechAt = this.now();
-                    // No expression on this line: an eye emoji for something Jibo names (pizza, rain, a dog),
-                    // at that word. Without one, speech's own keyword emoji may show, unless one was just shown (D98).
-                    const jiboEmoji = this.emojiAllowed();
-                    const emoji = !use && found !== 'dance' ? this.emojiFor(piece, turn.language) : null;
-                    if (emoji) turn.expressions.push('emoji ' + emoji.word);
-                    if (index === 0 && emoji) turn.firstEmoji = true;
-                    return this.speak(piece, use, {turn: turn.n, line: index, size: use ? size : null, keyword: emoji || undefined, hotWords: emoji || jiboEmoji ? undefined : false, beside: index > 0,
-                        language: turn.language})
-                        .then(() => {
-                            if (index !== 0) return;
-                            turn.firstSpoken = true;
-                            // A late body clip that never played is offered to line 2 (D102).
-                            if (turn.late && turn.late.carry && !turn.late.played && !turn.late.trying && !turn.carried) turn.carried = {label: turn.late.label, size: turn.late.size};
-                        });
-                });
-            });
+            // label, size, labelAt and conn come with the classifier's answer; released once its wait in
+            // the queue is over (said, or dropped because the person went on).
+            const line = {index: turn.lines++, piece: piece, queuedAt: this.now(), asked: false,
+                label: null, size: null, labelAt: null, conn: null, released: false};
+            const label = this.askLabel(turn, line);
+            this.speechChain = this.speechChain.then(() => this.waitForLine(turn, line, label));
         });
+    },
+    // A line's expression label from the classifier: resolves the label, or null. A classifier
+    // problem only costs the expression, never the words.
+    askLabel(turn, line) {
+        line.asked = !!(this.config.expressions && this.classify);
+        if (!line.asked) return Promise.resolve(null);
+        this.lastClassify = this.now();
+        return Promise.resolve().then(() => this.classify(turn.transcript || '', line.piece, 'line')).then(result => {
+            if (result) this.noteClassifier(result);
+            line.label = result && result.label !== undefined ? result.label : null;
+            line.size = result && result.size || null;
+            line.labelAt = this.now(); line.conn = result && result.conn || null;
+            if (line.released && this.active) {
+                this.log.write({kind: 'label_late', turn: turn.n, line: line.index, label: line.label, ms: line.labelAt - line.queuedAt,
+                    at: this.since(line.labelAt), conn: line.conn || undefined});
+            }
+            // Too late for the first line: it still plays on that line while it is said (D99, D102);
+            // when it cannot, it is offered to the next line.
+            const lateFirst = line.index === 0 && turn.firstLate && line.label && line.label !== 'none';
+            if (lateFirst && !this.playLate(turn, line.label, line.size)) turn.carried = {label: line.label, size: line.size};
+            return line.label;
+        }, () => null);
+    },
+    // The line's turn in the speech queue. The first line waits (at most expressionWaitMs) for the
+    // quick reaction, never for its own label; a later label plays on the line or on line 2 (D104).
+    waitForLine(turn, line, label) {
+        if (!this.active || turn.skipped) return;
+        const reached = this.now(), reacting = line.index === 0 && turn.reacting;
+        // Why the line went: 'reaction', 'answers' (its label), 'no_classifier', 'timeout' (the
+        // reaction wait ran out) or 'no_wait' (nothing to wait for).
+        let by = null;
+        const wait = reacting ? this.config.expressionWaitMs : 0;
+        const awaited = reacting ? turn.reacting.then(() => { by = by || 'reaction'; return line.label; }) : label;
+        if (!line.asked && !reacting) by = 'no_classifier';
+        const waited = delay(wait).then(() => { by = by || (wait > 0 ? 'timeout' : 'no_wait'); return line.label; });
+        return Promise.race([awaited.then(found => { by = by || 'answers'; return found; }), waited])
+            .then(found => this.sayLine(turn, line, found, {reached: reached, by: by}));
+    },
+    // The expression a line gets: {use, size}. A reaction not played yet goes with the first line,
+    // before its own label; the second line may take a label the first could not play.
+    lineExpression(turn, index, found, size) {
+        let use = null;
+        const reaction = turn.reaction;
+        if (index === 0 && reaction && !turn.reactionDone) {
+            turn.reactionDone = true;
+            if (this.policy.allow(reaction.label, this.now(), turn.transcript)) {
+                use = reaction.label; size = reaction.size; this.policy.used(use, this.now()); reaction.played = 'with first line';
+            } else if (reaction.label && reaction.label !== 'none') reaction.played = 'limit';
+        }
+        // With actions on, dancing is the dance tool's job, never a line's expression.
+        if (!use && !(found === 'dance' && this.acts) && this.policy.allow(found, this.now(), turn.transcript)) { use = found; this.policy.used(found, this.now()); }
+        return {use: use, size: size};
+    },
+    // A line released from the queue: its expression, what it waited for in the log, then its words.
+    sayLine(turn, line, found, wait) {
+        line.released = true;
+        // The person went on while this line waited (D89): it is never said.
+        if (!this.active || turn.skipped) return;
+        const index = line.index, piece = line.piece, reaction = turn.reaction;
+        if (index === 0 && found === null) turn.firstLate = true;
+        let size = line.size;
+        if (index === 1 && (found === null || found === 'none') && turn.carried) { found = turn.carried.label; size = turn.carried.size; }
+        const chosen = this.lineExpression(turn, index, found, size), use = chosen.use;
+        size = chosen.size;
+        // What this line waited for, and whose expression it got (ms since open).
+        this.log.write({kind: 'line_wait', turn: turn.n, line: index, queued: this.since(line.queuedAt), reached: this.since(wait.reached), released: this.since(), by: wait.by,
+            label: line.labelAt === null ? null : line.label, label_ms: line.labelAt === null ? null : line.labelAt - line.queuedAt,
+            reaction: index === 0 && reaction ? reaction.label : undefined, reaction_at: index === 0 && reaction ? reaction.at : undefined, used: use || null,
+            conn: line.conn || undefined});
+        if (index === 0) turn.firstEntry = turn.expressions.length;
+        // "late": the first line's label was not there yet and no reaction stood in for it.
+        const reacted = index === 0 && reaction && (reaction.played === 'before' || reaction.played === 'with first line');
+        if (found === null) turn.expressions.push(index === 0 && !reacted ? 'late' : null);
+        else turn.expressions.push(found + (use === found || found === 'none' ? '' : ' (held back)'));
+        if (index === 0) turn.firstSpeechAt = this.now();
+        // No expression on this line: an eye emoji for something Jibo names (pizza, rain, a dog),
+        // at that word. Without one, speech's own keyword emoji may show, unless one was just shown (D98).
+        const jiboEmoji = this.emojiAllowed();
+        const emoji = !use && found !== 'dance' ? this.emojiFor(piece, turn.language) : null;
+        if (emoji) turn.expressions.push('emoji ' + emoji.word);
+        if (index === 0 && emoji) turn.firstEmoji = true;
+        return this.speak(piece, use, {turn: turn.n, line: index, size: use ? size : null, keyword: emoji || undefined,
+            hotWords: emoji || jiboEmoji ? undefined : false, beside: index > 0,
+            language: turn.language})
+            .then(() => {
+                if (index !== 0) return;
+                turn.firstSpoken = true;
+                // A late body clip that never played is offered to line 2 (D102).
+                if (turn.late && turn.late.carry && !turn.late.played && !turn.late.trying && !turn.carried) turn.carried = {label: turn.late.label, size: turn.late.size};
+            });
     },
     // Each speak is logged (and written at once) before it starts: if BE dies mid-speech, the log shows what played.
     speak(text, expression, at) {
         if (!this.active) return Promise.resolve();
-        const turn = at ? at.turn : null, line = at ? at.line : null;
+        const turn = at ? at.turn : null;
         const speech = this.jibo.embodied && this.jibo.embodied.speech;
         this.thinking.stop();
         this.state = 'speaking'; this.gate = false; this.busyRing();
@@ -276,66 +303,83 @@ const methods = {
         const anim = at && at.anim ? at.anim : this.choose(expression, at && at.size);
         // The line's language: its own (a reply's label), else the conversation's (D171).
         const dutch = (at && at.language || this.language) === 'nl';
-        return chain.then(() => {
-            if (!this.active) return;
-            let words = ttsText.speechText(text, dutch ? 'nl' : 'en'), lead = Promise.resolve(), leadBy = null;
-            // A keyword emoji goes in the words, just before its word: speech starts it there (D98, D176).
-            const keyword = at && at.keyword, tagged = keyword ? ttsText.emojiEsml(words, keyword.said, keyword.name, keyword.nth) : null;
-            if (tagged) words = tagged;
-            const leadFrom = this.now(), token = this.lineToken = {};
-            const holdMs = at && at.emoji ? emojiHoldMs(text) : 0;
-            // A notice's or trouble line's emoji waits for the expression still playing (D98).
-            const later = anim && at && at.emoji && this.player.busy();
-            // A line after the first plays its clip beside its words; the words never wait (D102).
-            const beside = !later && anim && at && at.beside;
-            if (later) {
-                this.player.idle().then(() => { if (this.active && this.lineToken === token) this.player.play(anim, {via: 'emoji', turn: turn, line: line, holdMs: holdMs}); });
-            } else if (beside) {
-                leadBy = 'beside';
-            } else if (anim) {
-                const lineLead = this.leadWith(anim, {via: at && at.via || 'line', turn: turn, line: line, holdMs: holdMs});
-                lead = lineLead.ready.then(how => { leadBy = how; });
-            }
-            return lead.then(() => {
-                if (!this.active) return;
-                const started = this.now();
-                // Speech's own keyword emoji off for this line (its third argument, auto rules); its keywords are English,
-                // so a Dutch line has only Noggin's (D176).
-                const rules = dutch || at && at.hotWords === false ? {hotWords: false} : null;
-                this.log.write({kind: 'speak', turn: turn, line: line, expression: expression || null, size: at && at.size || undefined, emoji: at && at.emoji || keyword && keyword.word || undefined,
-                    emoji_at: keyword ? (tagged ? keyword.said.join(' ') : 'missed') : undefined, after: later || undefined, hot_words: rules ? false : undefined,
-                    play: anim || keyword && keyword.name || undefined, at: this.since(started), lead: leadBy || undefined, lead_ms: leadBy ? started - leadFrom : undefined,
-                    language: dutch ? 'nl' : 'en', text: String(text).slice(0, 300)});
-                this.mark('first_speech');
-                const args = rules ? [words, SPEAK_OPTIONS, rules] : [words, SPEAK_OPTIONS];
-                const limitMs = this.speakBaseMs + words.length * SPEAK_MS_PER_CHAR;
-                const where = {turn: turn, line: line};
-                let language = dutch ? 'nl' : 'en';
-                // A fixed line the Dutch voice refuses is said in English: its English text is known (D175).
-                const call = !dutch ? this.timedSpeak(speech, args, limitMs, where) : this.speakDutch(speech, args, limitMs, where).catch(error => {
-                    if (!(at && at.english) || !voice.refused(error) || !this.active) throw error;
-                    language = 'en';
-                    const english = ttsText.speechText(at.english);
-                    this.log.write({kind: 'speak', turn: turn, line: line, language: 'en', fallback: 'fixed line', text: String(at.english).slice(0, 300)});
-                    return this.timedSpeak(speech, [english, SPEAK_OPTIONS, {hotWords: false}], this.speakBaseMs + english.length * SPEAK_MS_PER_CHAR, where);
-                });
-                if (beside) this.playBesideLine(anim, {via: at.via || 'line', turn: turn, line: line, holdMs: holdMs}, () => this.active && this.lineToken === token).then(result => {
-                    if (!result.played && this.active) this.log.write({kind: 'late_dropped', turn: turn, line: line, name: anim, tries: result.tries, result: result.result});
-                });
-                return call.then(() => {
-                    this.lineLanguages[language]++;   // lines said, per language (D171)
-                    this.spoken(speech, started, turn, line);
-                }, error => {
-                    // The line is over, so a clip beside it stops asking.
-                    if (this.lineToken === token) this.lineToken = null;
-                    throw error;
-                });
-            });
-        }).catch(() => {}).then(() => this.sayEnglishNow()).then(() => {
+        return chain.then(() => this.sayWords(speech, text, expression, anim, dutch, at)).catch(() => {}).then(() => this.sayEnglishNow()).then(() => {
             this.speaking = false; if (this.marks.first_speech !== undefined) this.mark('first_speech_done');
             // A touch during the line: its petting clip plays now, before the next line or listening (D144).
             this.playPendingPet('line_end');
             return this.petDone();
+        });
+    },
+    // How a line's clip goes with its words: {later, beside, lead, by}. A notice's or trouble line's
+    // emoji waits for the expression still playing (D98); a line after the first plays its clip
+    // beside its words, which never wait (D102); otherwise the clip leads and the words follow.
+    // `by` is how the lead ended, once it has.
+    lineClip(anim, at, token, holdMs) {
+        const turn = at ? at.turn : null, line = at ? at.line : null;
+        const later = anim && at && at.emoji && this.player.busy();
+        const clip = {later: later, beside: !later && anim && at && at.beside, lead: Promise.resolve(), by: null};
+        if (later) {
+            this.player.idle().then(() => { if (this.active && this.lineToken === token) this.player.play(anim, {via: 'emoji', turn: turn, line: line, holdMs: holdMs}); });
+        } else if (clip.beside) {
+            clip.by = 'beside';
+        } else if (anim) {
+            const lineLead = this.leadWith(anim, {via: at && at.via || 'line', turn: turn, line: line, holdMs: holdMs});
+            clip.lead = lineLead.ready.then(how => { clip.by = how; });
+        }
+        return clip;
+    },
+    // Jibo's speech call for one line: {done, language}. A fixed line the Dutch voice refuses is
+    // said in English, since its English text is known (D175); `language` then becomes 'en'.
+    callSpeech(speech, words, rules, dutch, at, where) {
+        const args = rules ? [words, SPEAK_OPTIONS, rules] : [words, SPEAK_OPTIONS];
+        const limitMs = this.speakBaseMs + words.length * SPEAK_MS_PER_CHAR;
+        const out = {language: dutch ? 'nl' : 'en', done: null};
+        if (!dutch) { out.done = this.timedSpeak(speech, args, limitMs, where); return out; }
+        out.done = this.speakDutch(speech, args, limitMs, where).catch(error => {
+            if (!(at && at.english) || !voice.refused(error) || !this.active) throw error;
+            out.language = 'en';
+            const english = ttsText.speechText(at.english);
+            this.log.write({kind: 'speak', turn: where.turn, line: where.line, language: 'en', fallback: 'fixed line', text: String(at.english).slice(0, 300)});
+            return this.timedSpeak(speech, [english, SPEAK_OPTIONS, {hotWords: false}], this.speakBaseMs + english.length * SPEAK_MS_PER_CHAR, where);
+        });
+        return out;
+    },
+    // One line's words, with its clip.
+    sayWords(speech, text, expression, anim, dutch, at) {
+        if (!this.active) return;
+        const turn = at ? at.turn : null, line = at ? at.line : null;
+        let words = ttsText.speechText(text, dutch ? 'nl' : 'en');
+        // A keyword emoji goes in the words, just before its word: speech starts it there (D98, D176).
+        const keyword = at && at.keyword, tagged = keyword ? ttsText.emojiEsml(words, keyword.said, keyword.name, keyword.nth) : null;
+        if (tagged) words = tagged;
+        const leadFrom = this.now(), token = this.lineToken = {};
+        const holdMs = at && at.emoji ? emojiHoldMs(text) : 0;
+        const clip = this.lineClip(anim, at, token, holdMs);
+        return clip.lead.then(() => {
+            if (!this.active) return;
+            const started = this.now();
+            // Speech's own keyword emoji off for this line (its third argument, auto rules); its keywords are English,
+            // so a Dutch line has only Noggin's (D176).
+            const rules = dutch || at && at.hotWords === false ? {hotWords: false} : null;
+            this.log.write({kind: 'speak', turn: turn, line: line, expression: expression || null, size: at && at.size || undefined,
+                emoji: at && at.emoji || keyword && keyword.word || undefined,
+                emoji_at: keyword ? (tagged ? keyword.said.join(' ') : 'missed') : undefined, after: clip.later || undefined, hot_words: rules ? false : undefined,
+                play: anim || keyword && keyword.name || undefined, at: this.since(started), lead: clip.by || undefined, lead_ms: clip.by ? started - leadFrom : undefined,
+                language: dutch ? 'nl' : 'en', text: String(text).slice(0, 300)});
+            this.mark('first_speech');
+            const call = this.callSpeech(speech, words, rules, dutch, at, {turn: turn, line: line});
+            if (clip.beside) this.playBesideLine(anim, {via: at.via || 'line', turn: turn, line: line, holdMs: holdMs},
+                () => this.active && this.lineToken === token).then(result => {
+                if (!result.played && this.active) this.log.write({kind: 'late_dropped', turn: turn, line: line, name: anim, tries: result.tries, result: result.result});
+            });
+            return call.done.then(() => {
+                this.lineLanguages[call.language]++;   // lines said, per language (D171)
+                this.spoken(speech, started, turn, line);
+            }, error => {
+                // The line is over, so a clip beside it stops asking.
+                if (this.lineToken === token) this.lineToken = null;
+                throw error;
+            });
         });
     },
     // A Dutch line: Jibo's usual speech call, with its speech sent to the Dutch voice for this call

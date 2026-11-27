@@ -150,7 +150,8 @@ function create(options) {
         if (Object.prototype.hasOwnProperty.call(values, 'apiKey') || Object.prototype.hasOwnProperty.call(values, 'adminKey')) costs.forget();
         if (values.adminKey) removedAdminKey = false;
         const secret = settings.SECRETS.filter(k => values[k]);
-        log.info('settings saved: ' + Object.keys(values).concat(Object.keys(persona)).filter(k => settings.SECRETS.indexOf(k) < 0).join(', ') + (secret.length ? ' (and ' + secret.join(', ') + ')' : ''));
+        const saved = Object.keys(values).concat(Object.keys(persona)).filter(k => settings.SECRETS.indexOf(k) < 0);
+        log.info('settings saved: ' + saved.join(', ') + (secret.length ? ' (and ' + secret.join(', ') + ')' : ''));
         return {httpStatus: 200, body: Object.assign({ok: true}, state())};
     }
 
@@ -318,7 +319,10 @@ function create(options) {
             return done.ok ? done : {unchanged: true, ok: false, reason: done.reason};
         });
         if (!r.ok) return {httpStatus: 400, body: {ok: false, error: MEMORY_ERRORS[r.reason] || 'Not saved.'}};
-        log.info('memory: fact ' + (body.id ? 'changed' : r.duplicate ? 'already kept' : 'added') + ' on the settings page');
+        let what = 'added';
+        if (body.id) what = 'changed';
+        else if (r.duplicate) what = 'already kept';
+        log.info('memory: fact ' + what + ' on the settings page');
         return memoryView();
     }
     // POST /api/memory/delete {kind: 'fact'|'summary', id}

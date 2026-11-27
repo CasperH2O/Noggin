@@ -73,7 +73,11 @@ function lanAddress(interfaces) {
     }
     return null;
 }
-function rank(name) { return /^wlan/.test(name) ? 0 : /^(eth|en)/.test(name) ? 1 : 2; }
+// Wi-Fi first, then wired, then anything else.
+function rank(name) {
+    if (/^wlan/.test(name)) return 0;
+    return /^(eth|en)/.test(name) ? 1 : 2;
+}
 function interfaces() { try { return require('os').networkInterfaces(); } catch (_) { return null; } }
 
 // What went wrong, after a failed or lost connection: resolves {cause, detail}, never rejects.

@@ -95,7 +95,8 @@ class SetupScreen {
         const components = [], L = LAYOUT;
         const label = (id, value, x, y, size, width, options) => {
             options = options || {};
-            const style = {fontFamily: options.bold ? FONT.title : FONT.body, fontSize: size, fill: options.fill || COLOR.text, align: 'left', fontWeight: options.bold ? 'bold' : 'normal'};
+            const style = {fontFamily: options.bold ? FONT.title : FONT.body, fontSize: size, fill: options.fill || COLOR.text, align: 'left',
+                fontWeight: options.bold ? 'bold' : 'normal'};
             if (options.lines) { style.wordWrap = true; style.wordWrapWidth = width; style.lineHeight = options.line; }
             components.push({type: 'Label', id: id, text: value || ' ', position: {x: x, y: y}, targetAnchor: {x: 0, y: options.lines ? 0 : 0.5},
                 bounds: {width: width, height: options.lines ? options.lines * options.line + size * 0.6 : size * 1.6}, style: style});

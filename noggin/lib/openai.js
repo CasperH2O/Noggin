@@ -259,7 +259,8 @@ function classifier(config, post) {
             // A request error with the size question: try once more without it, and keep it off.
             if (sized && r.status === 400) {
                 withSize = false;
-                return classify(personSaid, jiboSays, kind).then(result => Object.assign(result, {switched: result.switched || 'size question refused (' + error + '), now without it'}));
+                const switched = 'size question refused (' + error + '), now without it';
+                return classify(personSaid, jiboSays, kind).then(result => Object.assign(result, {switched: result.switched || switched}));
             }
             return withConn(r, {label: null, ms: r.ms, status: r.status, api: 'decisions', error: error});
         });

@@ -31,7 +31,8 @@ const FEATURES = {
     expressions: {label: 'Expressions', use: 'Picks Jibo\'s face and body expression for each line.'},
     helper: {label: 'Notes and helpers', use: 'Memory notes after each conversation and Describe with AI.'},
     // The expression model and the helper model are one model: OpenAI's bill cannot tell them apart.
-    shared: {label: 'Expressions, notes and helpers', use: 'Picks Jibo\'s expressions, writes memory notes after each conversation and Describe with AI: one model does all three.'},
+    shared: {label: 'Expressions, notes and helpers',
+        use: 'Picks Jibo\'s expressions, writes memory notes after each conversation and Describe with AI: one model does all three.'},
     other: {label: 'Other', use: 'Not one of Noggin\'s models now: an earlier setting, or another program using the same key.'}
 };
 
@@ -107,56 +108,59 @@ function round(n, places) { const f = Math.pow(10, places); return Math.round(n 
 // The realtime model to compare with (D67): the mini one, or the full one for a mini.
 function otherModel(model) { return /-mini$/.test(model) ? model.replace(/-mini$/, '') : model + '-mini'; }
 
-// Everything the page shows, from the answers. Pure, for the tests.
-//   costs: the costs buckets (group_by line_item, api_key_id, project_id); hours: completions usage
-//   buckets (1 h, Jibo's key); limit: {amount, enforced, source} or null; alerts: [amount];
-//   conversations: {count, since} or null; key: {id, name, hint, project}; config: the model settings.
-function build(input) {
-    const now = input.now, config = input.config, jiboKey = input.key.id;
-    const today = utcDay(now), monthStart = today.slice(0, 8) + '01';
-    const days = [];
-    for (let i = DAYS - 1; i >= 0; i--) days.push(utcDay(now - i * DAY_MS));
+// The costs buckets summed: per day and per model for Jibo's key, this month and this week, what
+// the limit counts per day, and the prices seen (any key, every day fetched: the account's real
+// prices, D67). counts(result): whether the limit counts it (D65).
+function tally(costs, days, monthStart, jiboKey, counts) {
     const firstDay = days[0];
-    // What the limit counts: the project's spend for a project limit, else the whole account's (D65).
-    const counts = r => !(input.limit && input.limit.source === 'project') || r.project_id === input.key.project;
-    const perDay = {}, models = {}, prices = {}, month = {jibo: 0, account: 0, counted: 0}, week = {jibo: 0, other: 0};
-    const countedByDay = {};
-    days.forEach(day => { perDay[day] = {day: day, cost: 0, tokens: 0}; });
-
-    (input.costs || []).forEach(bucket => {
+    const out = {perDay: {}, models: {}, prices: {}, month: {jibo: 0, account: 0, counted: 0}, week: {jibo: 0, other: 0}, countedByDay: {}};
+    days.forEach(day => { out.perDay[day] = {day: day, cost: 0, tokens: 0}; });
+    (costs || []).forEach(bucket => {
         const day = utcDay(bucket.start_time * 1000);
         (bucket.results || []).forEach(r => {
             const cost = amount(r), item = lineItem(r.line_item), mine = r.api_key_id === jiboKey;
             const tokens = r.quantity_unit === 'tokens' && isFinite(r.quantity) ? Number(r.quantity) : 0;
             // Per-minute models (gpt-transcribe) bill audio seconds, not tokens (D110).
             const seconds = r.quantity_unit === 'duration_seconds' && isFinite(r.quantity) ? Number(r.quantity) : 0;
-            if (counts(r)) countedByDay[day] = (countedByDay[day] || 0) + cost;
-            if (day >= monthStart) { month.account += cost; if (counts(r)) month.counted += cost; if (mine) month.jibo += cost; }
-            // Prices from every day fetched, any key: the account's real prices (D67).
+            if (counts(r)) out.countedByDay[day] = (out.countedByDay[day] || 0) + cost;
+            if (day >= monthStart) {
+                out.month.account += cost;
+                if (counts(r)) out.month.counted += cost;
+                if (mine) out.month.jibo += cost;
+            }
             if (tokens > 0 && cost > 0) {
                 const p = item.model + '|' + (item.modality || '') + '|' + item.kind;
-                const seen = prices[p] || (prices[p] = {cost: 0, tokens: 0});
+                const seen = out.prices[p] || (out.prices[p] = {cost: 0, tokens: 0});
                 seen.cost += cost; seen.tokens += tokens;
             }
             if (day < firstDay) return;
-            if (!mine) { week.other += cost; return; }
-            week.jibo += cost;
-            if (perDay[day]) { perDay[day].cost += cost; perDay[day].tokens += tokens; }
-            const m = models[item.model] || (models[item.model] = {model: item.model, cost: 0, tokens: 0, seconds: 0, input: 0, cached: 0, output: 0, items: {}});
-            m.cost += cost; m.tokens += tokens; m.seconds += seconds;
-            const k = tokenKind(item.kind);
-            if (k === 'input' || k === 'cacheWrite') m.input += tokens; else if (k === 'cached') m.cached += tokens; else if (k === 'output') m.output += tokens;
-            const key = (item.modality || '') + '|' + item.kind;
-            m.items[key] = (m.items[key] || 0) + tokens;
+            if (!mine) { out.week.other += cost; return; }
+            out.week.jibo += cost;
+            if (out.perDay[day]) { out.perDay[day].cost += cost; out.perDay[day].tokens += tokens; }
+            addToModel(out.models, item, cost, tokens, seconds);
         });
     });
-
-    const price = (model, modality, kind) => {
+    return out;
+}
+function addToModel(models, item, cost, tokens, seconds) {
+    const m = models[item.model] || (models[item.model] = {model: item.model, cost: 0, tokens: 0, seconds: 0, input: 0, cached: 0, output: 0, items: {}});
+    m.cost += cost; m.tokens += tokens; m.seconds += seconds;
+    const k = tokenKind(item.kind);
+    if (k === 'input' || k === 'cacheWrite') m.input += tokens;
+    else if (k === 'cached') m.cached += tokens;
+    else if (k === 'output') m.output += tokens;
+    const key = (item.modality || '') + '|' + item.kind;
+    m.items[key] = (m.items[key] || 0) + tokens;
+}
+// price(model, modality, kind): the price per token seen in the bills, or null.
+function pricer(prices) {
+    return (model, modality, kind) => {
         const seen = prices[model + '|' + (modality || '') + '|' + kind];
         return seen && seen.tokens > 0 ? seen.cost / seen.tokens : null;
     };
-
-    // Caching (D67): cached tokens at the input price minus what they cost.
+}
+// Caching (D67): cached tokens at the input price minus what they cost.
+function caching(models, price) {
     let saved = 0, cachedTokens = 0, inputTokens = 0;
     Object.keys(models).forEach(name => {
         const m = models[name];
@@ -168,21 +172,24 @@ function build(input) {
             if (full !== null) saved += m.items[key] * (full - (cheap || 0));
         });
     });
-
-    // What if (D67): the conversation model's tokens at the other realtime model's prices.
-    const ownModel = modelName(config.realtimeModel), altModel = otherModel(ownModel);
-    let whatIf = null;
-    if (models[ownModel] && models[ownModel].tokens > 0) {
-        let would = 0, unknown = false;
-        Object.keys(models[ownModel].items).forEach(key => {
-            const tokens = models[ownModel].items[key];
-            if (!tokens) return;
-            const parts = key.split('|'), p = price(altModel, parts[0] || null, parts[1]);
-            if (p === null) unknown = true; else would += tokens * p;
-        });
-        whatIf = {model: ownModel, other: altModel, actual: round(models[ownModel].cost, 4), would: unknown ? null : round(would, 4)};
-    }
-
+    return {saved: round(saved, 4), cachedTokens: cachedTokens, share: inputTokens ? round(cachedTokens / inputTokens, 3) : null};
+}
+// What if (D67): the conversation model's tokens at the other realtime model's prices; null
+// without any tokens of it.
+function whatIf(models, price, realtimeModel) {
+    const ownModel = modelName(realtimeModel), altModel = otherModel(ownModel), own = models[ownModel];
+    if (!own || !(own.tokens > 0)) return null;
+    let would = 0, unknown = false;
+    Object.keys(own.items).forEach(key => {
+        const tokens = own.items[key];
+        if (!tokens) return;
+        const parts = key.split('|'), p = price(altModel, parts[0] || null, parts[1]);
+        if (p === null) unknown = true; else would += tokens * p;
+    });
+    return {model: ownModel, other: altModel, actual: round(own.cost, 4), would: unknown ? null : round(would, 4)};
+}
+// The models, most expensive first, and the same grouped by what they do in Noggin.
+function byModelAndFeature(models, config) {
     const modelList = Object.keys(models).map(name => {
         const m = models[name], feature = featureOf(name, config);
         return {model: name, feature: feature, label: FEATURES[feature].label, use: FEATURES[feature].use, cost: round(m.cost, 4),
@@ -193,40 +200,57 @@ function build(input) {
         const f = features[m.feature] || (features[m.feature] = {feature: m.feature, label: m.label, use: m.use, cost: 0, tokens: 0, seconds: 0, models: []});
         f.cost += m.cost; f.tokens += m.tokens; f.seconds += m.seconds; f.models.push(m.model);
     });
-    const featureList = Object.keys(features).map(k => Object.assign(features[k], {cost: round(features[k].cost, 4), seconds: round(features[k].seconds, 1)})).sort((a, b) => b.cost - a.cost);
-
-    // Budget and forecast (D65): what the limit counts this month, plus the average of the 7 full
-    // days before today for each day after today (today counts with what is billed so far).
+    const featureList = Object.keys(features)
+        .map(k => Object.assign(features[k], {cost: round(features[k].cost, 4), seconds: round(features[k].seconds, 1)}))
+        .sort((a, b) => b.cost - a.cost);
+    return {models: modelList, features: featureList};
+}
+// Budget and forecast (D65): what the limit counts this month, plus the average of the 7 full
+// days before today for each day after today (today counts with what is billed so far).
+function budgetOf(limit, alerts, today, now, month, countedByDay) {
     const dayOfMonth = Number(today.slice(8, 10));
     const daysInMonth = new Date(Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)), 0)).getUTCDate();
     let average = 0;
     for (let i = 1; i <= DAYS; i++) average += (countedByDay[utcDay(now - i * DAY_MS)] || 0) / DAYS;
-    const limit = input.limit;
-    const budget = {
+    return {
         jibo: round(month.jibo, 4), account: round(month.account, 4), spent: round(month.counted, 4),
         forecast: round(month.counted + average * (daysInMonth - dayOfMonth), 2),
         limit: limit ? limit.amount : null, enforced: limit ? limit.enforced : null, source: limit ? limit.source : null,
         left: limit ? round(Math.max(0, limit.amount - month.counted), 4) : null,
-        alerts: (input.alerts || []).slice().sort((a, b) => a - b)
+        alerts: (alerts || []).slice().sort((a, b) => a - b)
     };
-
-    // Cost per conversation (D66).
-    let perConversation = null;
-    if (input.conversations) {
-        const since = input.conversations.since ? utcDay(input.conversations.since) : firstDay;
-        const spent = days.filter(day => day >= since).reduce((sum, day) => sum + perDay[day].cost, 0);
-        const count = input.conversations.count;
-        perConversation = {count: count, cost: round(spent, 4), each: count ? round(spent / count, 4) : null, partial: since > firstDay};
-    }
-
+}
+// Cost per conversation (D66), over the days the conversation count covers; null without logs.
+function perConversation(conversations, days, perDay) {
+    if (!conversations) return null;
+    const firstDay = days[0], since = conversations.since ? utcDay(conversations.since) : firstDay;
+    const spent = days.filter(day => day >= since).reduce((sum, day) => sum + perDay[day].cost, 0);
+    const count = conversations.count;
+    return {count: count, cost: round(spent, 4), each: count ? round(spent / count, 4) : null, partial: since > firstDay};
+}
+// Everything the page shows, from the answers. Pure, for the tests.
+//   costs: the costs buckets (group_by line_item, api_key_id, project_id); hours: completions usage
+//   buckets (1 h, Jibo's key); limit: {amount, enforced, source} or null; alerts: [amount];
+//   conversations: {count, since} or null; key: {id, name, hint, project}; config: the model settings.
+function build(input) {
+    const now = input.now, today = utcDay(now), monthStart = today.slice(0, 8) + '01';
+    const days = [];
+    for (let i = DAYS - 1; i >= 0; i--) days.push(utcDay(now - i * DAY_MS));
+    // What the limit counts: the project's spend for a project limit, else the whole account's (D65).
+    const counts = r => !(input.limit && input.limit.source === 'project') || r.project_id === input.key.project;
+    const t = tally(input.costs, days, monthStart, input.key.id, counts), price = pricer(t.prices);
+    const grouped = byModelAndFeature(t.models, input.config);
     return {
         ok: true, state: 'ok', currency: input.currency || 'usd', today: today,
         key: {name: input.key.name, hint: input.key.hint},
-        days: days.map(day => ({day: day, cost: round(perDay[day].cost, 4), tokens: perDay[day].tokens})),
-        week: {jibo: round(week.jibo, 4), other: round(week.other, 4)},
-        models: modelList, features: featureList, budget: budget,
-        caching: {saved: round(saved, 4), cachedTokens: cachedTokens, share: inputTokens ? round(cachedTokens / inputTokens, 3) : null},
-        whatIf: whatIf, perConversation: perConversation, hours: hourGrid(input.hours || [], now, input.local)
+        days: days.map(day => ({day: day, cost: round(t.perDay[day].cost, 4), tokens: t.perDay[day].tokens})),
+        week: {jibo: round(t.week.jibo, 4), other: round(t.week.other, 4)},
+        models: grouped.models, features: grouped.features,
+        budget: budgetOf(input.limit, input.alerts, today, now, t.month, t.countedByDay),
+        caching: caching(t.models, price),
+        whatIf: whatIf(t.models, price, input.config.realtimeModel),
+        perConversation: perConversation(input.conversations, days, t.perDay),
+        hours: hourGrid(input.hours || [], now, input.local)
     };
 }
 
@@ -285,7 +309,12 @@ function create(options) {
     }
     function get(pathname, key, own) {
         return call('GET', pathname, key, own).then(r => {
-            if (r.status !== 200 || !r.json) { const e = Error('OpenAI answered ' + r.status + ' for ' + pathname.split('?')[0].replace(BASE, '') + ': ' + errorText(r)); e.status = r.status; throw e; }
+            if (r.status !== 200 || !r.json) {
+                const where = pathname.split('?')[0].replace(BASE, '');
+                const e = Error('OpenAI answered ' + r.status + ' for ' + where + ': ' + errorText(r));
+                e.status = r.status;
+                throw e;
+            }
             return r.json;
         });
     }
@@ -300,8 +329,10 @@ function create(options) {
     }
 
     function probe(adminKey, own) {
-        if (!isAdminKey(adminKey)) return Promise.resolve({state: 'rejected', error: 'An admin key starts with ' + ADMIN_PREFIX + '. Make one on OpenAI under Admin keys, with Read only permission.'});
-        return call('DELETE', PROBE_PATH, adminKey, own).then(classify, error => ({state: 'unknown', error: 'Could not reach OpenAI (' + String(error && error.message || error).slice(0, 80) + ').'}));
+        if (!isAdminKey(adminKey)) return Promise.resolve({state: 'rejected',
+            error: 'An admin key starts with ' + ADMIN_PREFIX + '. Make one on OpenAI under Admin keys, with Read only permission.'});
+        return call('DELETE', PROBE_PATH, adminKey, own).then(classify, error => ({state: 'unknown',
+            error: 'Could not reach OpenAI (' + String(error && error.message || error).slice(0, 80) + ').'}));
     }
     // The read-only check alone, for saving a new key; it ends within CHECK_TIMEOUT_MS.
     function check(adminKey) {
@@ -317,7 +348,8 @@ function create(options) {
         return pages(BASE + '/projects?limit=100', adminKey, 1, own).then(projects => {
             projects = projects.slice(0, MAX_PROJECTS);
             return Promise.all(projects.map(p => pages(BASE + '/projects/' + encodeURIComponent(p.id) + '/api_keys?limit=100', adminKey, 2, own)
-                .then(keys => keys.filter(k => matches(apiKey, k.redacted_value)).map(k => ({id: k.id, name: String(k.name || '').slice(0, 80), hint: '…' + apiKey.slice(-4), project: p.id})))));
+                .then(keys => keys.filter(k => matches(apiKey, k.redacted_value)).map(k => ({id: k.id, name: String(k.name || '').slice(0, 80),
+                    hint: '…' + apiKey.slice(-4), project: p.id})))));
         }).then(lists => {
             const found = [].concat.apply([], lists);
             if (found.length === 1) return found[0];
@@ -332,7 +364,8 @@ function create(options) {
         const org = () => Promise.all([get(BASE + '/spend_limit', adminKey, own).catch(e => { if (e.status === 404) return null; throw e; }),
             pages(BASE + '/spend_alerts?limit=100', adminKey, 1, own)]).then(r => ({limit: r[0], alerts: r[1], source: 'organization'}));
         return get(BASE + '/projects/' + encodeURIComponent(project) + '/spend_limit', adminKey, own).then(limit =>
-            pages(BASE + '/projects/' + encodeURIComponent(project) + '/spend_alerts?limit=100', adminKey, 1, own).then(alerts => ({limit: limit, alerts: alerts, source: 'project'})),
+            pages(BASE + '/projects/' + encodeURIComponent(project) + '/spend_alerts?limit=100', adminKey, 1, own).then(alerts => ({limit: limit,
+                alerts: alerts, source: 'project'})),
         e => { if (e.status === 404) return org(); throw e; }).then(r => ({
             limit: r.limit && isFinite(r.limit.threshold_amount) ? {amount: r.limit.threshold_amount / 100,
                 enforced: !!(r.limit.enforcement && r.limit.enforcement.status === 'active'), source: r.source} : null,
@@ -394,7 +427,8 @@ function create(options) {
                 try { input.onWriteKey(input.adminKey); }
                 catch (error) {
                     log.error('usage: could not delete the admin key with write access: ' + error.message);
-                    view = {ok: false, state: 'error', error: 'This admin key can change your OpenAI account, and Jibo could not delete it (' + error.message + '). Remove it on this tab.'};
+                    view = {ok: false, state: 'error',
+                        error: 'This admin key can change your OpenAI account, and Jibo could not delete it (' + error.message + '). Remove it on this tab.'};
                 }
             }
             if (view.ok && !closed) cache = {fp: fp, at: t, view: view};

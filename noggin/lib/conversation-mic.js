@@ -71,7 +71,9 @@ const methods = {
         if (this.micRestarts > 3) {
             this.restarting = false; this.gate = false;
             const why = reason === 'silent' ? 'microphone_silent' : 'microphone_failed';
-            this.speechChain = this.speechChain.then(() => this.speak(lines.say('micFailed', this.language), null, {english: lines.say('micFailed', 'en')})).then(() => this.close(why));
+            const english = lines.say('micFailed', 'en');
+            this.speechChain = this.speechChain.then(() => this.speak(lines.say('micFailed', this.language), null, {english: english}))
+                .then(() => this.close(why));
             return this.speechChain;
         }
         try { this.mic.stop(); } catch (_) {}

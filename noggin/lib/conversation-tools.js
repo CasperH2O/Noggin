@@ -63,7 +63,8 @@ const methods = {
         this.danceCount++; if (announced) this.announcedAt = this.danceCount;
         // The announcement follows the reply's language (English once the conversation switched);
         // in Dutch only while the Dutch voice can say it, otherwise the dance goes without words (D174, D175, D177).
-        language = this.englishSwitched ? 'en' : language || this.turn && this.turn.language || this.language;
+        if (this.englishSwitched) language = 'en';
+        else language = language || (this.turn && this.turn.language) || this.language;
         const dutch = language === 'nl';
         const canSay = !dutch || this.voice.choose('nl').language === 'nl';
         const line = announced && canSay ? catalog.danceLine(style, this.random, language) : null;
@@ -121,7 +122,8 @@ const methods = {
             return Promise.resolve().then(() => acts.readClock ? acts.readClock() : null).catch(() => null).then(record => {
                 if (run === 'clock') return record ? {ok: true, timer: record.timer, alarm: record.alarm} : {handover: actions.clockQuery()};
                 const domain = args && args.domain === 'alarm' ? 'alarm' : 'timer';
-                if (record && record[domain] && record[domain].set === false) return {ok: true, cancelled: false, note: domain === 'alarm' ? 'no alarm is set' : 'no timer is running'};
+                if (record && record[domain] && record[domain].set === false) return {ok: true, cancelled: false,
+                    note: domain === 'alarm' ? 'no alarm is set' : 'no timer is running'};
                 return {handover: actions.clockCancel(domain)};
             });
         }

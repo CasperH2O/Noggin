@@ -104,7 +104,8 @@ class Noggin extends BeSkill {
             this.tagged.error(error.message);
             const t = trouble.cause(error.message === 'no_key' ? 'no_key' : 'settings');
             // Closed while Jibo spoke (a swipe, "Hey Jibo"): no screen for a skill that is gone.
-            return this.eye().then(() => this.say('trouble.' + t.cause, t.emoji, this.language(dataDir))).then(() => generation === this.generation ? this.setup(t, dataDir, generation) : 'closed');
+            return this.eye().then(() => this.say('trouble.' + t.cause, t.emoji, this.language(dataDir)))
+                .then(() => generation === this.generation ? this.setup(t, dataDir, generation) : 'closed');
         }
         const persona = settings.persona(dataDir), log = new ConversationLog(dataDir, config.log !== false, {recap: !!(config.memory && config.memoryLearn)});
         // On the robot the microphone runs as a separate arecord process: an ALSA failure
@@ -173,7 +174,8 @@ class Noggin extends BeSkill {
             const language = this.language(dataDir);
             if (how === 'timeout') return this.eye().then(() => this.say('later', null, language)).then(() => 'setup_timeout');
             if (how !== 'saved') return 'setup_' + how;
-            return this.eye().then(() => this.say('ready', 'Emoji_Checkmark', language)).then(() => generation === this.generation ? this.talk(dataDir, null, Date.now(), {after_setup: true}) : 'setup_saved');
+            return this.eye().then(() => this.say('ready', 'Emoji_Checkmark', language))
+                .then(() => generation === this.generation ? this.talk(dataDir, null, Date.now(), {after_setup: true}) : 'setup_saved');
         });
     }
     // What Jibo remembers, for the session note (D44, D181): null when memory is off or

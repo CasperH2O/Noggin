@@ -38,7 +38,7 @@ function watch(options) {
             if (stopped) return;
             const low = isLow(view, config.budgetWarnPercent);
             hub().state = view && view.ok ? {low: low, left: view.budget.left, limit: view.budget.limit, at: t} : null;
-            log.info('budget: ' + (view && view.ok ? (view.budget.limit ? view.budget.left + ' of ' + view.budget.limit + ' left' : 'no spend limit') + (low ? ', low' : '') : 'no answer (' + (view && view.state) + ')'));
+            log.info('budget: ' + budgetLine(view, low));
         }, error => {
             running = false;
             log.warn('budget: ' + String(error && error.message || error).slice(0, 120));
@@ -48,6 +48,12 @@ function watch(options) {
     return {tick: tick, stop() { stopped = true; clearInterval(timer); }};
 }
 
+// The budget check's system log line: "12.50 of 50 left, low", "no spend limit" or "no answer (...)".
+function budgetLine(view, low) {
+    if (!(view && view.ok)) return 'no answer (' + (view && view.state) + ')';
+    const left = view.budget.limit ? view.budget.left + ' of ' + view.budget.limit + ' left' : 'no spend limit';
+    return left + (low ? ', low' : '');
+}
 // For the skill: the heads-up to say after the greeting, or null; at most once per local day.
 // `line` names it in lib/lines.js, so the conversation says it in its own language.
 function notice(today, percent) {

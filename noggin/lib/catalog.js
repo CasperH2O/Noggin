@@ -130,8 +130,9 @@ function danceAnnounce(mode, from, since, random) {
 // animation, which size it always is (so its size answer matches what Jibo can do).
 function moodDescription(mood) {
     const entry = CATALOG[mood];
-    const note = !entry ? '' : !entry.small.length ? ' (always a whole-body move)' : !entry.big.length ? ' (always small: on his eye or a small nod)' : '';
-    return MOODS[mood] + note;
+    if (entry && !entry.small.length) return MOODS[mood] + ' (always a whole-body move)';
+    if (entry && !entry.big.length) return MOODS[mood] + ' (always small: on his eye or a small nod)';
+    return MOODS[mood];
 }
 // At most one expression per `gapMs`, not the same one again within `repeatMs`, and dance only
 // when the person mentioned dancing.

@@ -33,7 +33,8 @@ function stretch(dir, item) {
     const endLine = last.filter(e => e.kind === 'session_end').pop();
     let end = time(endLine || last[last.length - 1]);
     if (!isFinite(end) || end < start) end = start;
-    return {start: start, end: end, turns: endLine ? Number(endLine.turns) || 0 : 0, reason: endLine && endLine.reason ? String(endLine.reason) : '', resumed: !!(startup && startup.resumed),
+    return {start: start, end: end, turns: endLine ? Number(endLine.turns) || 0 : 0, reason: endLine && endLine.reason ? String(endLine.reason) : '',
+        resumed: !!(startup && startup.resumed),
         lines: lineCounts(endLine)};
 }
 

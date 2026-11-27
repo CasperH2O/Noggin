@@ -229,4 +229,5 @@ function presenceNote(here) {
     return about + 'now sees ' + list + '. Who you see is not always who is talking. Never answer this note alone.]';
 }
 
-module.exports = {LANGUAGES, DEFAULT_REASONING, transcription, reasoningEffort, sessionUpdate, textDelta, systemItem, memorySetup, voiceSetup, instructions, forConfig, sessionNote, englishNote, resumeNote, reconnectNote, touchNote, presenceNote};
+module.exports = {LANGUAGES, DEFAULT_REASONING, transcription, reasoningEffort, sessionUpdate, textDelta, systemItem, memorySetup, voiceSetup,
+    instructions, forConfig, sessionNote, englishNote, resumeNote, reconnectNote, touchNote, presenceNote};
