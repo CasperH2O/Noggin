@@ -144,6 +144,10 @@ function sessionNote(now, memory) {
     return 'Session note. This conversation started on ' + at.date + ', ' + at.time + ' local time on the robot (the clock may be off if Jibo was offline).' +
         (memory && memory.block ? '\n\n' + memory.block : '');
 }
+// A system message for the conversation: a note for the model, never words from the person.
+function systemItem(text) {
+    return {type: 'conversation.item.create', item: {type: 'message', role: 'system', content: [{type: 'input_text', text: text}]}};
+}
 // Jibo's Dutch voice stopped working mid-conversation: the rest is in English (D172).
 function englishNote() {
     return 'Your Dutch voice is not working right now, and you have just said so in English. From now on answer in English only, and start every reply with [en].';
@@ -225,4 +229,4 @@ function presenceNote(here) {
     return about + 'now sees ' + list + '. Who you see is not always who is talking. Never answer this note alone.]';
 }
 
-module.exports = {LANGUAGES, DEFAULT_REASONING, transcription, reasoningEffort, sessionUpdate, textDelta, memorySetup, voiceSetup, instructions, forConfig, sessionNote, englishNote, resumeNote, reconnectNote, touchNote, presenceNote};
+module.exports = {LANGUAGES, DEFAULT_REASONING, transcription, reasoningEffort, sessionUpdate, textDelta, systemItem, memorySetup, voiceSetup, instructions, forConfig, sessionNote, englishNote, resumeNote, reconnectNote, touchNote, presenceNote};

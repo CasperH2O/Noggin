@@ -368,7 +368,7 @@ const methods = {
     sendEnglishNote() {
         if (!this.rt || this.readyRt !== this.rt || this.englishNoteRt === this.rt) return;
         this.englishNoteRt = this.rt;
-        this.rt.send({type: 'conversation.item.create', item: {type: 'message', role: 'system', content: [{type: 'input_text', text: realtime.englishNote()}]}});
+        this.rt.send(realtime.systemItem(realtime.englishNote()));
     },
     // Once, right after the line that failed: Jibo says the Dutch voice is not working.
     sayEnglishNow() {

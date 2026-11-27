@@ -335,7 +335,7 @@ test('session note: the first item of every session, also after a reconnect, bef
     const items = h.sent.filter(e => e.type === 'conversation.item.create').map(e => e.item.content[0].text);
     assert.equal(items.length, 3);
     assert.match(items[2], /connection dropped/);
-    h.talk.leave('test'); await ended;
+    h.talk.close('test'); await ended;
 });
 
 test('session note: a Dutch refusal while the session is set up sends the English note after the session note (D175, D181)', async () => {
@@ -354,7 +354,7 @@ test('session note: a Dutch refusal while the session is set up sends the Englis
     const items = h.sent.filter(e => e.type === 'conversation.item.create').map(e => e.item.content[0].text);
     assert.equal(items[0], 'Session note.');
     assert.equal(items.filter(text => /Dutch voice is not working/.test(text)).length, 1);
-    h.talk.leave('test'); await ended;
+    h.talk.close('test'); await ended;
 });
 
 test('lost connection while thinking: the reply is dropped and Jibo asks again after the reconnect (D73)', async () => {
@@ -367,7 +367,7 @@ test('lost connection while thinking: the reply is dropped and Jibo asks again a
     reply(h, 'late', 'This never plays.');
     await sleep(30);
     assert.doesNotMatch(h.said.join(' '), /never plays/);
-    h.talk.leave('test'); await ended;
+    h.talk.close('test'); await ended;
 });
 
 test('a failed reconnect ends the conversation with the diagnosed cause', async () => {
@@ -437,7 +437,7 @@ test('review: a drop while a complete reply is spoken keeps the reply and listen
     assert.ok(!h.said.some(t => /train of thought/.test(t)));
     const note = h.sent.filter(e => e.type === 'conversation.item.create').at(-1).item.content[0].text;
     assert.match(note, /Person: tell me about cats\nJibo: Cats purr\. They nap a lot\. They like boxes\./);
-    h.talk.leave('test'); await ended;
+    h.talk.close('test'); await ended;
 });
 
 test('review: a drop while a done reply still waits for its transcript loses it and still listens again (D76)', async () => {
@@ -451,7 +451,7 @@ test('review: a drop while a done reply still waits for its transcript loses it 
     await sleep(450);
     assert.equal(h.talk.state, 'listening', 'the old turn\'s wait timer does not take over');
     assert.ok(!h.said.some(t => /without a transcript/.test(t)));
-    h.talk.leave('test'); await ended;
+    h.talk.close('test'); await ended;
 });
 
 test('trouble mid-conversation: a failed response or error event with a known code ends it with the cause', async () => {
@@ -471,7 +471,7 @@ test('trouble mid-conversation: a failed response or error event with a known co
     h3.emit({type: 'error', error: {code: 'response_cancel_not_active'}});
     await sleep(20);
     assert.equal(h3.talk.state, 'listening');
-    h3.talk.leave('test'); await ended3;
+    h3.talk.close('test'); await ended3;
 });
 
 test('error text from OpenAI is cut to 300 characters in the log', async () => {
@@ -481,7 +481,7 @@ test('error text from OpenAI is cut to 300 characters in the log', async () => {
     await sleep(20);
     assert.equal(h.logs.find(e => e.kind === 'error').message.length, 300);
     assert.equal(h.talk.state, 'listening', 'an unknown code goes on');
-    h.talk.leave('test'); await ended;
+    h.talk.close('test'); await ended;
 });
 
 test('a notice after the greeting, once, with its emoji; none on a comeback (D74)', async () => {
@@ -494,11 +494,11 @@ test('a notice after the greeting, once, with its emoji; none on a comeback (D74
     assert.ok(h.logs.some(e => e.kind === 'anim' && e.name === 'Emoji_Money' && e.via === 'notice'));
     assert.deepEqual(h.rules[1], {hotWords: false}, "no keyword emoji of speech's own over the notice's");
     assert.equal(said, 1);
-    h.talk.leave('test'); await ended;
+    h.talk.close('test'); await ended;
     const back = harness({notice, resume: {pairs: [], tool: 'get_time', said: ''}, config: {comebackLine: 'Anything else?'}});
     const ended2 = back.talk.open(); await untilListening(back);
     assert.ok(!back.said.some(t => /money/.test(t)));
-    back.talk.leave('test'); await ended2;
+    back.talk.close('test'); await ended2;
 });
 
 test('privacy, swipe-like leave and skill switch end the session quietly', async () => {
@@ -2398,7 +2398,7 @@ test('a microphone still starting when the conversation closes is stopped once i
     resolveStart();
     await sleep(10);
     assert.equal(stops, before + 1, 'stopped again once the late start completed');
-    assert.equal(h.talk.audioTimer, undefined, 'no report timer for a closed conversation');
+    assert.equal(h.talk.audioTimer, null, 'no report timer for a closed conversation');
 });
 
 test('goodbye waits for the last expression to end (at most FINISH_MS), then ends', async () => {
@@ -2565,7 +2565,7 @@ test('timing log: no lag probe when the full log is off; lines without a classif
     const h = harness({config: {expressions: false}});
     h.talk.log.enabled = false;
     h.talk.open(); await untilListening(h);
-    assert.equal(h.talk.lagTimer, undefined, 'nothing measured that nobody keeps');
+    assert.equal(h.talk.lagTimer, null, 'nothing measured that nobody keeps');
     youSay(h, 'Hello');
     reply(h, 'r1', 'Hello there.');
     await untilListening(h);
@@ -3470,7 +3470,7 @@ test('whom Jibo sees: notes wait while Jibo thinks or speaks, and go before the 
     assert.deepEqual(notesSent(h), ["[A note, not speech: your camera now sees someone you don't recognise. Who you see is not always who is talking. Never answer this note alone.]"]);
     h.talk.close();
     const off = await listening({lps, config: {presence: false}});
-    assert.equal(off.talk.presence, undefined);
+    assert.equal(off.talk.presence, null);
     off.talk.lookAround();
     assert.equal(notesSent(off).length, 0);
     off.talk.close();
@@ -3600,7 +3600,7 @@ test('the hotword mode refused (no microphone permission): the conversation goes
     h.jibo.jetstream.setHotwordMode = () => { throw BLOCKED('microphone'); };
     const ended = h.talk.open(); await untilListening(h);
     assert.equal(h.talk.hotword, null);
-    h.talk.leave('test');
+    h.talk.close('test');
     assert.equal(await ended, 'test');
     assert.equal(h.released(), 0);
 });
@@ -3673,7 +3673,7 @@ test('Dutch: a reply labelled [nl] is said through the Dutch voice, label never 
         const jibo = h.logs.find(e => e.kind === 'jibo');
         assert.equal(jibo.text, 'Wat leuk, een hond! Hoe heet hij?');
         assert.equal(jibo.language, 'nl');
-        h.talk.leave('test'); await h.talk.done;
+        h.talk.close('test'); await h.talk.done;
         assert.deepEqual(h.logs.find(e => e.kind === 'session_end').lines, {nl: 3, en: 0});
     } finally { delete global.dutchVoiceService; }
 });
@@ -3697,7 +3697,7 @@ test('Dutch: a reply labelled [en] is said by the English voice; one without a l
         await untilListening(h);
         assert.equal(h.said.at(-1), 'Goed hoor.');
         assert.equal(v.calls.length, 2);
-        h.talk.leave('test'); await h.talk.done;
+        h.talk.close('test'); await h.talk.done;
         assert.deepEqual(h.logs.find(e => e.kind === 'session_end').lines, {nl: 2, en: 1});
     } finally { delete global.dutchVoiceService; }
 });
@@ -3719,7 +3719,7 @@ test('Dutch: a leaked [commentary] before the label is never said or logged, and
         const replies = h.logs.filter(e => e.kind === 'jibo');
         assert.deepEqual(replies.map(e => [e.text, e.language]), [['Sure, one moment.', 'en'], ['Leuk verzoek.', 'nl']]);
         assert.ok(h.logs.filter(e => e.kind === 'speak').every(e => !/commentary/.test(e.text)));
-        h.talk.leave('test'); await h.talk.done;
+        h.talk.close('test'); await h.talk.done;
     } finally { delete global.dutchVoiceService; }
 });
 
@@ -3745,12 +3745,12 @@ test('Dutch asked for but the Dutch voice not ready: English from the start, the
         assert.equal(h.said[0], 'Hi!');
         assert.match(h.said[1], /My Dutch voice isn't ready/);
         assert.equal(h.logs.find(e => e.kind === 'session').dutch_missing, 'not_ready');
-        h.talk.leave('test');
+        h.talk.close('test');
     } finally { delete global.dutchVoiceService; }
     const h2 = await listening({config: {language: 'nl', greeting: 'Hallo allemaal'}});
     assert.equal(h2.said[0], 'Hallo allemaal', 'an edited greeting is said as written');
     assert.equal(h2.logs.find(e => e.kind === 'session').dutch_missing, 'missing');
-    h2.talk.leave('test');
+    h2.talk.close('test');
 });
 
 test('Dutch voice refusing mid-conversation: the line is not said in English, Jibo says so once, the model is told, and English follows (D172)', async () => {
@@ -3773,7 +3773,7 @@ test('Dutch voice refusing mid-conversation: the line is not said in English, Ji
         await untilListening(h);
         assert.equal(h.said.at(-1), 'Sure, in English then.');
         assert.equal(h.said.filter(t => /Dutch voice isn't working/.test(t)).length, 1, 'said once');
-        h.talk.leave('test');
+        h.talk.close('test');
     } finally { delete global.dutchVoiceService; }
 });
 
@@ -3799,7 +3799,7 @@ test('Dutch: fixed lines follow the conversation language; stop phrases in Dutch
         assert.match(h.said[0], /^Let op: mijn denkgeld/);
         for (const s of ['Doei!', 'oké doei Jibo', 'Tot ziens.', 'Hoi Jibo, stoppen.', 'Dat was het voor nu']) assert.ok(ttsText.isStop(s), s);
         for (const s of ['Dag!', 'Tot morgen dan maar weer iets anders']) assert.ok(!ttsText.isStop(s), s);
-        h.talk.leave('test');
+        h.talk.close('test');
     } finally { delete global.dutchVoiceService; }
 });
 
@@ -3827,7 +3827,7 @@ test('Dutch voice refusing before OpenAI is connected (the greeting): the Englis
         const notes = h.sent.filter(e => e.type === 'conversation.item.create' && /Dutch voice is not working/.test(JSON.stringify(e)));
         assert.equal(notes.length, 1, 'sent once, after session.updated');
         assert.ok(h.sent.indexOf(notes[0]) > h.sent.findIndex(e => e.type === 'session.update'));
-        h.talk.leave('test');
+        h.talk.close('test');
     } finally { delete global.dutchVoiceService; }
 });
 
@@ -3857,7 +3857,7 @@ test('a refused Dutch dance announcement: the dance without words, and the Engli
         assert.equal(result.announced, true);
         assert.match(h.said.at(-2), /^<anim name='[^']+' endNeutral='true'\/>$/, 'the dance alone');
         assert.match(h.said.at(-1), /Dutch voice isn't working/);
-        h.talk.leave('test');
+        h.talk.close('test');
     } finally { delete global.dutchVoiceService; }
 });
 
@@ -3875,7 +3875,7 @@ test('a dance in a Dutch conversation: the announcement in the Dutch voice, the 
         assert.equal(danceOutput(h).dance, 'de robot');
         assert.equal(catalog.danceName('waltz', 'nl'), 'een wals'); assert.equal(catalog.danceName(null, 'nl'), 'een dans');
         assert.equal(catalog.danceName('waltz'), 'a waltz');
-        h.talk.leave('test');
+        h.talk.close('test');
     } finally { delete global.dutchVoiceService; }
 });
 
@@ -3890,13 +3890,13 @@ test('a dance after an [en] reply in a Dutch conversation: English announcement 
         await untilListening(h);
         assert.ok(h.said.some(e => /^Robot mode: on! <anim name=/.test(e)), h.said.join(' | '));
         assert.equal(danceOutput(h).dance, 'the robot');
-        h.talk.leave('test');
+        h.talk.close('test');
         const r = await listening({config: {language: 'nl', greeting: '', danceAnnounce: 'always'}, actions: {}});
         global.dutchVoiceService.speak = () => Promise.reject(Error('dutch_voice_not_ready'));
         const played = await r.talk.dance('doe de robot', 1);
         assert.equal(played.language, 'en', 'the conversation switched to English');
         assert.equal(catalog.danceName(played.style, played.language), 'the robot');
-        r.talk.leave('test');
+        r.talk.close('test');
     } finally { delete global.dutchVoiceService; }
 });
 
@@ -3908,7 +3908,7 @@ test('line counts hold only lines that were said (D171)', async () => {
         youSay(h, 'Hoi');
         reply(h, 'r1', '[nl] Hallo daar.');
         await untilListening(h);
-        h.talk.leave('test'); await h.talk.done;
+        h.talk.close('test'); await h.talk.done;
         assert.deepEqual(h.logs.find(e => e.kind === 'session_end').lines, {nl: 0, en: 1});
     } finally { delete global.dutchVoiceService; }
 });

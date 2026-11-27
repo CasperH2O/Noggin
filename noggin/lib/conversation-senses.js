@@ -107,7 +107,7 @@ const methods = {
         });
     },
     // A new realtime session (a reconnect) has not heard who Jibo sees: tell it again.
-    forgetSeen() { this.seenKey = undefined; this.seenNoteAt = undefined; },
+    forgetSeen() { this.seenKey = undefined; this.seenNoteAt = null; },
     // Resolves when the petting clip playing (if any) has ended, at most PET_WAIT_MS. (Tests
     // shorten this and the hold with petWaitMs and petHoldMaxMs.)
     petDone() {
@@ -141,7 +141,7 @@ const methods = {
         this.notes = null; this.touchesDue = false;
         if (notes.touch) this.touches = null;
         Object.keys(notes).forEach(kind => {
-            this.rt.send({type: 'conversation.item.create', item: {type: 'message', role: 'system', content: [{type: 'input_text', text: notes[kind]}]}});
+            this.rt.send(realtime.systemItem(notes[kind]));
             this.log.write({kind: 'note', about: kind, text: notes[kind]});
         });
     }

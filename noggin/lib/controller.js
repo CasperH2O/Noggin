@@ -42,36 +42,55 @@ class Conversation {
     //        diagnose() -> {cause, detail} after an OpenAI failure (lib/trouble.js), notice: {line (a lib/lines.js key), emoji, said()} after the greeting,
     //        version: for the session log (optional), voice: lib/voice.js create() (optional), language: its choose() result, made once by the caller (optional)}
     constructor(deps) {
-        this.jibo = deps.jibo; this.config = deps.config; this.instructions = deps.instructions; this.sessionNote = deps.sessionNote || ''; this.persona = deps.persona; this.version = deps.version || null;
-        this.connectFn = deps.connect; this.diagnoseFn = deps.diagnose || null; this.notice = deps.notice || null; this.mic = deps.mic; this.classify = deps.classify; this.log = deps.log || {write() {}};
+        // What the conversation is given.
+        this.jibo = deps.jibo; this.config = deps.config; this.instructions = deps.instructions; this.sessionNote = deps.sessionNote || '';
+        this.persona = deps.persona; this.version = deps.version || null;
+        this.connectFn = deps.connect; this.diagnoseFn = deps.diagnose || null; this.notice = deps.notice || null;
+        this.mic = deps.mic; this.classify = deps.classify; this.log = deps.log || {write() {}};
         this.now = deps.now || (() => Date.now()); this.random = deps.random || Math.random;
-        this.micStartMs = Conversation.MIC_START_MS; this.speakBaseMs = Conversation.SPEAK_BASE_MS;
-        this.speakTimers = new Set(); this.dancing = false;
-        this.active = false; this.state = 'idle'; this.gate = false; this.turn = null; this.turns = 0;
-        this.audio = {blocks: 0, sent: 0, levels: []}; this.lastClassify = 0; this.clock = null;
-        this.held = 0; this.carried = null; this.droppedReplies = {};
-        this.rt = null; this.unwatch = []; this.speechChain = Promise.resolve(); this.speaking = false;
-        this.policy = new catalog.ExpressionPolicy(this.config.expressionGapMs);
-        this.acts = deps.actions || null; this.resume = deps.resume || null; this.pairs = []; this.handover = null;
-        this.heyJibo = deps.heyJibo || null;
+        this.acts = deps.actions || null; this.resume = deps.resume || null; this.heyJibo = deps.heyJibo || null;
+
+        // The conversation and its turns (this file).
+        this.active = false; this.state = 'idle'; this.turn = null; this.turns = 0;
+        this.done = null; this.finish = null; this.closing = null; this.failing = false;
+        this.rt = null; this.readyRt = null; this.reconnects = 0; this.reconnecting = false; this.reasoningRefused = false;
+        this.carried = null; this.droppedReplies = {}; this.pairs = []; this.heard = '';
+        this.personTalking = false; this.firstLine = null; this.hotword = null; this.unwatch = [];
+        this.silence = null; this.monitor = null; this.ringTimer = null; this.audioTimer = null; this.ring = null;
         // Startup timing: ms since the skill's open() for each step, logged once as `startup`
         // when Jibo first listens (or with the failure, if he never gets there).
         this.t0 = typeof deps.openedAt === 'number' ? deps.openedAt : this.now();
-        this.boot = Object.assign({}, deps.startup || {}); this.marks = {}; this.mark('talk_created');
+        this.boot = Object.assign({}, deps.startup || {}); this.marks = {}; this.startupLogged = false; this.mark('talk_created');
+
+        // The microphone and the audio sent (conversation-mic.js).
+        this.gate = false; this.micStartMs = Conversation.MIC_START_MS;
+        this.micStarts = 0; this.micRestarts = 0; this.restarting = false; this.zeroMs = 0; this.listenStart = false;
+        this.audio = {blocks: 0, sent: 0, levels: []}; this.clock = null; this.lag = null; this.lagTimer = null;
+
+        // Lines, speech and expressions (conversation-lines.js).
+        this.held = 0;   // microphone holds while a line or clip plays (holdMic)
+        this.speakBaseMs = Conversation.SPEAK_BASE_MS; this.speakTimers = new Set(); this.speechChain = Promise.resolve(); this.speaking = false;
+        this.lastClassify = 0; this.policy = new catalog.ExpressionPolicy(this.config.expressionGapMs);
         this.thinking = new ExpressionPlayer.ThinkingEye(this.jibo, () => this.config.thinkingEye !== false && this.active && !this.isPrivate() && this.state === 'thinking',
             () => this.since(), cycle => this.log.write(Object.assign({kind: 'thinking_eye'}, cycle)));
         this.player = new ExpressionPlayer(this.jibo, this.log, this.now, t => t - this.t0, () => this.active && !this.isPrivate());
-        this.eyeWatch = null;
+        this.eyeWatch = null; this.lineToken = null;
         this.speechAnims = null; this.spokenAt = null; this.recentAnims = []; this.recentEmoji = []; this.lastEmojiAt = -Infinity;
-        this.heard = ''; this.recentDances = []; this.danceCount = 0; this.announcedAt = -Infinity;
         // The language the conversation starts in: Dutch only with the Dutch voice ready (D172).
         // A reply's own label may pick the other voice (D171).
         this.voice = deps.voice || voice.create();
         const chosen = deps.language || this.voice.choose(this.config.language);
         this.language = chosen.language; this.dutchMissing = chosen.missing; this.englishNow = false; this.englishSwitched = false;
         this.dutchLines = 0;   // Dutch lines being said through the Dutch voice
-        this.englishNoteRt = null; this.readyRt = null;
+        this.englishNoteRt = null;
         this.lineLanguages = {nl: 0, en: 0};   // lines said per language, for the Usage tab (D171)
+
+        // Tools and handovers (conversation-tools.js).
+        this.dancing = false; this.recentDances = []; this.danceCount = 0; this.announcedAt = -Infinity; this.handover = null; this.handoverTimer = null;
+
+        // Touch and sight (conversation-senses.js). seenKey stays undefined until the first look.
+        this.touches = null; this.touchesDue = false; this.notes = null; this.pendingPet = null; this.petting = null; this.petEndedAt = null;
+        this.holdToQuitSet = false; this.presence = null; this.lookTimer = null; this.seenKey = undefined; this.seenNoteAt = null;
     }
     since(t) { return Math.round((t === undefined ? this.now() : t) - this.t0); }
     isPrivate() { return !!(this.jibo.privacyController && this.jibo.privacyController.enabled); }
@@ -102,8 +121,8 @@ class Conversation {
             language: this.language, dutch_missing: this.dutchMissing || undefined,
             persona: this.persona || undefined,
             timing: {thinkingEye: config.thinkingEye !== false, expressionWaitMs: config.expressionWaitMs, expressionLeadMs: config.expressionLeadMs, echoTailMs: config.echoTailMs}});
-        if (this.isPrivate()) { this.leave('privacy'); return this.done; }
-        this.monitor = setInterval(() => { if (this.isPrivate()) this.leave('privacy'); }, 250);
+        if (this.isPrivate()) { this.close('privacy'); return this.done; }
+        this.monitor = setInterval(() => { if (this.isPrivate()) this.close('privacy'); }, 250);
         // Only measured when the full log keeps it (D78).
         if (this.log.enabled !== false && !this.log.recapOnly) {
             this.startLagProbe();
@@ -116,7 +135,7 @@ class Conversation {
         if (config.ringRefreshMs > 0) this.ringTimer = setInterval(() => this.refreshRing(), Math.max(100, config.ringRefreshMs));
         const js = jibo.jetstream;
         if (js && js.events) {
-            this.watch(js.events.skillSwitch, () => this.leave('skill_switch'));
+            this.watch(js.events.skillSwitch, () => this.close('skill_switch'));
             this.watch(js.events.globalTurnStarted, () => {
                 // The turn of the "Hey Jibo" that opened Noggin, cancelled by background.js: once only (D132).
                 if (heyJibo.ownTurn(this.heyJibo, Date.now())) {
@@ -124,7 +143,7 @@ class Conversation {
                     this.log.write({kind: 'hey_jibo_turn', at: this.since()});
                     return;
                 }
-                this.leave('global_turn');
+                this.close('global_turn');
             });
         }
         const eyeWatch = this.eyeWatch = ExpressionPlayer.watchEye(jibo.face && jibo.face.eye);
@@ -132,7 +151,7 @@ class Conversation {
         const gestures = jibo.face && jibo.face.gestures;
         if (gestures && gestures.addStageGesture && gestures.hammer) {
             try {
-                const gesture = gestures.addStageGesture(gestures.hammer.Swipe, {event: 'nogginSwipeDown', direction: gestures.hammer.DIRECTION_DOWN, threshold: 50, velocity: 0.3}, () => this.leave('swipe'));
+                const gesture = gestures.addStageGesture(gestures.hammer.Swipe, {event: 'nogginSwipeDown', direction: gestures.hammer.DIRECTION_DOWN, threshold: 50, velocity: 0.3}, () => this.close('swipe'));
                 this.unwatch.push(() => { try { gestures.removeStageGesture(gesture); } catch (_) {} });
             } catch (_) {}
         }
@@ -218,7 +237,7 @@ class Conversation {
                 return update(false);
             }).then(() => {
                 // Before any other item, so it stays in the cached part of every later reply.
-                if (this.sessionNote) rt.send({type: 'conversation.item.create', item: {type: 'message', role: 'system', content: [{type: 'input_text', text: this.sessionNote}]}});
+                if (this.sessionNote) rt.send(realtime.systemItem(this.sessionNote));
                 this.readyRt = rt;
                 this.mark('session_updated'); this.log.write({kind: 'connected', ms: this.now() - started});
                 // A Dutch refusal before the connection was set up (the greeting) is told now (D175).
@@ -283,7 +302,7 @@ class Conversation {
             this.speechChain = this.speechChain.then(() => {
                 this.reconnecting = false;
                 if (!this.active || !this.rt) return;
-                this.rt.send({type: 'conversation.item.create', item: {type: 'message', role: 'system', content: [{type: 'input_text', text: realtime.reconnectNote(this.pairs.slice(-KEEP_PAIRS))}]}});
+                this.rt.send(realtime.systemItem(realtime.reconnectNote(this.pairs.slice(-KEEP_PAIRS))));
                 return lost ? this.speak(lines.say('lostThread', this.language), null, {english: lines.say('lostThread', 'en')}) : null;
             }).then(() => Promise.all([delay(this.config.echoTailMs), this.settle()])).then(() => { if (this.active && !this.turn) this.listen(); });
             return this.speechChain;
@@ -291,7 +310,8 @@ class Conversation {
     }
     // A turn whose reply will never be spoken: its timers stop and its lines are not said.
     dropTurn(turn) {
-        turn.skipped = true; clearTimeout(turn.waitTimer); clearTimeout(turn.guard);
+        turn.skipped = true;
+        clearTimeout(turn.waitTimer); clearTimeout(turn.guard);
         if (this.turn === turn) this.turn = null;
     }
     // why: 'start' or 'quiet' (the person starts speaking after a quiet spell).
@@ -485,15 +505,15 @@ class Conversation {
     }
     // Nothing understood: drop this turn's reply and listen again.
     skip(turn, reason) {
-        turn.skipped = true; clearTimeout(turn.waitTimer); clearTimeout(turn.guard);
+        this.dropTurn(turn);
         if (!turn.done && this.rt) this.rt.send({type: 'response.cancel'});
         this.log.write({kind: 'skipped', turn: turn.n, reason: reason});
-        if (this.turn === turn) this.turn = null;
         this.thinking.stop();
         this.listen();
     }
+    // The person went on before Jibo said anything: drop the reply and keep listening (D90).
     carryOn(turn) {
-        turn.skipped = true; clearTimeout(turn.waitTimer); clearTimeout(turn.guard);
+        this.dropTurn(turn);
         // Its reply leaves the conversation: now when it is complete, else once it is done.
         if (turn.output) this.forget(turn.output);
         else if (turn.responseId) this.droppedReplies[turn.responseId] = true;
@@ -502,7 +522,6 @@ class Conversation {
         // Its words go in front of the next turn's (D90), with any it carried itself; words that
         // are still on their way are filled in when they come (carriedFor).
         this.carried = {n: turn.n, itemId: turn.itemId, before: carriedText(turn.before), own: turn.own};
-        if (this.turn === turn) this.turn = null;
         this.thinking.stop();
         // Blue only once the microphone is open: a hold keeps it orange (D91).
         this.state = 'listening'; this.listeningRing();
@@ -552,12 +571,12 @@ class Conversation {
         if (said) this.pairs.push({you: '', jibo: said});
         const check = /^(set|cancel)_(timer|alarm)$|^check_clock$/.test(resume.tool || '') && acts && acts.readClock
             ? Promise.resolve().then(() => acts.readClock()).catch(() => null) : Promise.resolve(null);
-        return check.then(clock => {
+        return check.then(record => {
             if (!this.active) return true;
             if (!this.rt) return false;
             this.mark('resume_timer_read');
-            this.log.write({kind: 'resume', tool: resume.tool || null, pairs: this.pairs.length, said: String(resume.said || '').slice(0, 300), clock: clock});
-            this.rt.send({type: 'conversation.item.create', item: {type: 'message', role: 'system', content: [{type: 'input_text', text: realtime.resumeNote(resume, clock, said)}]}});
+            this.log.write({kind: 'resume', tool: resume.tool || null, pairs: this.pairs.length, said: String(resume.said || '').slice(0, 300), clock: record});
+            this.rt.send(realtime.systemItem(realtime.resumeNote(resume, record, said)));
             if (said) return false;
             this.followUp(null, 1);
             return true;
@@ -593,7 +612,7 @@ class Conversation {
                 const english = lines.say('trouble.' + t.cause, 'en');
                 return this.speak(t.line, null, Object.assign({english: english}, t.emoji ? {anim: t.emoji, emoji: cause, via: 'trouble', hotWords: false} : {}));
             });
-        }).then(() => this.leave(cause === 'unknown' ? 'error' : 'trouble_' + cause), () => this.leave('error'));
+        }).then(() => this.close(cause === 'unknown' ? 'error' : 'trouble_' + cause), () => this.close('error'));
     }
     // Resolves once Jibo is not speaking, or after `ms`.
     untilQuiet(ms) {
@@ -603,12 +622,11 @@ class Conversation {
             look();
         });
     }
-    leave(reason) { return this.close(reason); }
     // An ending Jibo chose (goodbye, silence): let the last expression end in its pose first, so
     // close never cuts a body animation half way. At most FINISH_MS.
     finishAndLeave(reason) {
         this.gate = false;
-        return this.untilStill(Conversation.FINISH_MS).then(() => this.leave(reason));
+        return this.untilStill(Conversation.FINISH_MS).then(() => this.close(reason));
     }
     // Idempotent; the first reason wins and resolves open().
     close(reason) {
