@@ -60,6 +60,26 @@ test('readLabel: a label at the start, none, or not yet known', () => {
     for (const start of ['', '  ', '[', '[n', '[nl', '[E']) assert.equal(voice.readLabel(start), null, JSON.stringify(start));
 });
 
+test('readLabel: a leaked [commentary] in front of the reply is skipped, with or without a label (D188)', () => {
+    assert.deepEqual(voice.readLabel('[commentary] [nl] Leuk verzoek'), {language: 'nl', length: 18});
+    assert.deepEqual(voice.readLabel(' [COMMENTARY][en]Sure'), {language: 'en', length: 17});
+    assert.deepEqual(voice.readLabel('[commentary] Sure thing'), {language: null, length: 13});
+    assert.deepEqual(voice.readLabel('[commentaryx] Hoi'), {language: null, length: 0});
+    assert.deepEqual(voice.readLabel('[nl] [commentary] Hoi'), {language: 'nl', length: 5}, 'only in front of the label');
+    for (const start of ['[c', '[comm', '[commentary', '[commentary]', '[commentary] ', '[commentary] [', '[commentary] [n', '[commentary] [nl']) {
+        assert.equal(voice.readLabel(start), null, JSON.stringify(start));
+    }
+});
+
+test('readLabel: a finished reply is never too short to tell; the tag alone is skipped (D188)', () => {
+    assert.deepEqual(voice.readLabel('[commentary]', true), {language: null, length: 12});
+    assert.deepEqual(voice.readLabel('[commentary] ', true), {language: null, length: 13});
+    assert.deepEqual(voice.readLabel('[comm', true), {language: null, length: 0});
+    assert.deepEqual(voice.readLabel('[nl', true), {language: null, length: 0});
+    assert.deepEqual(voice.readLabel('', true), {language: null, length: 0});
+    assert.deepEqual(voice.readLabel('[commentary] [en] Hi', true), {language: 'en', length: 18});
+});
+
 test('a Dutch Voice that never answers is given up after the call\'s limit plus 3 s, with a cancel, as no refusal', async () => {
     let cancels = 0;
     const api = service({speak: () => new Promise(() => {}), cancel() { cancels++; }}).api;

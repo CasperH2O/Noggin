@@ -161,10 +161,10 @@ const methods = {
         if (!this.active || !turn || turn.skipped) return;
         if (turn.transcript === undefined && this.now() - turn.stoppedAt < this.config.transcriptWaitMs - 5) return;
         if (turn.language === undefined) {
-            const label = voice.readLabel(turn.text);
-            if (!label && !turn.done) return;
-            turn.language = label && label.language || this.language;
-            turn.start = turn.sent = label ? label.length : 0;
+            const label = voice.readLabel(turn.text, turn.done);
+            if (!label) return;
+            turn.language = label.language || this.language;
+            turn.start = turn.sent = label.length;
         }
         if (!turn.lines) {
             const end = ttsText.firstSentenceEnd(turn.text.slice(turn.start));

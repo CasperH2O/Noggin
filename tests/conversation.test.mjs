@@ -3670,6 +3670,41 @@ test('Dutch: a reply labelled [en] is said by the English voice; one without a l
     } finally { delete global.dutchVoiceService; }
 });
 
+test('Dutch: a leaked [commentary] before the label is never said or logged, and the label still picks the voice, also split over deltas (D188)', async () => {
+    const v = dutchVoice();
+    try {
+        const h = await listening({config: {language: 'nl', greeting: ''}});
+        youSay(h, 'Show me a picture');
+        reply(h, 'r1', '[commentary] [en] Sure, one moment.');
+        await untilListening(h);
+        assert.equal(h.said.at(-1), 'Sure, one moment.');
+        assert.equal(v.calls.length, 0, 'English goes the usual way');
+        youSay(h, 'Kun je een plaatje laten zien?');
+        deltas(h, 'r2', ['[comm', 'entary]', ' [n', 'l] Leuk verzoek.']);
+        await untilListening(h);
+        assert.equal(h.said.at(-1), 'Leuk verzoek.');
+        assert.equal(v.calls.length, 1);
+        const replies = h.logs.filter(e => e.kind === 'jibo');
+        assert.deepEqual(replies.map(e => [e.text, e.language]), [['Sure, one moment.', 'en'], ['Leuk verzoek.', 'nl']]);
+        assert.ok(h.logs.filter(e => e.kind === 'speak').every(e => !/commentary/.test(e.text)));
+        h.talk.leave('test'); await h.talk.done;
+    } finally { delete global.dutchVoiceService; }
+});
+
+test('a reply that is only a leaked [commentary] before a tool call leaves nothing in the log or the pairs (D188)', async () => {
+    const acts = fakeActions();
+    const h = harness({actions: acts});
+    const ended = h.talk.open(); await untilListening(h);
+    await youSay(h, 'set a timer for ten minutes');
+    callReply(h, 'r1', '[commentary]', [['set_timer', {minutes: 10}]]);
+    await until(() => acts.redirects.length === 1);
+    assert.equal(h.logs.find(e => e.kind === 'jibo').text, '');
+    assert.deepEqual(acts.handovers[0].pairs, [{you: 'set a timer for ten minutes', jibo: ''}]);
+    assert.ok(h.said.every(line => !/commentary/.test(line)));
+    h.talk.close('closed');
+    await ended;
+});
+
 test('Dutch asked for but the Dutch voice not ready: English from the start, the unedited greeting in English, and Jibo says why once', async () => {
     dutchVoice({ready: false});
     try {

@@ -80,18 +80,29 @@ function create(options) {
 }
 
 // A reply's language label at the start of its text (D171): "[nl]" or "[en]". Returns
-// {language, length} once known (length: characters to skip), {language: null, length: 0} when
-// the reply has no label, or null while the start is still too short to tell.
+// {language, length} once known (length: characters to skip), {language: null, length} when
+// the reply has no label, or null while the start is still too short to tell; a finished
+// reply (`done`) is never too short.
+// A leaked "[commentary]" in front of the reply is skipped too, label or not (D188).
 const LABEL = /^\s*\[(nl|en)\]\s*/i;
 const LABELS = ['[nl]', '[en]'];
-function readLabel(text) {
-    const match = LABEL.exec(text);
-    if (match) return {language: match[1].toLowerCase(), length: match[0].length};
-    const start = String(text).replace(/^\s+/, '').toLowerCase();
+const CHANNEL = /^\s*\[commentary\]\s*/i;
+const CHANNEL_TAG = '[commentary]';
+function readLabel(text, done) {
+    text = String(text);
+    const channel = CHANNEL.exec(text);
+    const skip = channel ? channel[0].length : 0;
+    const rest = text.slice(skip);
+    const match = LABEL.exec(rest);
+    if (match) return {language: match[1].toLowerCase(), length: skip + match[0].length};
+    const none = {language: null, length: skip};
+    if (done) return none;
+    const start = rest.replace(/^\s+/, '').toLowerCase();
     if (!start) return null;
-    // "[", "[n", "[nl" may still become a label.
+    // "[c", "[commentary" may still become the leaked tag; "[n", "[nl" a label.
+    const mayBecomeTag = !channel && start.length < CHANNEL_TAG.length && CHANNEL_TAG.indexOf(start) === 0;
     const mayBecomeLabel = start.length < 4 && LABELS.some(label => label.indexOf(start) === 0);
-    return mayBecomeLabel ? null : {language: null, length: 0};
+    return mayBecomeTag || mayBecomeLabel ? null : none;
 }
 
 module.exports = {create, readLabel, refused, SERVICE, API_VERSION};
