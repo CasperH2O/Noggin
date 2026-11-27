@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Noggin: the OpenAI connections. The realtime session uses the page's own WebSocket with the
-// key in the subprotocol. The expression classifier, the recap and "Describe with AI" use Node
-// https with keep-alive agents, falling back to the page's fetch where Node's TLS fails (the
-// simulator). Node 6 / Chrome 53: ES2015 only.
+// key in the subprotocol. The expression classifier, the recap and "Describe with AI" go through
+// poster(): Node https with keep-alive agents, falling back to the page's fetch where Node's TLS
+// fails (the simulator). Node 6 / Chrome 53: ES2015 only.
 'use strict';
 const https = require('https'), http = require('http'), url = require('url');
 const labels = require('./labels'), web = require('./http'), models = require('./models');
@@ -164,39 +164,50 @@ function switchesToPage(error) {
     if (typeof fetch !== 'function' || !error) return false;
     return OFFLINE.indexOf(error.code) < 0 && !/^(timeout|stopped|done|answer too large)$/.test(error.message);
 }
-// post(route, body, timeoutMs) -> {status, json, ms}: Node https, and the page's fetch from the
-// first time Node's TLS fails. Either way the call ends within timeoutMs, and abort() ends it at once.
+// post(route, body, timeoutMs, track) -> {status, json, ms}: Node https, and the page's fetch from
+// the first time Node's TLS fails. Either way the call ends within timeoutMs. Each call can be
+// cancelled on its own (track(cancel), when given) and post.abort() cancels every call in flight.
 function poster(config) {
-    let usePage = false, cancel = null;
-    function timed(promise, timeoutMs) {
-        const stopped = new Promise((resolve, reject) => { cancel = reason => reject(Error(reason || 'stopped')); });
-        const done = () => { cancel = null; };
-        return web.withTimeout(Promise.race([promise, stopped]), timeoutMs || 20000)
-            .then(value => { done(); return value; }, error => { done(); throw error; });
+    let usePage = false;
+    const cancels = new Set();
+    function timed(promise, timeoutMs, stopped) {
+        return web.withTimeout(Promise.race([promise, stopped]), timeoutMs || 20000);
     }
-    function viaNode(route, body, timeoutMs) {
+    function viaNode(route, body, timeoutMs, stopped) {
         let abortNode = null;
         const request = nodeJson(config, route, body, timeoutMs, abort => { abortNode = abort; }).then(r => {
             // A success Node could not read is its HTTPS failing; an error page (a 502) is just that call's answer.
             if (r.json === null && r.status >= 200 && r.status < 300) throw Error('unreadable response');
             return r;
         });
-        return timed(request, timeoutMs).catch(error => {
+        return timed(request, timeoutMs, stopped).catch(error => {
             if (abortNode) abortNode('stopped');
             throw error;
         });
     }
-    const viaPage = (route, body, timeoutMs) => timed(pageJson(config, route, body, 'POST', timeoutMs), timeoutMs);
-    const post = (route, body, timeoutMs) => {
-        if (usePage) return viaPage(route, body, timeoutMs);
-        return viaNode(route, body, timeoutMs).catch(error => {
-            if (!switchesToPage(error)) throw error;
+    const viaPage = (route, body, timeoutMs, stopped) => timed(pageJson(config, route, body, 'POST', timeoutMs), timeoutMs, stopped);
+    const post = (route, body, timeoutMs, track) => {
+        let cancel = null, cancelled = false;
+        const stopped = new Promise((resolve, reject) => { cancel = reason => { cancelled = true; reject(Error(reason || 'stopped')); }; });
+        stopped.catch(() => {});
+        cancels.add(cancel);
+        if (track) track(cancel);
+        const asked = usePage ? viaPage(route, body, timeoutMs, stopped) : viaNode(route, body, timeoutMs, stopped).catch(error => {
+            // A cancelled call is over, whatever its reason says: never sent again through the page.
+            if (cancelled || !switchesToPage(error)) throw error;
             usePage = true;
-            return viaPage(route, body, timeoutMs);
+            return viaPage(route, body, timeoutMs, stopped);
         });
+        const done = () => { cancels.delete(cancel); };
+        return asked.then(value => { done(); return value; }, error => { done(); throw error; });
     };
-    post.abort = () => { if (cancel) cancel('stopped'); };
+    post.abort = () => { cancels.forEach(cancel => cancel('stopped')); };
     return post;
+}
+// One call through a poster of its own, for the settings page's "Describe with AI":
+// (config, route, body, timeoutMs, track) -> {status, json, ms}.
+function postOnce(config, route, body, timeoutMs, track) {
+    return poster(config)(route, body, timeoutMs, track);
 }
 // ask(method, route, body, timeoutMs, track) -> {status, json}, for the trouble check (lib/trouble.js):
 // Node https, or the page's fetch when Node's TLS fails. An offline error is the answer itself.
@@ -267,4 +278,4 @@ function classifier(config, post) {
     return classify;
 }
 
-module.exports = {connect, classifier, checkKey, listModels, post: nodeJson, poster, asker, switchesToPage};
+module.exports = {connect, classifier, checkKey, listModels, post: nodeJson, poster, postOnce, asker, switchesToPage};

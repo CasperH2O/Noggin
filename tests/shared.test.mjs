@@ -144,6 +144,27 @@ test('OpenAI: only Node\'s own HTTPS failing moves a call to the page\'s fetch; 
     } finally { delete global.fetch; await slow.stop(); await garbled.stop(); }
 });
 
+test('OpenAI poster: abort() stops every call in flight; track cancels one call alone; a cancel never falls back', async () => {
+    const slow = await serve(() => {});
+    const fetched = [];
+    global.fetch = address => { fetched.push(address); return new Promise(() => {}); };
+    try {
+        const post = openai.poster({apiBase: slow.url + '/v1', apiKey: 'sk-test'});
+        let cancelOne = null;
+        const one = post('/responses', {}, 5000, cancel => { cancelOne = cancel; });
+        const two = post('/responses', {}, 5000), three = post('/responses', {}, 5000);
+        cancelOne('not needed');
+        await assert.rejects(one, /^Error: not needed$/);
+        post.abort();
+        await assert.rejects(two, /^Error: stopped$/);
+        await assert.rejects(three, /^Error: stopped$/);
+        assert.deepEqual(fetched, [], 'a cancel with its own reason is not a TLS failure');
+        const later = post('/responses', {}, 50);
+        await assert.rejects(later, /^Error: timeout$/);
+        assert.deepEqual(fetched, [], 'the poster still uses Node');
+    } finally { delete global.fetch; await slow.stop(); }
+});
+
 test('OpenAI: the page\'s fetch ends after its timeout; without fetch nothing switches', async () => {
     global.fetch = () => new Promise(() => {});
     try {

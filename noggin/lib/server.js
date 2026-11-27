@@ -93,7 +93,7 @@ function create(options) {
     const dataDir = typeof options.dataDir === 'function' ? options.dataDir : () => options.dataDir;
     const log = options.log || {info() {}, warn() {}, error() {}};
     const checkKey = options.checkKey || openai.checkKey, listModels = options.listModels || openai.listModels;
-    const post = options.post || openai.post, describeTimeoutMs = options.describeTimeoutMs || DESCRIBE_TIMEOUT_MS;
+    const post = options.post || openai.postOnce, describeTimeoutMs = options.describeTimeoutMs || DESCRIBE_TIMEOUT_MS;
     let describing = false;
     const now = options.now || (() => new Date());
     // Jibo's local time ({year, monthNum, date, ...}), as the skill sees it (background.js passes
