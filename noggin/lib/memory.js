@@ -406,6 +406,6 @@ function tool(dir, args, today) {
     return {ok: false, error: 'unknown memory action'};
 }
 
-module.exports = {FACT_MAX, FACT_CHARS, MAX_FACTS, SUMMARY_CHARS, LOADED_SUMMARIES, KEEP_DAYS, MAX_SUMMARIES, MAX_DONE,
+module.exports = {FACT_MAX, FACT_CHARS, MAX_FACTS, SUMMARY_CHARS, LOADED_SUMMARIES, MAX_SUMMARIES, MAX_DONE,
     empty, read, write, update, clean, dayOf, partOf, label, addFact, editFact, removeFact, removeSummary,
     addSummary, importData, exportData, prune, search, findFacts, loaded, block, tool};

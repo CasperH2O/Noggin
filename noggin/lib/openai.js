@@ -119,19 +119,22 @@ function keyProblem(status) {
     if (status === 429) return 'no credit or too many requests';
     return 'OpenAI answered ' + status;
 }
+// GET /models with the key, capped like every OpenAI answer; track as for listModels.
+function getModels(config, timeoutMs, track) {
+    return Promise.resolve().then(() => web.requestJson({url: config.apiBase + '/models', headers: {Authorization: 'Bearer ' + config.apiKey},
+        timeoutMs: timeoutMs || 8000, timeoutMessage: 'no answer from OpenAI', maxBytes: ANSWER_MAX, track: track}));
+}
 // Does this key work? GET /models, for the settings page: {ok, status, ms, error}.
 function checkKey(config, timeoutMs) {
     const started = Date.now(), finish = result => Object.assign({ms: Date.now() - started}, result);
-    return Promise.resolve().then(() => web.requestJson({url: config.apiBase + '/models', headers: {Authorization: 'Bearer ' + config.apiKey},
-        timeoutMs: timeoutMs || 8000, timeoutMessage: 'no answer from OpenAI', maxBytes: 4 * ANSWER_MAX}))
+    return getModels(config, timeoutMs)
         .then(r => finish(r.status === 200 ? {ok: true, status: r.status} : {ok: false, status: r.status, error: keyProblem(r.status)}),
             error => finish({ok: false, status: null, error: String(error && error.message || error)}));
 }
 // The models this key can use: [{id, shutdown}] or {error}, for the settings page (D179).
 // track(abort), when given, receives a function that cancels the request.
 function listModels(config, timeoutMs, track) {
-    return Promise.resolve().then(() => web.requestJson({url: config.apiBase + '/models', headers: {Authorization: 'Bearer ' + config.apiKey},
-        timeoutMs: timeoutMs || 8000, timeoutMessage: 'no answer from OpenAI', maxBytes: ANSWER_MAX, track: track}))
+    return getModels(config, timeoutMs, track)
         .then(r => {
             if (r.status !== 200) return {error: keyProblem(r.status)};
             const list = models.parseList(r.json);

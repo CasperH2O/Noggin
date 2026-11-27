@@ -152,7 +152,7 @@ const methods = {
     },
     noteClassifier(result) {
         if (result.switched) this.log.write({kind: 'classifier_switch', detail: result.switched});
-        else if (result.error) this.log.write({kind: 'classifier_error', api: result.api || null, status: result.status || null, error: result.error});
+        else if (result.error) this.log.write({kind: 'classifier_error', api: result.api || null, status: result.status || null, error: String(result.error).slice(0, 300)});
     },
     // Move finished text from the reply into the speech queue. The reply's language label comes
     // first and is never said; without one the reply is in the conversation's language (D171).

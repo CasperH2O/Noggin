@@ -92,4 +92,4 @@ function firstLine(key, value, language) {
     return LANGUAGES.some(other => other !== lang && LINES[other][key] === value) ? LINES[lang][key] : value;
 }
 
-module.exports = {LANGUAGES, LINES, say, firstLine};
+module.exports = {LINES, say, firstLine};

@@ -105,4 +105,4 @@ function readLabel(text, done) {
     return mayBecomeTag || mayBecomeLabel ? null : none;
 }
 
-module.exports = {create, readLabel, refused, SERVICE, API_VERSION};
+module.exports = {create, readLabel, refused};

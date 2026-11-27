@@ -20,7 +20,7 @@ const REQUEST_TIMEOUT_MS = 15000;
 const MODELS_KEEP_MS = 6 * 3600000, MODELS_REFRESH_MS = 60000;
 const MAX_CONNECTIONS = 16;
 // The persona size the page recommends: the instructions sent at every conversation start.
-const BUDGET = 5800;
+const BUDGET = 6600;
 // BEacon runs in the same Be process; its list of custom skills carries each README (D33).
 const BEACON_PORT = 8123;
 const BEACON_TIMEOUT_MS = 4000;
@@ -113,8 +113,9 @@ function create(options) {
     function state() {
         const dir = dataDir(), view = settings.publicView(dir), persona = settings.persona(dir);
         const config = Object.assign({}, view.values);
-        const abilities = config.actions ? {apps: Object.keys(actions.apps(config)), config: config} : null;
-        const chars = realtime.instructions(persona.soul, persona.identity, abilities, null, {presence: config.presence !== false}).length;
+        // As a conversation would start: English while Dutch Voice is not ready (D172).
+        const language = voice.create().choose(config.language).language;
+        const chars = realtime.forConfig(config, persona, realtime.memorySetup(config), language).length;
         const limits = {}, packaged = {};
         Object.keys(settings.PERSONA).forEach(name => { limits[name] = settings.PERSONA[name].max; packaged[name] = settings.packaged(name); });
         return {version: version, schema: settings.schemaView(), values: view.values, key: view.key, adminKey: view.adminKey, problems: view.problems, broken: view.broken,
@@ -404,7 +405,7 @@ function create(options) {
         if (!localHost(req)) return json(res, 403, {ok: false, error: 'open this page by Jibo\'s address'});
         if (method === 'GET' && STATIC[pathname]) return serveStatic(res, STATIC[pathname]);
         if (method === 'GET' && pathname === '/api/settings') return json(res, 200, state());
-        if (method === 'GET' && pathname === '/api/logs') return json(res, 200, {logs: ConversationLog.list(dataDir()), keep: ConversationLog.KEEP});
+        if (method === 'GET' && pathname === '/api/logs') return json(res, 200, {logs: ConversationLog.list(dataDir())});
         if (method === 'GET' && pathname.indexOf('/api/logs/') === 0) return serveLog(res, pathname.slice('/api/logs/'.length));
         if (method === 'GET' && pathname === '/api/skills/found') return found().then(result => json(res, result.httpStatus, result.body));
         if (method === 'GET' && pathname === '/api/memory') return json(res, 200, memoryView());
@@ -469,7 +470,7 @@ function create(options) {
     }
 
     // usage(): the Usage tab's view (cached, D64), also for the budget heads-up (D74).
-    return {listen: listen, close: close, handle: handle, state: state, usage: () => usageView(false), connections: () => sockets.size};
+    return {listen: listen, close: close, usage: () => usageView(false), connections: () => sockets.size};
 }
 
 module.exports = {create, BODY_MAX, IMPORT_BODY_MAX, BUDGET};

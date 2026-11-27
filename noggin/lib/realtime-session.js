@@ -59,11 +59,11 @@ function personaText(soul, identity) {
     const parts = [soul, identity].map(text => String(text || '').trim()).filter(Boolean);
     return parts.join('\n\n') || 'You are Jibo, the little social robot: curious, warm, playful and a bit silly.';
 }
-// abilities: null (no tools) or {apps: [names], config} when Noggin offers its tools
-// (lib/actions.js); config's cloudSkills says which cloud tools are named. memory: null (off) or
-// {learn, block}: block (lib/memory.js) goes in the session note, not here.
-// The instructions hold nothing that changes between conversations, so a new session finds them
-// and the tools after them in the prompt cache (D181).
+// The memory part of a conversation for these settings: null when memory is off, else {learn,
+// block}; block (lib/memory.js) goes in the session note, not in the instructions.
+function memorySetup(config, block) {
+    return config.memory ? {learn: config.memoryLearn !== false, block: block || ''} : null;
+}
 // The memory sentences of the setup: what Jibo's notes are, how they grow, and which tools he has.
 function memoryNotes(memory, tools) {
     let text = 'Your memory is the notes in the session note at the start of the conversation; never claim to remember something that is not in them. ';
@@ -74,11 +74,10 @@ function memoryNotes(memory, tools) {
 }
 // What Jibo knows about his eye emoji (D161): Noggin shows one for a word he says, so he can
 // only say the word; asked about one that showed, he owns it. The picture tool is another thing.
-function emojiNote(senses, abilities) {
+function emojiNote(senses, toolConfig) {
     if (senses && senses.emoji === false) return '';
-    const config = abilities && abilities.config;
-    if (config && config.emoji === false) return '';
-    const picture = !!config && actions.isOffered(config, 'picture');
+    if (toolConfig && toolConfig.emoji === false) return '';
+    const picture = !!toolConfig && actions.isOffered(toolConfig, 'picture');
     return 'A small emoji may show on your eye when you say the name of something (pizza, a dog, rain); you cannot choose one. ' +
         'Asked about one that showed, it was yours: never say you have none. ' +
         (picture ? 'An emoji is not a picture: for a photo use picture. ' : '');
@@ -94,21 +93,24 @@ function languageRule(language) {
         'Tool results are for you only and mostly in English: after one, keep answering in the language you were speaking with your person. ' +
         'In Dutch, write numbers, times, dates and abbreviations as Dutch words. ';
 }
-// language: 'en' (default) or 'nl', the language the conversation starts in.
-function voiceSetup(abilities, memory, senses, language) {
+// toolConfig: null (no tools) or the settings when Noggin offers its tools (lib/actions.js picks
+// which from them); memory: memorySetup()'s result. The instructions hold nothing that changes
+// between conversations, so a new session finds them and the tools after them in the prompt
+// cache (D181). language: 'en' (default) or 'nl', the language the conversation starts in.
+function voiceSetup(toolConfig, memory, senses, language) {
     const seeing = !!(senses && senses.presence);
     const unseen = seeing ? 'You see only who the notes name' : 'You cannot see the room yet';
-    const memoryTools = !!(memory && abilities && abilities.config && abilities.config.memory === true);
+    const memoryTools = !!(memory && toolConfig && toolConfig.memory === true);
     const notes = memory ? memoryNotes(memory, memoryTools) : '';
     const none = memory ? 'tools or files: never claim to look something up or do something you cannot. '
         : 'tools, files or saved memory: never claim to look something up, remember something for later, or do something you cannot. ';
     // Which tools, and who speaks for each, come from the tool table (lib/actions.js).
-    const offered = abilities ? actions.offered(abilities.config) : [];
+    const offered = toolConfig ? actions.offered(toolConfig) : [];
     // These two rules are only true while their tools are on (D183).
-    const use = [actions.isOffered(abilities && abilities.config, 'get_time') && 'for the time or date, always use get_time',
-        actions.isOffered(abilities && abilities.config, 'about_jibo') && 'for a question about yourself that the facts above do not answer, use about_jibo'].filter(Boolean).join('; ');
+    const use = [actions.isOffered(toolConfig, 'get_time') && 'for the time or date, always use get_time',
+        actions.isOffered(toolConfig, 'about_jibo') && 'for a question about yourself that the facts above do not answer, use about_jibo'].filter(Boolean).join('; ');
     const tools = offered.length
-        ? actions.rules(abilities.config) +
+        ? actions.rules(toolConfig) +
           'Never say something is done unless a tool result says so. ' +
           (use ? use.charAt(0).toUpperCase() + use.slice(1) + '. ' : '') + notes +
           'Apart from these you have no ' + none
@@ -118,14 +120,21 @@ function voiceSetup(abilities, memory, senses, language) {
         'and every word you write is spoken aloud in your own voice, so write only words meant to be heard: ' +
         'no markdown, lists, emoji, bracketed markers' + (language === 'nl' ? ' other than the language label described below' : '') +
         ' or stage directions. Your face and body react on their own while you speak. ' +
-        emojiNote(senses, abilities) +
+        emojiNote(senses, toolConfig) +
         'Keep replies short, as your personality says. ' +
         languageRule(language) +
         (offered.length ? unseen + '. ' : '') + tools +
         'Your person ends the conversation by saying goodbye.';
 }
-function instructions(soul, identity, abilities, memory, senses, language) {
-    return personaText(soul, identity) + '\n\n' + voiceSetup(abilities, memory, senses, language);
+function instructions(soul, identity, toolConfig, memory, senses, language) {
+    return personaText(soul, identity) + '\n\n' + voiceSetup(toolConfig, memory, senses, language);
+}
+// The instructions a conversation with these settings gets. The skill and the settings page both
+// build them here, so the size the page shows is the size Noggin sends (D190).
+// persona: {soul, identity}; memory and language as for instructions().
+function forConfig(config, persona, memory, language) {
+    const senses = {presence: config.presence !== false, emoji: config.emoji !== false};
+    return instructions(persona.soul, persona.identity, config.actions ? config : null, memory, senses, language);
 }
 // The first system message of every session (D181): what changes from one conversation to the
 // next. Built once per conversation, so a reconnect sends the same text and keeps the cache.
@@ -197,4 +206,4 @@ function presenceNote(here) {
     return about + 'now sees ' + list + '. Who you see is not always who is talking. Never answer this note alone.]';
 }
 
-module.exports = {LANGUAGES, DEFAULT_REASONING, transcription, reasoningEffort, sessionUpdate, textDelta, personaText, voiceSetup, instructions, sessionNote, englishNote, resumeNote, reconnectNote, touchNote, presenceNote};
+module.exports = {LANGUAGES, DEFAULT_REASONING, transcription, reasoningEffort, sessionUpdate, textDelta, memorySetup, voiceSetup, instructions, forConfig, sessionNote, englishNote, resumeNote, reconnectNote, touchNote, presenceNote};

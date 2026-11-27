@@ -113,12 +113,10 @@ class Noggin extends BeSkill {
         const mic = Microphone.choose(config) === 'arecord'
             ? new Microphone.ProcessMicrophone({device: config.micDevice, onExit: report => session && session.onMicExit(report)})
             : new Microphone(jibo, {onTrack: name => log.write({kind: 'microphone_track', event: name})});
-        const abilities = config.actions ? {apps: Object.keys(actions.apps(config)), config: config} : null;
         const notes = this.memoryNotes(dataDir, config, back, log, openedAt);
         // Chosen once: the instructions and the conversation start in the same language (D172).
         const speechVoice = voice.create(), language = speechVoice.choose(config.language);
-        const instructions = realtime.instructions(persona.soul, persona.identity, abilities, notes,
-            {presence: config.presence !== false, emoji: config.emoji !== false}, language.language);
+        const instructions = realtime.forConfig(config, persona, notes, language.language);
         const note = realtime.sessionNote(actions.localTime(jibo), notes);
         session = this.session = new Conversation({
             jibo: jibo, config: config, log: log, version: VERSION, voice: speechVoice, language: language,
@@ -186,7 +184,7 @@ class Noggin extends BeSkill {
             if (config.memoryLearn) recap.start(dataDir, openedAt);
             const state = memory.read(dataDir), today = memory.dayOf(actions.localTime(jibo));
             const tail = back ? '' : recap.tail(dataDir, state, Date.now(), log.file);
-            return {learn: config.memoryLearn !== false, block: memory.block(state, today, tail, config.presence !== false)};
+            return realtime.memorySetup(config, memory.block(state, today, tail, config.presence !== false));
         } catch (error) {
             this.tagged.warn('memory left out: ' + error.message);
             return null;

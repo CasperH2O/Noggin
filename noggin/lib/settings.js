@@ -17,7 +17,6 @@ const DEV_DATA = '/tmp/beam-beacon/custom-skills/noggin';
 const FILE = 'settings.json';
 const PACKAGED_PERSONA = path.join(__dirname, '../persona');
 const MODEL = /^[A-Za-z0-9._:-]{1,64}$/;
-const MAX_MS = 600000;
 // The settings page's port (D5).
 const PORT = 8131;
 

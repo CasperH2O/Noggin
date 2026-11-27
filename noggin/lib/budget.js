@@ -56,4 +56,4 @@ function notice(today, percent) {
     return {line: 'budget', emoji: trouble.BUDGET_EMOJI, said() { h.warnedDay = today; }};
 }
 
-module.exports = {watch, notice, isLow, hub, FIRST_MS, EVERY_MS, HUB};
+module.exports = {watch, notice, isLow, FIRST_MS, EVERY_MS, HUB};

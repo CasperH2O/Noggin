@@ -622,5 +622,5 @@ function readClock(jibo, now, timeoutMs) {
     });
 }
 
-module.exports = {CLOCK, OWN, NIMBUS, IDLE, APPS, SKILLS, GAMES, RADIO, CLOUD, LOCAL, VOICES, TOOLS, APP_NAME, APP_PACKAGE, MAX_APPS, NOTE_MAX, voiceOf, cloudSkills, localSkills, upgradeLocal, offered, isOffered, rules, apps, appEntry, cleanNote, cutNote, extras, spokenName, readmeNote, suggestions, tools,
+module.exports = {CLOCK, APPS, SKILLS, GAMES, RADIO, CLOUD, LOCAL, VOICES, TOOLS, APP_NAME, APP_PACKAGE, MAX_APPS, NOTE_MAX, voiceOf, cloudSkills, localSkills, upgradeLocal, offered, isOffered, rules, apps, appEntry, cleanNote, cutNote, extras, spokenName, readmeNote, suggestions, tools,
     plan, duration, clockQuery, clockCancel, installed, setVolume, localTime, describeTime, readClock};

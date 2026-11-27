@@ -57,6 +57,13 @@ test('GET /api/settings: schema, values, persona with its packaged text, budget;
         assert.equal(state.persona.packaged.soul, state.persona.soul);
         assert.deepEqual(state.persona.edited, {soul: false, identity: false, facts: false});
         assert.ok(state.budget.chars > 1000 && state.budget.recommended === server.BUDGET);
+        // The size a conversation with these settings sends, memory sentences included (D190).
+        const realtime = require(path.join(source, 'noggin/lib/realtime-session.js'));
+        const persona = settings.persona(r.dir), values = state.values;
+        assert.equal(values.memory, true, 'memory is on by default');
+        const sent = realtime.forConfig(values, persona, realtime.memorySetup(values), 'en');
+        assert.equal(state.budget.chars, sent.length);
+        assert.ok(sent.length > realtime.forConfig(values, persona, null, values.language).length);
     } finally { await r.stop(); }
 });
 

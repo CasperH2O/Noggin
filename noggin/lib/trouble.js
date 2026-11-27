@@ -103,4 +103,4 @@ function diagnose(config, ask, options) {
     });
 }
 
-module.exports = {CAUSES, BUDGET_EMOJI, cause, fromCode, fromMessage, fromStatus, fromError, lanAddress, interfaces, diagnose, CHECK_MS};
+module.exports = {CAUSES, BUDGET_EMOJI, cause, fromCode, fromMessage, fromStatus, fromError, lanAddress, interfaces, diagnose};

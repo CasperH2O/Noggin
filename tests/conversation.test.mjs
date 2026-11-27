@@ -94,7 +94,7 @@ test('persona: the packaged persona plus the voice setup, no terminal setup', ()
 test('persona: family-safe rules and the most-asked facts are in, text-chat abilities are out', () => {
     const p = settings.persona(null);
     assert.deepEqual(p.edited, {soul: false, identity: false, facts: false}, 'the packaged persona');
-    const text = realtime.instructions(p.soul, p.identity, {apps: ['clock']});
+    const text = realtime.instructions(p.soul, p.identity, {});
     assert.match(text, /Family safe \(always, because a child may be listening\)/);
     assert.match(text, /sex, romance or flirting/);
     assert.match(text, /tell a grown-up they trust/);
@@ -106,14 +106,18 @@ test('persona: family-safe rules and the most-asked facts are in, text-chat abil
     assert.ok(p.facts.includes('Movies:'));
 });
 
-test('persona budget: the instructions stay small, and so does FACTS.md', () => {
-    const p = settings.persona(null);
-    const apps = ['clock', 'photos', 'radio', 'weather', 'jokes'];
-    const text = realtime.instructions(p.soul, p.identity, {apps, config: {}});
-    assert.ok(text.length <= 5600, 'instructions are ' + text.length + ' characters (about ' + Math.round(text.length / 4) + ' tokens); the budget is 5600');
-    // Every cloud feature on: ~60 characters more, for naming what the cloud can do.
-    const all = realtime.instructions(p.soul, p.identity, {apps, config: {cloudSkills: Object.keys(actions.CLOUD)}});
-    assert.ok(all.length <= 5750, 'with every cloud tool the instructions are ' + all.length + ' characters; the budget is 5750');
+test('persona budget: a default conversation stays within the page\'s recommendation, and so does FACTS.md', () => {
+    const p = settings.persona(null), budget = require(path.join(source, 'noggin/lib/server.js')).BUDGET;
+    const config = {};
+    settings.SCHEMA.forEach(s => { config[s.key] = s.default; });
+    const memory = realtime.memorySetup(config);
+    ['en', 'nl'].forEach(language => {
+        const text = realtime.forConfig(config, p, memory, language);
+        assert.ok(text.length <= budget, language + ': the default instructions are ' + text.length + ' characters (about ' + Math.round(text.length / 4) + ' tokens); the page recommends ' + budget);
+        // Every cloud feature on adds a few words naming what the cloud can do.
+        const all = realtime.forConfig(Object.assign({}, config, {cloudSkills: Object.keys(actions.CLOUD)}), p, memory, language);
+        assert.ok(all.length <= budget, language + ': with every cloud tool the instructions are ' + all.length + ' characters; the page recommends ' + budget);
+    });
     const raw = fs.readFileSync(path.join(source, 'noggin/persona/FACTS.md'), 'utf8');
     assert.ok(raw.length <= settings.PERSONA.facts.max, 'FACTS.md is ' + raw.length + ' characters; the cap is ' + settings.PERSONA.facts.max);
 });
@@ -468,6 +472,16 @@ test('trouble mid-conversation: a failed response or error event with a known co
     await sleep(20);
     assert.equal(h3.talk.state, 'listening');
     h3.talk.leave('test'); await ended3;
+});
+
+test('error text from OpenAI is cut to 300 characters in the log', async () => {
+    const h = harness();
+    const ended = h.talk.open(); await untilListening(h);
+    h.emit({type: 'error', error: {code: 'some_unknown_code', message: 'x'.repeat(5000)}});
+    await sleep(20);
+    assert.equal(h.logs.find(e => e.kind === 'error').message.length, 300);
+    assert.equal(h.talk.state, 'listening', 'an unknown code goes on');
+    h.talk.leave('test'); await ended;
 });
 
 test('a notice after the greeting, once, with its emoji; none on a comeback (D74)', async () => {
@@ -1124,9 +1138,9 @@ test('remember runs in Noggin: the memory runner gets the parsed fact, its resul
 
 test('instructions with memory: the notes go in the session note, the "no saved memory" line goes, tools named only when offered', () => {
     const now = new Date(2026, 10, 19, 19, 30), block = 'What you remember ... Facts:\n- Sam likes jazz.';
-    const off = realtime.instructions('S', 'I', {apps: [], config: {memory: false}});
+    const off = realtime.instructions('S', 'I', {memory: false});
     assert.match(off, /no tools, files or saved memory/);
-    const on = realtime.instructions('S', 'I', {apps: [], config: {memory: true}}, {learn: true, block});
+    const on = realtime.instructions('S', 'I', {memory: true}, {learn: true, block});
     assert.ok(!on.includes(block), 'the instructions never carry the memory (D181)');
     const note = realtime.sessionNote(now, {learn: true, block});
     assert.ok(note.endsWith('\n\n' + block));
@@ -1647,7 +1661,7 @@ test('a follow-up reply that never comes does not leave Jibo stuck', async () =>
 });
 
 test('persona with actions: the tool rules replace "no tools", and the time is the home timezone\'s', () => {
-    const text = realtime.instructions('', '', {apps: ['clock']});
+    const text = realtime.instructions('', '', {});
     assert.match(text, /use your timer and alarm, .*open your apps, go to sleep, and look away\./);
     assert.match(realtime.sessionNote({year: 2026, monthNum: 10, date: 13, dayOfWeek: 'Friday', hour: 9, minute: 5}), /Friday, November 13, 2026, 9:05 AM local time/);
     assert.doesNotMatch(text, /in this voice mode you have no tools/);
@@ -1787,20 +1801,20 @@ test('the greeting smiles with the eye only (no body movement), outside the clas
 });
 
 test('timer tools: the instructions and tool descriptions say to call them without words first', () => {
-    const text = realtime.voiceSetup({apps: []});
+    const text = realtime.voiceSetup({});
     assert.match(text, /For get_time, set_timer, cancel_timer, set_alarm, cancel_alarm, use_skill, play_game and open_app, call the tool without saying anything first/);
     assert.doesNotMatch(text, /"Okay!"/);
     const tools = require(path.join(source, 'noggin/lib/actions.js')).tools({});
     for (const name of ['get_time', 'set_timer', 'cancel_timer', 'set_alarm', 'cancel_alarm', 'use_skill', 'play_game', 'open_app']) assert.match(tools.find(t => t.name === name).description, /without saying anything first/);
 });
 test('the instructions tell Jibo his emoji come from the words he says, and keep them apart from picture (D161)', () => {
-    const text = realtime.voiceSetup({apps: [], config: {}});
+    const text = realtime.voiceSetup({});
     assert.match(text, /small emoji may show on your eye when you say the name of something/);
     assert.match(text, /never say you have none/);
     assert.doesNotMatch(text, /use picture/, 'no picture tool, no mention of it');
-    assert.match(realtime.voiceSetup({apps: [], config: {cloudSkills: ['picture']}}), /An emoji is not a picture: for a photo use picture/);
+    assert.match(realtime.voiceSetup({cloudSkills: ['picture']}), /An emoji is not a picture: for a photo use picture/);
     assert.match(realtime.voiceSetup(null, null), /small emoji may show/, 'also without tools');
-    assert.doesNotMatch(realtime.voiceSetup({apps: [], config: {emoji: false}}), /small emoji may show/);
+    assert.doesNotMatch(realtime.voiceSetup({emoji: false}), /small emoji may show/);
     assert.doesNotMatch(realtime.voiceSetup(null, null, {emoji: false}), /small emoji may show/);
     assert.match(text, /no markdown, lists, emoji, bracketed markers/, 'he still writes no emoji characters');
 });
@@ -2188,13 +2202,13 @@ test('cloud tools: only those in cloudSkills go in session.update, and the instr
     assert.ok(names.includes('surprise')); assert.ok(!names.includes('weather') && !names.includes('news'));
     assert.ok(names.includes('joke'), 'joke is optional: listed, it is offered');
     h.talk.close();
-    const text = realtime.voiceSetup({apps: [], config: {cloudSkills: ['surprise']}});
+    const text = realtime.voiceSetup({cloudSkills: ['surprise']});
     assert.match(text, /ask your cloud for a surprise/); assert.doesNotMatch(text, /weather|news|joke/);
-    assert.doesNotMatch(realtime.voiceSetup({apps: [], config: {}}), /cloud/);
+    assert.doesNotMatch(realtime.voiceSetup({}), /cloud/);
 });
 
 test('local tools: the get_time and about_jibo sentences follow the tools that are on, and no tools reads as no tools', () => {
-    const setup = config => realtime.voiceSetup({apps: [], config});
+    const setup = config => realtime.voiceSetup(config);
     assert.match(setup({localSkills: ['get_time']}), /always use get_time\. Apart/);
     assert.doesNotMatch(setup({localSkills: ['get_time']}), /about_jibo/);
     assert.match(setup({localSkills: ['about_jibo']}), /done unless a tool result says so\. For a question about yourself/);
@@ -2204,7 +2218,7 @@ test('local tools: the get_time and about_jibo sentences follow the tools that a
     assert.match(none, /you have no tools, files or saved memory/);
     assert.equal(none.split('You cannot see the room yet').length, 2, 'said once');
     assert.doesNotMatch(none, /Only when your person asks/);
-    const memoryOnly = realtime.voiceSetup({apps: [], config: {localSkills: [], cloudSkills: [], memory: true}}, {learn: true});
+    const memoryOnly = realtime.voiceSetup({localSkills: [], cloudSkills: [], memory: true}, {learn: true});
     assert.match(memoryOnly, /your tools let you keep, forget and look up memories/, 'the memory tools are still named');
     assert.match(memoryOnly, /use remember or forget/);
     assert.doesNotMatch(memoryOnly, /get_time|about_jibo|cloud/);
@@ -3447,7 +3461,7 @@ test('whom Jibo sees: notes wait while Jibo thinks or speaks, and go before the 
 test('instructions: with presence the setup says Jibo sees only who the notes name, and memory says the one person seen is probably the one talking', () => {
     assert.match(realtime.voiceSetup(null, null), /You cannot see the room yet/);
     assert.match(realtime.voiceSetup(null, null, {presence: true}), /You see only who the notes name, and in this voice mode/);
-    assert.match(realtime.voiceSetup({apps: [], config: {}}, null, {presence: true}), /You see only who the notes name\. /);
+    assert.match(realtime.voiceSetup({}, null, {presence: true}), /You see only who the notes name\. /);
     const state = {facts: [], summaries: []};
     assert.match(memoryLib.block(state, '2026-11-12', ''), /you cannot tell who is speaking, so never assume/);
     assert.match(memoryLib.block(state, '2026-11-12', '', true), /see just one person, that is probably who is talking/);

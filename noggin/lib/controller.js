@@ -405,7 +405,7 @@ class Conversation {
             this.pump();
         } else if (type === 'error') {
             const error = event.error || {};
-            if (error.code !== 'response_cancel_not_active') this.log.write({kind: 'error', code: error.code || null, message: error.message || null});
+            if (error.code !== 'response_cancel_not_active') this.log.write({kind: 'error', code: error.code || null, message: error.message ? String(error.message).slice(0, 300) : null});
             if (isFatal(error.code)) this.fail(Error('OpenAI: ' + error.code));
         } else if (type === 'transport.closed') {
             this.dropped();
@@ -571,7 +571,7 @@ class Conversation {
         clearTimeout(this.silence); this.silence = null;
         const message = String(error && error.message || error);
         if (!this.startupLogged) { this.mark('failed'); this.logStartup({failed: message.slice(0, 200)}); }
-        this.log.write({kind: 'failed', error: message});
+        this.log.write({kind: 'failed', error: message.slice(0, 300)});
         const known = trouble.fromMessage(message);
         const found = known ? Promise.resolve({cause: known, detail: message.slice(0, 80)})
             : error && error.openai && this.diagnoseFn ? Promise.resolve().then(() => this.diagnoseFn()).catch(() => ({cause: 'unknown', detail: 'check failed'}))
