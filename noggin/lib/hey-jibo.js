@@ -33,7 +33,8 @@ function jetstream(jibo) { return jibo && jibo.jetstream || null; }
 function cancelTurn(jibo) {
     const js = jetstream(jibo);
     if (!js || typeof js.cancelAnyTurn !== 'function') return false;
-    try { js.cancelAnyTurn(); return true; } catch (_) { return false; }
+    // It may answer with a promise (it waits for a lost connection first); a refusal changes nothing.
+    try { Promise.resolve(js.cancelAnyTurn()).catch(() => {}); return true; } catch (_) { return false; }
 }
 // What opened Noggin, when it was "Hey Jibo": {heardAt} or null. BEam hands the background
 // script's data over as result.nlu.entities.
@@ -194,4 +195,4 @@ function watch(jibo, api, options) {
     }};
 }
 
-module.exports = {watch, fromResult, ownTurn, release, TURN_MS};
+module.exports = {watch, fromResult, ownTurn, release, cancelTurn, TURN_MS};

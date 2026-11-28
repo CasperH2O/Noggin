@@ -516,6 +516,31 @@ test('back after another skill: the note names that skill, with no clock facts',
     h.talk.close();
 });
 
+test('back after another skill: a listen that skill left open is cancelled once; a fresh open cancels nothing (D194)', async () => {
+    const back = harness({actions: fakeActions(), resume: {pairs: [], tool: 'use_skill', args: {name: 'take a photo'}, said: 'Should I save it?'}});
+    let cancels = 0;
+    // A refused cancel (BE's answer is a promise) is caught: no unhandled rejection.
+    back.jibo.jetstream.cancelAnyTurn = () => { cancels++; return Promise.reject(Error('not connected')); };
+    back.talk.open();
+    await untilListening(back);
+    assert.equal(cancels, 1);
+    assert.equal(back.logs.find(e => e.kind === 'startup').turn_cancel, 'sent');
+    back.talk.close();
+    const fresh = harness({actions: fakeActions()});
+    fresh.jibo.jetstream.cancelAnyTurn = () => { cancels++; };
+    fresh.talk.open();
+    await untilListening(fresh);
+    assert.equal(cancels, 1);
+    assert.equal(fresh.logs.find(e => e.kind === 'startup').turn_cancel, undefined);
+    fresh.talk.close();
+    // A Jibo without cancelAnyTurn: logged, and the conversation goes on.
+    const old = harness({actions: fakeActions(), resume: {pairs: [], tool: 'use_skill', args: {name: 'take a photo'}, said: ''}});
+    old.talk.open();
+    await untilListening(old);
+    assert.equal(old.logs.find(e => e.kind === 'startup').turn_cancel, 'unavailable');
+    old.talk.close();
+});
+
 test('tool rounds are limited: a third round in a row is refused and Jibo listens', async () => {
     const h = await listening({actions: fakeActions()});
     await youSay(h, 'what is your favorite movie');
