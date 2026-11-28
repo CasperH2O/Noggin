@@ -516,7 +516,7 @@ test('back after another skill: the note names that skill, with no clock facts',
     h.talk.close();
 });
 
-test('back after another skill: a listen that skill left open is cancelled once; a fresh open cancels nothing (D194)', async () => {
+test('back after another skill: a listen that skill left open is cancelled once; a fresh or "Hey Jibo" open cancels nothing (D194)', async () => {
     const back = harness({actions: fakeActions(), resume: {pairs: [], tool: 'use_skill', args: {name: 'take a photo'}, said: 'Should I save it?'}});
     let cancels = 0;
     // A refused cancel (BE's answer is a promise) is caught: no unhandled rejection.
@@ -539,6 +539,14 @@ test('back after another skill: a listen that skill left open is cancelled once;
     await untilListening(old);
     assert.equal(old.logs.find(e => e.kind === 'startup').turn_cancel, 'unavailable');
     old.talk.close();
+    // "Hey Jibo" opened Noggin within a comeback's window: its own timed cancel only (D136).
+    const hey = harness({actions: fakeActions(), heyJibo: {heardAt: Date.now()}, resume: {pairs: [], tool: 'use_skill', args: {name: 'take a photo'}, said: ''}});
+    hey.jibo.jetstream.cancelAnyTurn = () => { cancels++; };
+    hey.talk.open();
+    await untilListening(hey);
+    assert.equal(cancels, 1);
+    assert.equal(hey.logs.find(e => e.kind === 'startup').turn_cancel, undefined);
+    hey.talk.close();
 });
 
 test('tool rounds are limited: a third round in a row is refused and Jibo listens', async () => {

@@ -137,8 +137,8 @@ class Conversation {
         if (config.ringRefreshMs > 0) this.ringTimer = setInterval(() => this.refreshRing(), Math.max(100, config.ringRefreshMs));
         this.watchEndings();
         // Back from another skill, its listen may still be open and switch Noggin away when it
-        // times out (D194): end it now.
-        if (this.resume) this.boot.turn_cancel = heyJibo.cancelTurn(jibo) ? 'sent' : 'unavailable';
+        // times out (D194): end it now. A "Hey Jibo" open has its own, later cancel (D136).
+        if (this.resume && !this.heyJibo) this.boot.turn_cancel = heyJibo.cancelTurn(jibo) ? 'sent' : 'unavailable';
         this.watchSenses();
         // Opened from the menu, the menu view would stay: Jibo's own eye for the conversation.
         const eye = ExpressionPlayer.showEye(jibo).then(result => { this.mark('eye'); this.boot.eye = result; });

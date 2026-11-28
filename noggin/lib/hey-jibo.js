@@ -2,7 +2,7 @@
 // "Hey Jibo" opens Noggin (setting heyJibo, off by default, D132). Runs in background.js: when
 // Jibo hears the hotword while he is idle, Noggin opens and, shortly after, the cloud turn that
 // "Hey Jibo" started is cancelled, so its result cannot switch Noggin away. The conversation then
-// ignores that turn's start once (lib/controller.js).
+// ignores that turn's start once (lib/controller.js). The controller also cancels on a comeback (D194).
 // Until Noggin is open the ring stays orange, as while the conversation is busy (D135), and Jibo's
 // own listening look (blue ring, listening eye) is skipped for that "Hey Jibo" (D140).
 // Node 6: ES2015 only.
@@ -29,7 +29,7 @@ function hub() { return shared(HUB, () => ({claimedAt: null}), value => typeof v
 function release() { hub().claimedAt = null; }
 
 function jetstream(jibo) { return jibo && jibo.jetstream || null; }
-// Ends the global turn in progress; ignored by Jibo when none is running.
+// Ends whatever turn is in progress, global or local, whoever started it; ignored when none is running.
 function cancelTurn(jibo) {
     const js = jetstream(jibo);
     if (!js || typeof js.cancelAnyTurn !== 'function') return false;
