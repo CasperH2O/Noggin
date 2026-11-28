@@ -516,7 +516,7 @@ test('back after another skill: the note names that skill, with no clock facts',
     h.talk.close();
 });
 
-test('back after another skill: a listen that skill left open is cancelled once; a fresh or "Hey Jibo" open cancels nothing (D194)', async () => {
+test('a listen another skill left open is cancelled once at open, on a comeback and on a menu open; a "Hey Jibo" open cancels nothing (D194, D196)', async () => {
     const back = harness({actions: fakeActions(), resume: {pairs: [], tool: 'use_skill', args: {name: 'take a photo'}, said: 'Should I save it?'}});
     let cancels = 0;
     // A refused cancel (BE's answer is a promise) is caught: no unhandled rejection.
@@ -526,13 +526,14 @@ test('back after another skill: a listen that skill left open is cancelled once;
     assert.equal(cancels, 1);
     assert.equal(back.logs.find(e => e.kind === 'startup').turn_cancel, 'sent');
     back.talk.close();
-    const fresh = harness({actions: fakeActions()});
-    fresh.jibo.jetstream.cancelAnyTurn = () => { cancels++; };
-    fresh.talk.open();
-    await untilListening(fresh);
-    assert.equal(cancels, 1);
-    assert.equal(fresh.logs.find(e => e.kind === 'startup').turn_cancel, undefined);
-    fresh.talk.close();
+    // Opened from the menu (no comeback, no "Hey Jibo").
+    const menu = harness({actions: fakeActions()});
+    menu.jibo.jetstream.cancelAnyTurn = () => { cancels++; };
+    menu.talk.open();
+    await untilListening(menu);
+    assert.equal(cancels, 2);
+    assert.equal(menu.logs.find(e => e.kind === 'startup').turn_cancel, 'sent');
+    menu.talk.close();
     // A Jibo without cancelAnyTurn: logged, and the conversation goes on.
     const old = harness({actions: fakeActions(), resume: {pairs: [], tool: 'use_skill', args: {name: 'take a photo'}, said: ''}});
     old.talk.open();
@@ -544,7 +545,7 @@ test('back after another skill: a listen that skill left open is cancelled once;
     hey.jibo.jetstream.cancelAnyTurn = () => { cancels++; };
     hey.talk.open();
     await untilListening(hey);
-    assert.equal(cancels, 1);
+    assert.equal(cancels, 2);
     assert.equal(hey.logs.find(e => e.kind === 'startup').turn_cancel, undefined);
     hey.talk.close();
 });

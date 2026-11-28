@@ -2,7 +2,7 @@
 // "Hey Jibo" opens Noggin (setting heyJibo, off by default, D132). Runs in background.js: when
 // Jibo hears the hotword while he is idle, Noggin opens and, shortly after, the cloud turn that
 // "Hey Jibo" started is cancelled, so its result cannot switch Noggin away. The conversation then
-// ignores that turn's start once (lib/controller.js). The controller also cancels on a comeback (D194).
+// ignores that turn's start once (lib/controller.js). The controller also cancels on every other open (D194, D196).
 // Until Noggin is open the ring stays orange, as while the conversation is busy (D135), and Jibo's
 // own listening look (blue ring, listening eye) is skipped for that "Hey Jibo" (D140).
 // Node 6: ES2015 only.
