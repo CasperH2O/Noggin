@@ -297,7 +297,7 @@ function slowFace() {
     return {jibo: {face: {views, tween: {stop() {}}}}, views, destroyed};
 }
 
-test('review: closed while sliding in, the screen waits for the view change and removes its view (D76)', () => withPixi(async () => {
+test('closed while sliding in, the screen waits for the view change and removes its view (D76)', () => withPixi(async () => {
     const f = slowFace(), screen = new SetupScreen(f.jibo, {});
     const shown = screen.show(trouble.cause('no_key'), '192.168.1.20');
     screen.close();
@@ -306,7 +306,7 @@ test('review: closed while sliding in, the screen waits for the view change and 
     assert.equal(f.views.currentView, null);
 }));
 
-test('review: a covered screen is disposed as a hidden view and unlinked from the stack (D76)', () => withPixi(async () => {
+test('a covered screen is disposed as a hidden view and unlinked from the stack (D76)', () => withPixi(async () => {
     const f = slowFace(), screen = new SetupScreen(f.jibo, {});
     const shown = screen.show(trouble.cause('no_key'), null);
     await sleep(60);

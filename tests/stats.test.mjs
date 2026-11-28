@@ -48,7 +48,7 @@ test('scan: a big log is read only at its ends; the end line is found at the tai
     assert.equal(rows[0].turns, 40);
 });
 
-test('review: logs just over one part and exactly two parts long keep their end line', () => {
+test('logs just over one part and exactly two parts long keep their end line', () => {
     const d = dir();
     // About 15.5 KB, and the size where the head and the tail parts just touch.
     writeLog(d, at(2, 8), 10 * MIN, {middle: 60, turns: 7});
@@ -71,7 +71,7 @@ test('review: logs just over one part and exactly two parts long keep their end 
     }
 });
 
-test('review: a log is read again only when its size changes; gone logs leave the cache', () => {
+test('a log is read again only when its size changes; gone logs leave the cache', () => {
     const d = dir();
     const name = writeLog(d, at(0, 8), 2 * MIN);
     assert.equal(stats.scan(d)[0].end - stats.scan(d)[0].start, 2 * MIN);

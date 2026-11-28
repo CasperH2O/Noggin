@@ -93,7 +93,7 @@ test('setting on and Jibo idle: Noggin opens with the time it was heard; the tur
     w.stop();
 });
 
-test('review: the turn started during the delay is the one the delayed cancel ends; a later turn is not cancelled (D138)', () => {
+test('the turn started during the delay is the one the delayed cancel ends; a later turn is not cancelled (D138)', () => {
     const jibo = fakeJibo(), api = fakeApi(), clock = fakeClock();
     const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock});
     jibo.jetstream.events.hjHeard.fire();
@@ -108,7 +108,7 @@ test('review: the turn started during the delay is the one the delayed cancel en
     w.stop();
 });
 
-test('review: Jibo\'s own blue at turn start and off at the cancel are painted orange again at once while waiting (D138)', () => {
+test('Jibo\'s own blue at turn start and off at the cancel are painted orange again at once while waiting (D138)', () => {
     const jibo = ledJibo(), api = slowApi(), clock = fakeClock();
     const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock});
     jibo.jetstream.events.hjHeard.fire();
@@ -143,7 +143,7 @@ test('not idle, already open, privacy, or the open refused: nothing is opened or
     }
 });
 
-test('review: the hotword turn ended with its result, then Noggin\'s own cloud turn starts: it is left alone (D132)', () => {
+test('the hotword turn ended with its result, then Noggin\'s own cloud turn starts: it is left alone (D132)', () => {
     const jibo = fakeJibo(), api = fakeApi(), clock = fakeClock();
     const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock});
     jibo.jetstream.events.hjHeard.fire();
@@ -168,7 +168,7 @@ test('a turn that ended by itself before the delayed cancel (no network): no can
     w.stop();
 });
 
-test('review: no turn result reached the background, but the conversation\'s handover released the claim (D132)', () => {
+test('no turn result reached the background, but the conversation\'s handover released the claim (D132)', () => {
     const jibo = fakeJibo(), api = fakeApi(), clock = fakeClock();
     const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock});
     jibo.jetstream.events.hjHeard.fire();
@@ -194,7 +194,7 @@ test('the ring is orange from "Hey Jibo" until Noggin is open, re-sent while Jib
     w.stop();
 });
 
-test('review: Noggin was made current but its open failed and Be went back to idle: the ring goes off (D137)', () => {
+test('Noggin was made current but its open failed and Be went back to idle: the ring goes off (D137)', () => {
     const jibo = ledJibo(), api = slowApi(), clock = fakeClock();
     const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock});
     jibo.jetstream.events.hjHeard.fire();
@@ -208,7 +208,7 @@ test('review: Noggin was made current but its open failed and Be went back to id
     w.stop();
 });
 
-test('review: another skill wins the switch (a menu tap): the hold ends without touching its ring (D137)', () => {
+test('another skill wins the switch (a menu tap): the hold ends without touching its ring (D137)', () => {
     const jibo = ledJibo(), api = slowApi(), clock = fakeClock();
     const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock});
     jibo.jetstream.events.hjHeard.fire();
@@ -222,7 +222,7 @@ test('review: another skill wins the switch (a menu tap): the hold ends without 
     assert.equal(jibo.leds.length, before, 'stop() leaves it alone too');
 });
 
-test('review: privacy switched on during the hold stops the colour; a second "Hey Jibo" keeps one timer (D137)', () => {
+test('privacy switched on during the hold stops the colour; a second "Hey Jibo" keeps one timer (D137)', () => {
     const jibo = ledJibo(), api = slowApi(), clock = fakeClock();
     const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock});
     jibo.jetstream.events.hjHeard.fire();
@@ -255,7 +255,7 @@ test('the ring is orange before api.open() is called (BEam may load Noggin insid
     const thrown = ledJibo(), log3 = fakeLog();
     const w3 = heyJibo.watch(thrown, fakeApi({open: () => { throw Error('boom'); }}), {enabled: () => true, log: log3, now: clock.now, clock});
     assert.doesNotThrow(() => thrown.jetstream.events.hjHeard.fire());
-    assert.deepEqual(thrown.leds, [ORANGE, RING_OFF], 'review: a throwing open leaves no orange');
+    assert.deepEqual(thrown.leds, [ORANGE, RING_OFF], 'a throwing open leaves no orange');
     assert.ok(log3.lines.some(l => /open threw: boom/.test(l)));
     w3.stop();
 });
@@ -331,7 +331,7 @@ test('switching the setting off again: the next "Hey Jibo" is Jibo\'s own, with 
     w.stop();
 });
 
-test('review: Embodied Listen is still in a listening state: its look is left to it, nothing armed (D140)', () => {
+test('Embodied Listen is still in a listening state: its look is left to it, nothing armed (D140)', () => {
     const {jibo, state} = lookJibo({listening: true}), api = slowApi(), clock = fakeClock();
     const w = heyJibo.watch(jibo, api, {enabled: () => true, log: fakeLog(), now: clock.now, clock});
     jibo.jetstream.events.hjHeard.emit();
@@ -341,7 +341,7 @@ test('review: Embodied Listen is still in a listening state: its look is left to
     w.stop();
 });
 
-test('review: with Noggin open or Jibo busy, the settings are not read in front of Jibo\'s handlers (D140)', () => {
+test('with Noggin open or Jibo busy, the settings are not read in front of Jibo\'s handlers (D140)', () => {
     let reads = 0;
     const {jibo} = lookJibo(), api = slowApi(), clock = fakeClock();
     api.showing = true;
@@ -372,7 +372,7 @@ test('a listener between ours throws and ends the emit: the flag is still cleare
     w.stop();
 });
 
-test('review: a cut-off emit puts the orange ring out again when Jibo\'s look was skipped; his own look keeps its ring (D139, D140)', () => {
+test('a cut-off emit puts the orange ring out again when Jibo\'s look was skipped; his own look keeps its ring (D139, D140)', () => {
     for (const skipped of [true, false]) {
         const {jibo} = lookJibo({noEmbodied: skipped, listening: !skipped}), api = slowApi(), clock = fakeClock();
         jibo.jetstream.events.hjHeard.on(() => { throw Error('another skill'); });

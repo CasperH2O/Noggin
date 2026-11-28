@@ -41,7 +41,7 @@ test('no key: Jibo says so with the brain emoji, then the setup screen (here the
     assert.equal(reason, 'setup_error');
 });
 
-test('review: closed while Jibo says the line, no setup screen appears afterwards (D76)', async () => {
+test('closed while Jibo says the line, no setup screen appears afterwards (D76)', async () => {
     said.length = 0; created.length = 0;
     const s = skill();
     const talking = s.talk(emptyDir(), null, Date.now(), {});
