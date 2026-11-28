@@ -136,9 +136,9 @@ class Conversation {
         this.busyRing();
         if (config.ringRefreshMs > 0) this.ringTimer = setInterval(() => this.refreshRing(), Math.max(100, config.ringRefreshMs));
         this.watchEndings();
-        // A skill that just listened (also before a menu open) may have left its listen open, which
-        // switches Noggin away when it times out (D194, D196): end it now. A "Hey Jibo" open has
-        // its own, later cancel (D136).
+        // Another skill that just listened may have left its listen open (a comeback, or a menu or
+        // touch open soon after it), which switches Noggin away when it ends (D194, D196): end it
+        // now. A "Hey Jibo" open has its own, later cancel (D136).
         if (!this.heyJibo) this.boot.turn_cancel = heyJibo.cancelTurn(jibo) ? 'sent' : 'unavailable';
         this.watchSenses();
         // Opened from the menu, the menu view would stay: Jibo's own eye for the conversation.

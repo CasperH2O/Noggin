@@ -517,37 +517,26 @@ test('back after another skill: the note names that skill, with no clock facts',
 });
 
 test('a listen another skill left open is cancelled once at open, on a comeback and on a menu open; a "Hey Jibo" open cancels nothing (D194, D196)', async () => {
-    const back = harness({actions: fakeActions(), resume: {pairs: [], tool: 'use_skill', args: {name: 'take a photo'}, said: 'Should I save it?'}});
-    let cancels = 0;
-    // A refused cancel (BE's answer is a promise) is caught: no unhandled rejection.
-    back.jibo.jetstream.cancelAnyTurn = () => { cancels++; return Promise.reject(Error('not connected')); };
-    back.talk.open();
-    await untilListening(back);
-    assert.equal(cancels, 1);
-    assert.equal(back.logs.find(e => e.kind === 'startup').turn_cancel, 'sent');
-    back.talk.close();
+    // Opens Noggin with `over`, counts the cancels and returns them with the startup log's turn_cancel.
+    const openCounting = async (over, cancel) => {
+        const h = harness(Object.assign({actions: fakeActions()}, over));
+        let cancels = 0;
+        if (cancel) h.jibo.jetstream.cancelAnyTurn = () => { cancels++; return cancel(); };
+        h.talk.open();
+        await untilListening(h);
+        const logged = h.logs.find(e => e.kind === 'startup').turn_cancel;
+        h.talk.close();
+        return {cancels, logged};
+    };
+    const photo = {pairs: [], tool: 'use_skill', args: {name: 'take a photo'}, said: 'Should I save it?'};
+    // A comeback; a refused cancel (BE's answer is a promise) is caught: no unhandled rejection.
+    assert.deepEqual(await openCounting({resume: photo}, () => Promise.reject(Error('not connected'))), {cancels: 1, logged: 'sent'});
     // Opened from the menu (no comeback, no "Hey Jibo").
-    const menu = harness({actions: fakeActions()});
-    menu.jibo.jetstream.cancelAnyTurn = () => { cancels++; };
-    menu.talk.open();
-    await untilListening(menu);
-    assert.equal(cancels, 2);
-    assert.equal(menu.logs.find(e => e.kind === 'startup').turn_cancel, 'sent');
-    menu.talk.close();
+    assert.deepEqual(await openCounting({}, () => {}), {cancels: 1, logged: 'sent'});
     // A Jibo without cancelAnyTurn: logged, and the conversation goes on.
-    const old = harness({actions: fakeActions(), resume: {pairs: [], tool: 'use_skill', args: {name: 'take a photo'}, said: ''}});
-    old.talk.open();
-    await untilListening(old);
-    assert.equal(old.logs.find(e => e.kind === 'startup').turn_cancel, 'unavailable');
-    old.talk.close();
-    // "Hey Jibo" opened Noggin within a comeback's window: its own timed cancel only (D136).
-    const hey = harness({actions: fakeActions(), heyJibo: {heardAt: Date.now()}, resume: {pairs: [], tool: 'use_skill', args: {name: 'take a photo'}, said: ''}});
-    hey.jibo.jetstream.cancelAnyTurn = () => { cancels++; };
-    hey.talk.open();
-    await untilListening(hey);
-    assert.equal(cancels, 2);
-    assert.equal(hey.logs.find(e => e.kind === 'startup').turn_cancel, undefined);
-    hey.talk.close();
+    assert.deepEqual(await openCounting({resume: photo}, null), {cancels: 0, logged: 'unavailable'});
+    // "Hey Jibo" opened Noggin, also within a comeback's window: its own timed cancel only (D136).
+    assert.deepEqual(await openCounting({heyJibo: {heardAt: Date.now()}, resume: photo}, () => {}), {cancels: 0, logged: undefined});
 });
 
 test('tool rounds are limited: a third round in a row is refused and Jibo listens', async () => {
