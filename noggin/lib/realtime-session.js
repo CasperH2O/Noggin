@@ -86,11 +86,13 @@ function emojiNote(senses, toolConfig) {
 // what it is (touchNote, presenceNote), so the instructions stay within their budget (D28).
 // The language rule comes after the persona, so it wins over an edited persona that names another.
 // In Dutch the model labels each reply, so Noggin can send it to the right voice (D171).
+// Tool results, notes and a handed-over skill's words are English and must not switch it (D177, D193).
 function languageRule(language) {
     if (language !== 'nl') return 'You understand English and Dutch; always answer in English. ';
     return 'You understand English and Dutch. Answer in the language your person speaks to you; when you cannot tell, answer in Dutch. ' +
         'Start every reply with [nl] when it is in Dutch or [en] when it is in English; that label is not spoken. ' +
-        'Tool results are for you only and mostly in English: after one, keep answering in the language you were speaking with your person. ' +
+        'Tool results, notes and what another skill said are for you only and mostly in English: they never change your language; ' +
+        'keep answering in the language you were speaking with your person. ' +
         'In Dutch, write numbers, times, dates and abbreviations as Dutch words. ';
 }
 // toolConfig: null (no tools) or the settings when Noggin offers its tools (lib/actions.js picks

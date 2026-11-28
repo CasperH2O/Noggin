@@ -161,7 +161,8 @@ test('Dutch instructions ask for a language label on every reply; English ones s
     assert.match(nl, /Start every reply with \[nl\] when it is in Dutch or \[en\] when it is in English/);
     assert.match(nl, /other than the language label described below/);
     assert.match(nl, /write numbers, times, dates and abbreviations as Dutch words/);
-    assert.match(nl, /Tool results are for you only and mostly in English: after one, keep answering in the language you were speaking/, 'D177');
+    assert.match(nl, /Tool results, notes and what another skill said are for you only and mostly in English: they never change your language/, 'D177, D193');
+    assert.match(nl, /keep answering in the language you were speaking with your person/, 'D177');
     const en = realtime.instructions(p.soul, p.identity);
     assert.match(en, /always answer in English/);
     assert.doesNotMatch(en, /\[nl\]/);
